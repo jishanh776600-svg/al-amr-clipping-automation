@@ -1,0 +1,76 @@
+name: Remote Clipping Pipeline Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_video_uri:
+        description: 'Source Video URL (YouTube) or Google Drive Master Key'
+        required: true
+        type: string
+      campaign_id:
+        description: 'Campaign Identifier'
+        required: false
+        default: 'default_campaign'
+        type: string
+      job_id:
+        description: 'Unique Job ID (auto-generated if omitted)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  orchestrate-clipping:
+    name: Headless Clipping Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+      GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_ALLOWED_USER_IDS: ${{ secrets.TELEGRAM_ALLOWED_USER_IDS }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      STORAGE_DRIVER: "gdrive"
+      ENVIRONMENT: "production"
+
+    steps:
+      - name: Checkout Independent Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install System Dependencies & Open Fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libfontconfig1 \
+            fonts-liberation \
+            fonts-dejavu-core
+
+      - name: Cache ML Models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/torch
+          key: ${{ runner.os }}-ml-models-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install Project
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Execute Checkpointed Pipeline Runner
+        run: |
+          python -m clipping.cli.pipeline_runner \
+            --source-uri "${{ inputs.source_video_uri }}" \
+            --campaign-id "${{ inputs.campaign_id }}" \
+            --job-id "${{ inputs.job_id }}"

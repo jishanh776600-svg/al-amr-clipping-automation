@@ -1,0 +1,99 @@
+name: Cloud Smoke Test & Environment Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  smoke-test:
+    name: Ubuntu CPU Runner Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install System Dependencies & Open Fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libfontconfig1 \
+            fonts-liberation \
+            fonts-dejavu-core
+          echo "FFmpeg version:"
+          ffmpeg -version | head -n 1
+          echo "Installed open fonts:"
+          fc-list : family | grep -E "Liberation|DejaVu" | sort -u | head -n 5
+
+      - name: Cache HuggingFace & ML Models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/torch
+          key: ${{ runner.os }}-ml-models-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-ml-models-
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Verify Environment & Core Imports
+        run: |
+          python -c "
+          import sys
+          import cv2
+          import pysubs2
+          import faster_whisper
+          import clipping
+          print('Python Version:', sys.version)
+          print('OpenCV Version:', cv2.__version__)
+          print('pysubs2 Version:', pysubs2.__version__)
+          print('Clipping Architecture: OK')
+          "
+
+      - name: Run Full Test Suite (Pytest)
+        run: |
+          pytest -v --tb=short
+
+      - name: Google Drive Cloud Storage Smoke Test (Optional Secret Gated)
+        if: env.GOOGLE_APPLICATION_CREDENTIALS_JSON != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          python -c "
+          import asyncio
+          import os
+          from clipping.storage.google_drive import GoogleDriveStorageDriver
+
+          async def test_gdrive():
+              folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+              if not folder_id:
+                  print('GOOGLE DRIVE CLOUD VALIDATION = BLOCKED — FOLDER ID NOT CONFIGURED')
+                  return
+              driver = GoogleDriveStorageDriver(folder_id=folder_id)
+              test_key = 'smoke_test/cloud_probe.txt'
+              test_data = b'CLOUD_SMOKE_TEST_OK'
+              await driver.upload_bytes(test_data, test_key, content_type='text/plain')
+              exists = await driver.exists(test_key)
+              assert exists, 'Failed to verify uploaded test object'
+              downloaded = await driver.download_bytes(test_key)
+              assert downloaded == test_data, 'Downloaded data does not match uploaded data'
+              print('GOOGLE DRIVE CLOUD VALIDATION = PASSED')
+
+          asyncio.run(test_gdrive())
+          "

@@ -1,0 +1,44 @@
+name: YouTube Scheduled Publishing Dispatcher
+
+on:
+  schedule:
+    # Runs every 30 minutes to check and publish due scheduled clips
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-publish-due-clips:
+    name: Check & Release Scheduled Clips
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+      GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+      GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      STORAGE_DRIVER: "gdrive"
+      ENVIRONMENT: "production"
+
+    steps:
+      - name: Checkout Independent Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Project
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Process Due Scheduled Clips
+        run: |
+          python -m clipping.cli.publish_runner --scheduled

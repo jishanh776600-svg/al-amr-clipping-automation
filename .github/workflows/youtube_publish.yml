@@ -1,0 +1,56 @@
+name: YouTube Publishing Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Pipeline Job ID to publish approved clips for'
+        required: true
+        type: string
+      privacy_mode:
+        description: 'YouTube Privacy Status (private, unlisted, public)'
+        required: false
+        default: 'private'
+        type: choice
+        options:
+          - private
+          - unlisted
+          - public
+
+jobs:
+  publish-to-youtube:
+    name: Publish Approved Clips
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      YOUTUBE_CHANNEL_ID: ${{ secrets.YOUTUBE_CHANNEL_ID }}
+      YOUTUBE_DEFAULT_PRIVACY: ${{ inputs.privacy_mode || 'private' }}
+      GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+      GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      STORAGE_DRIVER: "gdrive"
+      ENVIRONMENT: "production"
+
+    steps:
+      - name: Checkout Independent Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Project
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Execute YouTube Publishing
+        run: |
+          python -m clipping.cli.publish_runner --job-id "${{ inputs.job_id }}"

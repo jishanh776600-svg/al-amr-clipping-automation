@@ -1,0 +1,49 @@
+name: Telegram Approval Update Poller
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_limit:
+        description: 'Maximum callback updates to consume'
+        required: false
+        default: '50'
+        type: string
+  schedule:
+    # Runs every 10 minutes to consume pending Telegram approval callbacks without keeping runners alive
+    - cron: '*/10 * * * *'
+
+jobs:
+  poll-telegram-approvals:
+    name: Consume Telegram Callbacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ALLOWED_USER_IDS: ${{ secrets.TELEGRAM_ALLOWED_USER_IDS }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+      GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      STORAGE_DRIVER: "gdrive"
+      ENVIRONMENT: "production"
+
+    steps:
+      - name: Checkout Independent Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Project
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Poll & Process Telegram Approvals
+        run: |
+          python -m clipping.approval.dispatcher --limit "${{ inputs.batch_limit || '50' }}"
