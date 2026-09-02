@@ -46,10 +46,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ml-models-
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies & Test Tooling
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Verify Environment & Core Imports
         run: |
@@ -69,31 +69,31 @@ jobs:
         run: |
           pytest -v --tb=short
 
-      - name: Google Drive Cloud Storage Smoke Test (Optional Secret Gated)
-        if: env.GOOGLE_APPLICATION_CREDENTIALS_JSON != ''
+      - name: Google Drive Cloud Storage Smoke Test (Secret Gated)
+        if: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN != '' }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+          GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          STORAGE_DRIVER: "gdrive"
+          ENVIRONMENT: "production"
         run: |
           python -c "
           import asyncio
           import os
-          from clipping.storage.google_drive import GoogleDriveStorageDriver
+          from clipping.storage.factory import create_storage_driver
 
           async def test_gdrive():
-              folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-              if not folder_id:
-                  print('GOOGLE DRIVE CLOUD VALIDATION = BLOCKED — FOLDER ID NOT CONFIGURED')
-                  return
-              driver = GoogleDriveStorageDriver(folder_id=folder_id)
+              driver = create_storage_driver()
               test_key = 'smoke_test/cloud_probe.txt'
               test_data = b'CLOUD_SMOKE_TEST_OK'
               await driver.upload_bytes(test_data, test_key, content_type='text/plain')
               exists = await driver.exists(test_key)
-              assert exists, 'Failed to verify uploaded test object'
+              assert exists, 'Failed to verify uploaded test object in Google Drive'
               downloaded = await driver.download_bytes(test_key)
               assert downloaded == test_data, 'Downloaded data does not match uploaded data'
-              print('GOOGLE DRIVE CLOUD VALIDATION = PASSED')
+              print('GOOGLE DRIVE CLOUD STORAGE VALIDATION = PASSED')
 
           asyncio.run(test_gdrive())
           "
