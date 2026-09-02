@@ -39,6 +39,25 @@ def cloud_env(temp_vault_dir, monkeypatch):
     app.dependency_overrides[ui_server.get_storage_driver] = lambda: storage
     monkeypatch.setattr("clipping.cli.pipeline_runner.get_storage_driver", lambda s: storage)
 
+    from tests.pipeline_mocks import (
+        MockVideoIngestor,
+        MockAudioPerceptionEngine,
+        MockVideoUnderstandingEngine,
+        MockClipDiscoveryEngine,
+        MockVirtualCameraDirector,
+        MockRenderOrchestrationEngine,
+        MockQAEngine,
+        MockTelegramApprovalGateway,
+    )
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_ingestor", lambda s: MockVideoIngestor(storage))
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_perception_engine", lambda s: MockAudioPerceptionEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_vision_engine", lambda s: MockVideoUnderstandingEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_discovery_engine", lambda s: MockClipDiscoveryEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_camera_director", lambda s: MockVirtualCameraDirector())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_render_engine", lambda s: MockRenderOrchestrationEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_qa_engine", lambda s: MockQAEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_approval_gateway", lambda s, st: MockTelegramApprovalGateway())
+
     yield {
         "storage": storage,
         "control_repo": control_repo,

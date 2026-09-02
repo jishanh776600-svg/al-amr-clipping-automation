@@ -7,10 +7,13 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# Ensure src is in sys.path
+# Ensure src and root are in sys.path
+root_path = str(Path(__file__).parent.parent)
 src_path = str(Path(__file__).parent.parent / "src")
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
 
 
 @pytest.fixture

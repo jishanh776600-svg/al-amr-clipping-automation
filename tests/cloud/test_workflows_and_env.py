@@ -32,6 +32,27 @@ async def test_pipeline_runner_execution(temp_vault_dir, monkeypatch):
     monkeypatch.setenv("LOCAL_STORAGE_ROOT", temp_vault_dir)
     monkeypatch.setenv("STORAGE_DRIVER", "local")
 
+    from tests.pipeline_mocks import (
+        MockVideoIngestor,
+        MockAudioPerceptionEngine,
+        MockVideoUnderstandingEngine,
+        MockClipDiscoveryEngine,
+        MockVirtualCameraDirector,
+        MockRenderOrchestrationEngine,
+        MockQAEngine,
+        MockTelegramApprovalGateway,
+    )
+    storage = LocalStorageDriver(root_dir=temp_vault_dir)
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_storage_driver", lambda s: storage)
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_ingestor", lambda s: MockVideoIngestor(storage))
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_perception_engine", lambda s: MockAudioPerceptionEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_vision_engine", lambda s: MockVideoUnderstandingEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_discovery_engine", lambda s: MockClipDiscoveryEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_camera_director", lambda s: MockVirtualCameraDirector())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_render_engine", lambda s: MockRenderOrchestrationEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_qa_engine", lambda s: MockQAEngine())
+    monkeypatch.setattr("clipping.cli.pipeline_runner.get_approval_gateway", lambda s, st: MockTelegramApprovalGateway())
+
     job_id = "JOB_CLI_RUNNER_TEST"
     exit_code = await run_pipeline(
         source_uri="https://www.youtube.com/watch?v=mock_video",
