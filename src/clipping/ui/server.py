@@ -46,22 +46,11 @@ app.add_middleware(
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+from clipping.storage.factory import create_storage_driver
+
+
 def get_storage_driver() -> StorageDriver:
-    settings = Settings()
-    if settings.STORAGE_DRIVER == "gdrive" and settings.GOOGLE_DRIVE_ROOT_FOLDER_ID:
-        if settings.GOOGLE_DRIVE_REFRESH_TOKEN:
-            return GoogleDriveStorageDriver(
-                root_folder_id=settings.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-                client_id=settings.GOOGLE_DRIVE_CLIENT_ID,
-                client_secret=settings.GOOGLE_DRIVE_CLIENT_SECRET.get_secret_value() if settings.GOOGLE_DRIVE_CLIENT_SECRET else None,
-                refresh_token=settings.GOOGLE_DRIVE_REFRESH_TOKEN.get_secret_value(),
-            )
-        return GoogleDriveStorageDriver(
-            root_folder_id=settings.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-            service_account_json=settings.GOOGLE_SERVICE_ACCOUNT_JSON.get_secret_value() if settings.GOOGLE_SERVICE_ACCOUNT_JSON else None,
-            service_account_file=settings.GOOGLE_APPLICATION_CREDENTIALS,
-        )
-    return LocalStorageDriver(root_dir=settings.LOCAL_STORAGE_ROOT)
+    return create_storage_driver()
 
 
 def get_control_service(storage: StorageDriver = Depends(get_storage_driver)) -> MasterControlService:

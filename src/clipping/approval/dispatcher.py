@@ -92,13 +92,8 @@ async def run_dispatcher_cli(limit: int = 50) -> int:
     allowed_chats = settings.get_allowed_telegram_chat_ids()
 
     # Storage driver resolution
-    if settings.STORAGE_DRIVER == "gdrive" and settings.GOOGLE_DRIVE_ROOT_FOLDER_ID:
-        storage = GoogleDriveStorageDriver(
-            folder_id=settings.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-            credentials_path=settings.GOOGLE_APPLICATION_CREDENTIALS,
-        )
-    else:
-        storage = LocalStorageDriver(root_dir=settings.LOCAL_STORAGE_ROOT)
+    from clipping.storage.factory import create_storage_driver
+    storage = create_storage_driver(settings)
 
     transport = HttpTelegramTransport(bot_token=token)
     repo = ApprovalRepository(storage_driver=storage)

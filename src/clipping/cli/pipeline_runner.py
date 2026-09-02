@@ -13,20 +13,14 @@ from clipping.state.lease import JobLeaseRepository
 from clipping.state.models import JobState, PipelineStage
 from clipping.state.remote import RemoteStorageStateRepository
 from clipping.storage.base import StorageDriver
-from clipping.storage.local import LocalStorageDriver
-from clipping.storage.google_drive import GoogleDriveStorageDriver
+from clipping.storage.factory import create_storage_driver
 from clipping.logging.logger import get_logger
 
 logger = get_logger("clipping.cli.pipeline_runner")
 
 
 def get_storage_driver(settings: Settings) -> StorageDriver:
-    if settings.STORAGE_DRIVER == "gdrive" and settings.GOOGLE_DRIVE_ROOT_FOLDER_ID:
-        return GoogleDriveStorageDriver(
-            folder_id=settings.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-            credentials_path=settings.GOOGLE_APPLICATION_CREDENTIALS,
-        )
-    return LocalStorageDriver(root_dir=settings.LOCAL_STORAGE_ROOT)
+    return create_storage_driver(settings)
 
 
 async def run_pipeline(

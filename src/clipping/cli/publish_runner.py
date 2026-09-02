@@ -13,20 +13,14 @@ from clipping.publishing.service import PublishingService
 from clipping.publishing.scheduler import PublishingScheduler
 from clipping.approval.repository import ApprovalRepository
 from clipping.storage.base import StorageDriver
-from clipping.storage.local import LocalStorageDriver
-from clipping.storage.google_drive import GoogleDriveStorageDriver
+from clipping.storage.factory import create_storage_driver
 from clipping.logging.logger import get_logger
 
 logger = get_logger("clipping.cli.publish_runner")
 
 
 def resolve_storage(settings: Settings) -> StorageDriver:
-    if settings.STORAGE_DRIVER == "gdrive" and settings.GOOGLE_DRIVE_ROOT_FOLDER_ID:
-        return GoogleDriveStorageDriver(
-            folder_id=settings.GOOGLE_DRIVE_ROOT_FOLDER_ID,
-            credentials_path=settings.GOOGLE_APPLICATION_CREDENTIALS,
-        )
-    return LocalStorageDriver(root_dir=settings.LOCAL_STORAGE_ROOT)
+    return create_storage_driver(settings)
 
 
 async def run_publisher(job_id: Optional[str] = None, run_scheduler: bool = False) -> int:
