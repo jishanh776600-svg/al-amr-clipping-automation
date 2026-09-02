@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
     GOOGLE_SERVICE_ACCOUNT_JSON: Optional[SecretStr] = None
     GOOGLE_DRIVE_ROOT_FOLDER_ID: Optional[str] = None
+    GOOGLE_DRIVE_CLIENT_ID: Optional[str] = None
+    GOOGLE_DRIVE_CLIENT_SECRET: Optional[SecretStr] = None
+    GOOGLE_DRIVE_REFRESH_TOKEN: Optional[SecretStr] = None
 
     # 7. LOGGING SETTINGS
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

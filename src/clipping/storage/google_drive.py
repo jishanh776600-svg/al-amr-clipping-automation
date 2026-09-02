@@ -20,14 +20,36 @@ class GoogleDriveStorageDriver(StorageDriver):
         root_folder_id: str = "root",
         service_account_json: Optional[str] = None,
         service_account_file: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        refresh_token: Optional[str] = None,
         drive_service: Optional[Any] = None,
     ):
         self.root_folder_id = root_folder_id
         self._service = drive_service
         self._folder_cache: Dict[str, str] = {"": root_folder_id}
 
-        if self._service is None and (service_account_json or service_account_file):
-            self._init_service(service_account_json, service_account_file)
+        if self._service is None:
+            if refresh_token:
+                self._init_oauth_service(client_id, client_secret, refresh_token)
+            elif service_account_json or service_account_file:
+                self._init_service(service_account_json, service_account_file)
+
+    def _init_oauth_service(self, client_id: Optional[str], client_secret: Optional[str], refresh_token: str) -> None:
+        """Initializes Google Drive API service client with OAuth2 user refresh token credentials."""
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        scopes = ["https://www.googleapis.com/auth/drive"]
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+        )
+        self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     def _init_service(self, json_str: Optional[str], file_path: Optional[str]) -> None:
         """Initializes Google Drive API service client with service account credentials."""
