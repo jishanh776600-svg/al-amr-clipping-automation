@@ -1,0 +1,29 @@
+"""Core constants and schema versions."""
+
+SCHEMA_VERSION = "1.0.0"
+
+# Target Vertical Video Standards
+TARGET_WIDTH = 1080
+TARGET_HEIGHT = 1920
+TARGET_ASPECT_RATIO = "9:16"
+TARGET_FPS = 30.0
+
+# Audio Standards (EBU R128)
+TARGET_LOUDNORM_I = -14.0  # LUFS
+TARGET_LOUDNORM_TP = -1.0  # dBFS
+TARGET_LOUDNORM_LRA = 7.0  # LU
+
+# Canonical 9-Stage Pipeline Sequence
+PIPELINE_STAGE_COUNT = 9
+CANONICAL_PIPELINE_STAGES = [
+    "01_INGESTION",
+    "02_TRANSCRIPTION",
+    "03_UNDERSTANDING",
+    "04_DISCOVERY",
+    "05_REFRAME",
+    "06_RENDER",
+    "07_QA",
+    "08_APPROVAL",
+    "09_PUBLISH",
+]
+

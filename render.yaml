@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: al-amr-clipping-automation
+    runtime: python
+    plan: free
+    buildCommand: "pip install -e ."
+    startCommand: "uvicorn clipping.ui.server:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /healthz
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: STORAGE_DRIVER
+        value: gdrive
+      - key: GOOGLE_DRIVE_ROOT_FOLDER_ID
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: OPERATOR_TOKEN
+        generateValue: true
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_PAT
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false

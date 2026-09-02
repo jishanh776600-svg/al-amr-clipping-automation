@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en" class="dark h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#05070a">
+    <title>AL AMR // Clipping Automation Console</title>
+
+    <!-- Authoritative Typography: Plus Jakarta Sans for UI, JetBrains Mono for Precision Telemetry -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                    },
+                    colors: {
+                        obsidian: '#05070a',
+                        surface1: '#090d14',
+                        surface2: '#0e1420',
+                        surface3: '#151d2e',
+                        cyanAccent: '#38bdf8',
+                        emeraldAccent: '#10b981',
+                        crimsonAccent: '#f43f5e',
+                        amberAccent: '#f59e0b',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #05070a;
+            color: #f1f5f9;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            overflow-x: hidden;
+        }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #05070a; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+
+        .cinema-viewport {
+            box-shadow: 0 0 50px -10px rgba(56, 189, 248, 0.12), 0 20px 40px -15px rgba(0, 0, 0, 0.8);
+        }
+
+        .aspect-shorts {
+            aspect-ratio: 9 / 16;
+        }
+
+        .media-card {
+            transition: all 200ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .media-card:hover {
+            border-color: rgba(56, 189, 248, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 0 20px -5px rgba(56, 189, 248, 0.15);
+        }
+
+        .pipeline-stage.active {
+            border-color: #38bdf8;
+            background-color: rgba(56, 189, 248, 0.08);
+            color: #ffffff;
+        }
+        .pipeline-stage.complete {
+            border-color: #10b981;
+            background-color: rgba(16, 185, 129, 0.06);
+            color: #10b981;
+        }
+    </style>
+</head>
+<body class="min-h-full flex flex-col bg-obsidian text-slate-100 antialiased selection:bg-cyanAccent selection:text-black">
+
+    <!-- GLOBAL EMERGENCY STOP BANNER (HIDDEN BY DEFAULT) -->
+    <div id="emergency-banner" class="hidden bg-rose-950/90 border-b border-rose-600 px-4 py-2.5 text-xs font-mono text-rose-200 flex items-center justify-between z-50">
+        <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+            <span class="font-bold tracking-wider text-white">🛑 GLOBAL EMERGENCY STOP ACTIVE</span>
+            <span id="emergency-reason" class="text-rose-300">All autonomous execution and YouTube publishing are blocked.</span>
+        </div>
+        <button onclick="confirmAction('resume')" class="px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold transition">
+            RESUME AUTOMATION
+        </button>
+    </div>
+
+    <!-- TOP TELEMETRY & MASTER CONTROL HEADER -->
+    <header class="border-b border-slate-800/80 bg-surface1/90 backdrop-blur sticky top-0 z-40 px-4 lg:px-6 py-3">
+        <div class="flex items-center justify-between gap-4">
+            
+            <!-- BRAND IDENTITY -->
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-700 flex items-center justify-center font-mono font-bold text-white shadow-lg shadow-cyan-500/20 text-base">
+                    عمر
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-extrabold tracking-wider text-white text-base">AL AMR</span>
+                        <span class="text-[10px] font-mono tracking-widest px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyanAccent border border-cyan-500/20">v1.2</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 font-mono tracking-tight hidden sm:block">Autonomous Video Intelligence & Vertical Media Engine</p>
+                </div>
+            </div>
+
+            <!-- SYSTEM STATUS TELEMETRY PILLS -->
+            <div class="hidden md:flex items-center gap-2 text-xs font-mono">
+                <div id="status-pill-system" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface2 border border-slate-800 text-slate-300">
+                    <span id="status-dot-system" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span id="status-text-system">OPERATIONAL</span>
+                </div>
+                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface2 border border-slate-800 text-slate-300">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                    <span>TELEGRAM: LINKED</span>
+                </div>
+                <div id="status-pill-publisher" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface2 border border-slate-800 text-slate-300">
+                    <span id="status-dot-publisher" class="w-2 h-2 rounded-full bg-blue-400"></span>
+                    <span id="status-text-publisher">SCHEDULER: READY</span>
+                </div>
+                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface2 border border-slate-800 text-slate-300">
+                    <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+                    <span>GDRIVE CANONICAL</span>
+                </div>
+            </div>
+
+            <!-- MASTER CONTROL ACTION BUTTONS -->
+            <div class="flex items-center gap-2">
+                <button onclick="openMasterControlModal()" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded-lg bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-200 transition">
+                    <span>⚙ MASTER CONTROL</span>
+                </button>
+                <button onclick="confirmEmergencyStop()" class="flex items-center gap-1 px-3 py-1.5 text-xs font-mono font-bold rounded-lg bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 transition">
+                    <span>🛑 STOP</span>
+                </button>
+                <button id="btn-refresh" onclick="fetchFullState()" class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-lg bg-surface2 hover:bg-surface3 border border-slate-700/80 transition text-slate-400 hover:text-white">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- CANONICAL 9-STAGE PIPELINE TRACKER BAR -->
+    <div class="bg-surface1 border-b border-slate-800 px-4 lg:px-6 py-2 overflow-x-auto">
+        <div class="flex items-center justify-between min-w-[900px] gap-2 text-[11px] font-mono">
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>01</span><span>INGESTION</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>02</span><span>TRANSCRIPTION</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>03</span><span>UNDERSTANDING</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>04</span><span>DISCOVERY</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>05</span><span>REFRAME</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>06</span><span>RENDER</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage complete flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-500/30">
+                <span>07</span><span>QA</span><span>✓</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage active flex items-center gap-1.5 px-2.5 py-1 rounded border border-cyan-500/50">
+                <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+                <span>08</span><span>APPROVAL</span>
+            </div>
+            <span class="text-slate-600">→</span>
+            <div class="pipeline-stage flex items-center gap-1.5 px-2.5 py-1 rounded border border-slate-800 text-slate-500">
+                <span>09</span><span>PUBLISH</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN MEDIA WORKSPACE -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden">
+        
+        <!-- LEFT: MEDIA-FIRST CINEMA CANVAS & INTERACTIVE TIMELINE (7 COLS) -->
+        <section class="lg:col-span-7 flex flex-col border-r border-slate-800/80 bg-obsidian p-4 lg:p-6 overflow-y-auto">
+            
+            <!-- CURRENT CLIP HEADER -->
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span id="active-clip-badge" class="px-2 py-0.5 rounded text-xs font-mono bg-cyan-500/10 text-cyanAccent border border-cyan-500/30">CLIP #01</span>
+                        <h2 id="active-clip-title" class="text-base lg:text-lg font-bold text-white tracking-tight">The Future of Media Automation</h2>
+                    </div>
+                    <p id="active-clip-subtitle" class="text-xs font-mono text-slate-400 mt-0.5">TIMELINE: 01:42.0 → 02:14.0 | DURATION: 00:32.0</p>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <span id="active-qa-badge" class="px-2.5 py-1 text-xs font-mono font-semibold rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        QA PASS
+                    </span>
+                    <span id="active-status-badge" class="px-2.5 py-1 text-xs font-mono font-semibold rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                        AWAITING
+                    </span>
+                </div>
+            </div>
+
+            <!-- 9:16 VERTICAL CINEMA PREVIEW PLAYER -->
+            <div class="flex justify-center items-center my-auto py-2">
+                <div class="cinema-viewport relative aspect-shorts w-full max-w-[340px] max-h-[580px] rounded-2xl bg-surface2 border border-slate-700/60 overflow-hidden flex flex-col justify-between p-4 shadow-2xl">
+                    
+                    <!-- TOP OVERLAY: ACTIVE SPEAKER TELEMETRY & SAFE-ZONE INDICATOR -->
+                    <div class="flex items-center justify-between z-10">
+                        <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-black/60 backdrop-blur border border-white/10 text-[10px] font-mono text-slate-200">
+                            <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                            <span>SPEAKER 01 (CONF 96%)</span>
+                        </div>
+                        <div class="px-2 py-1 rounded bg-black/60 backdrop-blur border border-white/10 text-[10px] font-mono text-cyanAccent">
+                            1080×1920 (9:16)
+                        </div>
+                    </div>
+
+                    <!-- MOCK DYNAMIC REFRAME FACE BOX (SIMULATING TALKNET-FREE TRACKING) -->
+                    <div id="face-box" class="absolute left-[24%] top-[20%] w-[52%] h-[40%] border-2 border-cyan-400/80 rounded-xl pointer-events-none shadow-[0_0_15px_rgba(56,189,248,0.3)] transition-all duration-300 flex items-start justify-end p-1">
+                        <span class="bg-cyan-500 text-black text-[9px] font-mono font-bold px-1 rounded">FACETRACK</span>
+                    </div>
+
+                    <!-- CENTER HERO SUBTITLE PREVIEW (KINETIC KARAOKE SIMULATION) -->
+                    <div class="my-auto z-10 text-center px-4">
+                        <div id="subtitle-preview" class="inline-block px-3 py-1.5 rounded-lg bg-black/80 backdrop-blur border border-white/10 text-white font-extrabold text-lg leading-tight uppercase tracking-tight shadow-xl">
+                            <span class="text-cyanAccent underline decoration-cyan-400 underline-offset-4">AUTOMATED</span> MEDIA WORKFLOWS
+                        </div>
+                        <p class="text-[11px] font-mono text-slate-400 mt-2 bg-black/40 px-2 py-0.5 rounded inline-block">Safe-Zone Cleared: y ∈ [1100, 1600]</p>
+                    </div>
+
+                    <!-- BOTTOM MEDIA CONTROLS OVERLAY -->
+                    <div class="z-10 flex flex-col gap-2 pt-2">
+                        <div class="flex items-center justify-between text-xs font-mono text-slate-300">
+                            <span id="current-time-display">00:14.2</span>
+                            <span id="duration-display">00:32.0</span>
+                        </div>
+                        <!-- PLAYHEAD SLIDER -->
+                        <div class="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden cursor-pointer relative" onclick="seekTimeline(event)">
+                            <div id="video-progress-bar" class="bg-cyanAccent h-full w-[44%] transition-all"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COMPACT MULTI-TRACK INTERACTIVE TIMELINE (KLING / HIGGSFIELD INSPIRED) -->
+            <div class="mt-4 p-4 rounded-xl bg-surface1 border border-slate-800">
+                <div class="flex items-center justify-between mb-3 text-xs font-mono">
+                    <span class="text-slate-400">MULTI-TRACK ALIGNMENT</span>
+                    <div class="flex items-center gap-3">
+                        <button onclick="togglePlay()" id="btn-play-pause" class="px-2.5 py-1 rounded bg-cyanAccent text-black font-bold text-xs hover:bg-cyan-300 transition flex items-center gap-1">
+                            <span>▶ PLAY</span>
+                        </button>
+                        <span class="text-slate-400">ZOOM 100%</span>
+                    </div>
+                </div>
+
+                <div class="space-y-2 font-mono text-[10px]">
+                    <div class="flex items-center gap-2">
+                        <span class="w-16 text-slate-400">VIDEO</span>
+                        <div class="flex-1 h-6 rounded bg-surface2 border border-slate-700/60 relative overflow-hidden flex">
+                            <div class="w-1/3 h-full border-r border-cyan-500/50 bg-cyan-500/10 flex items-center px-2 text-cyan-300">SCENE 01</div>
+                            <div class="w-2/3 h-full bg-blue-500/10 flex items-center px-2 text-blue-300">SCENE 02 (SPEAKER SHOT)</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-16 text-slate-400">DIARIZATION</span>
+                        <div class="flex-1 h-6 rounded bg-surface2 border border-slate-700/60 relative overflow-hidden flex">
+                            <div class="w-2/5 h-full bg-emerald-500/20 border-r border-emerald-500/40 flex items-center px-2 text-emerald-300">SPK_00</div>
+                            <div class="w-3/5 h-full bg-purple-500/20 flex items-center px-2 text-purple-300">SPK_01</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-16 text-slate-400">CAPTIONS</span>
+                        <div class="flex-1 h-6 rounded bg-surface2 border border-slate-700/60 relative overflow-hidden flex items-center px-2 text-yellow-300/80 bg-yellow-500/10">
+                            <span>[00:00 - 00:32] KINETIC ASS FORMATTED (28 WORDS ATTRIBUTED)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- OPERATOR DECISION ACTIONS FOR ACTIVE CLIP -->
+            <div class="mt-4 flex items-center justify-between p-4 rounded-xl bg-surface2 border border-slate-800">
+                <div>
+                    <div class="text-xs font-mono text-slate-400">TELEGRAM & CANONICAL DECISION</div>
+                    <div class="text-sm font-semibold text-white">Human-in-the-Loop Gateway</div>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <button onclick="submitDecision('reject')" class="px-4 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-mono font-bold transition flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        REJECT CLIP
+                    </button>
+                    <button onclick="submitDecision('approve')" class="px-5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-mono font-extrabold shadow-lg shadow-emerald-500/20 transition flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        APPROVE FOR YOUTUBE
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT: CANDIDATE DISCOVERY MATRIX & QUEUE (5 COLS) -->
+        <section class="lg:col-span-5 flex flex-col bg-surface1 p-4 lg:p-6 overflow-y-auto">
+            
+            <!-- SECTION HEADER & FILTERS -->
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono">Discovered Candidates</h3>
+                    <p class="text-xs text-slate-400 font-mono">Ranked by Semantic Virality & Hook Density</p>
+                </div>
+                <span id="clip-count-badge" class="px-2 py-0.5 text-xs font-mono rounded bg-slate-800 text-cyanAccent">3 CLIPS</span>
+            </div>
+
+            <!-- CANDIDATE CLIP CARDS CONTAINER -->
+            <div id="clips-list" class="space-y-3 flex-1 overflow-y-auto pr-1">
+                <!-- Cards dynamically populated via JS -->
+            </div>
+
+            <!-- SYSTEM LOG FOOTER -->
+            <div class="mt-6 pt-4 border-t border-slate-800 text-xs font-mono text-slate-400 flex items-center justify-between">
+                <span>Google Drive Canonical State</span>
+                <span class="text-emerald-400 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    SYNCED
+                </span>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- MASTER CONTROL MODAL -->
+    <div id="master-control-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-surface1 border border-slate-700 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-5">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-cyan-400"></span>
+                    <h3 class="text-base font-bold font-mono text-white">MASTER CONTROL CONSOLE</h3>
+                </div>
+                <button onclick="closeMasterControlModal()" class="text-slate-400 hover:text-white font-mono text-sm">✕</button>
+            </div>
+
+            <!-- CONTROL ACTION GRID -->
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+                <button onclick="triggerAction('run-now')" class="p-3 rounded-xl bg-surface2 hover:bg-surface3 border border-slate-700 flex flex-col gap-1 text-left transition">
+                    <span class="text-cyanAccent font-bold text-sm">⚡ RUN NOW</span>
+                    <span class="text-slate-400 text-[11px]">Dispatch immediate ingestion workflow</span>
+                </button>
+                <button onclick="togglePauseAutomation()" id="btn-pause-resume" class="p-3 rounded-xl bg-surface2 hover:bg-surface3 border border-slate-700 flex flex-col gap-1 text-left transition">
+                    <span id="txt-pause-resume" class="text-amber-400 font-bold text-sm">⏸ PAUSE AUTOMATION</span>
+                    <span class="text-slate-400 text-[11px]">Suspend scheduling without locks</span>
+                </button>
+                <button onclick="togglePublishLock()" id="btn-pub-lock" class="p-3 rounded-xl bg-surface2 hover:bg-surface3 border border-slate-700 flex flex-col gap-1 text-left transition">
+                    <span id="txt-pub-lock" class="text-purple-400 font-bold text-sm">🔒 LOCK PUBLISHING</span>
+                    <span class="text-slate-400 text-[11px]">Block all YouTube Shorts uploads</span>
+                </button>
+                <button onclick="confirmEmergencyStop()" class="p-3 rounded-xl bg-rose-950/40 hover:bg-rose-950/70 border border-rose-600/60 flex flex-col gap-1 text-left transition">
+                    <span class="text-rose-400 font-bold text-sm">🛑 EMERGENCY STOP</span>
+                    <span class="text-rose-300 text-[11px]">Freeze all execution & publishing</span>
+                </button>
+            </div>
+
+            <!-- OPERATOR TOKEN INPUT -->
+            <div class="pt-3 border-t border-slate-800 space-y-2 text-xs font-mono">
+                <label class="text-slate-400 block">Operator Authorization Token</label>
+                <div class="flex gap-2">
+                    <input type="password" id="operator-token-input" placeholder="Enter Operator Token..." class="flex-1 bg-surface2 border border-slate-700 rounded-lg px-3 py-1.5 text-white font-mono text-xs focus:border-cyan-500 focus:outline-none">
+                    <button onclick="saveOperatorToken()" class="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-black font-bold transition">SAVE</button>
+                </div>
+                <p class="text-[10px] text-slate-500">Stored in browser localStorage for authorized control mutations.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI JAVASCRIPT STATE ENGINE -->
+    <script>
+        let clipsData = [];
+        let activeClipIndex = 0;
+        let isPlaying = false;
+        let progressInterval = null;
+        let progress = 44;
+        let controlState = null;
+
+        const defaultClips = [
+            {
+                clip_id: "clip_podcast_01",
+                title: "The Zero-Cost Architecture Revelation",
+                duration: 32.4,
+                score: 93.8,
+                approval_status: "awaiting_approval",
+                qa_status: "PASS",
+                can_publish: true,
+                score_breakdown: { hook: 96.0, story: 91.5, curiosity: 95.0, pacing: 92.0 },
+                hook_sentence: "If your clipping pipeline requires a local GPU, you've already lost the cost war."
+            },
+            {
+                clip_id: "clip_podcast_02",
+                title: "TalkNet-Free Active Speaker Resolution",
+                duration: 28.5,
+                score: 89.2,
+                approval_status: "approved",
+                qa_status: "PASS",
+                can_publish: true,
+                score_breakdown: { hook: 91.0, story: 88.0, curiosity: 92.5, pacing: 86.0 },
+                hook_sentence: "We replaced heavy audiovisual models with temporal face overlap."
+            },
+            {
+                clip_id: "clip_podcast_03",
+                title: "Autonomous YouTube Scheduling",
+                duration: 35.1,
+                score: 87.5,
+                approval_status: "awaiting_approval",
+                qa_status: "PASS",
+                can_publish: true,
+                score_breakdown: { hook: 88.5, story: 86.0, curiosity: 89.0, pacing: 85.0 },
+                hook_sentence: "The device can remain completely OFF while scheduled Shorts release."
+            }
+        ];
+
+        function getAuthHeaders() {
+            const token = localStorage.getItem("al_amr_clipping_operator_token");
+            const headers = { "Content-Type": "application/json" };
+            if (token) {
+                headers["X-Operator-Token"] = token;
+                headers["Authorization"] = `Bearer ${token}`;
+            }
+            return headers;
+        }
+
+        function saveOperatorToken() {
+            const token = document.getElementById("operator-token-input").value;
+            if (token) {
+                localStorage.setItem("al_amr_clipping_operator_token", token);
+                alert("Operator Token saved.");
+            }
+        }
+
+        async function fetchFullState() {
+            await fetchControlState();
+            await fetchClips();
+        }
+
+        async function fetchControlState() {
+            try {
+                const res = await fetch("/api/system/status");
+                if (res.ok) {
+                    const data = await res.json();
+                    controlState = data.control_state;
+
+                    // Update emergency banner
+                    const banner = document.getElementById("emergency-banner");
+                    const statusText = document.getElementById("status-text-system");
+                    const statusDot = document.getElementById("status-dot-system");
+
+                    if (controlState.emergency_stopped) {
+                        banner.classList.remove("hidden");
+                        document.getElementById("emergency-reason").innerText = `Reason: ${controlState.reason || 'Operator triggered emergency stop'}`;
+                        statusText.innerText = "EMERGENCY STOPPED";
+                        statusText.className = "text-rose-400 font-bold";
+                        statusDot.className = "w-2 h-2 rounded-full bg-rose-500 animate-ping";
+                    } else if (controlState.automation_paused) {
+                        banner.classList.add("hidden");
+                        statusText.innerText = "AUTOMATION PAUSED";
+                        statusText.className = "text-amber-400 font-semibold";
+                        statusDot.className = "w-2 h-2 rounded-full bg-amber-400";
+                    } else {
+                        banner.classList.add("hidden");
+                        statusText.innerText = "OPERATIONAL";
+                        statusText.className = "text-slate-300";
+                        statusDot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+                    }
+
+                    // Update Publishing pill
+                    const pubText = document.getElementById("status-text-publisher");
+                    const pubDot = document.getElementById("status-dot-publisher");
+                    if (controlState.publishing_locked || controlState.emergency_stopped) {
+                        pubText.innerText = "PUBLISHING: LOCKED";
+                        pubText.className = "text-rose-400";
+                        pubDot.className = "w-2 h-2 rounded-full bg-rose-500";
+                    } else {
+                        pubText.innerText = "SCHEDULER: READY";
+                        pubText.className = "text-slate-300";
+                        pubDot.className = "w-2 h-2 rounded-full bg-blue-400";
+                    }
+                }
+            } catch (e) {
+                console.log("Error loading system status", e);
+            }
+        }
+
+        async function fetchClips() {
+            try {
+                const res = await fetch("/api/jobs/job_default/clips");
+                if (res.ok) {
+                    const data = await res.json();
+                    clipsData = (data && data.length > 0) ? data : defaultClips;
+                } else {
+                    clipsData = defaultClips;
+                }
+            } catch (e) {
+                clipsData = defaultClips;
+            }
+            renderClips();
+            selectClip(activeClipIndex);
+        }
+
+        function renderClips() {
+            const container = document.getElementById("clips-list");
+            container.innerHTML = "";
+            document.getElementById("clip-count-badge").innerText = `${clipsData.length} CLIPS`;
+
+            clipsData.forEach((clip, idx) => {
+                const isSelected = (idx === activeClipIndex);
+                const card = document.createElement("div");
+                card.className = `media-card p-4 rounded-xl cursor-pointer border ${isSelected ? 'border-cyan-500 bg-surface2/90 shadow-lg shadow-cyan-500/10' : 'border-slate-800 bg-surface2/40 hover:bg-surface2/70'}`;
+                card.onclick = () => selectClip(idx);
+
+                let statusColor = "bg-amber-500/10 text-amber-300 border-amber-500/30";
+                if (clip.approval_status === "approved") {
+                    statusColor = "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+                } else if (clip.approval_status === "rejected") {
+                    statusColor = "bg-rose-500/10 text-rose-400 border-rose-500/30";
+                }
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-2 mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">#0${idx + 1}</span>
+                            <span class="text-xs font-mono text-slate-400">${clip.duration.toFixed(1)}s</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded border ${statusColor} uppercase font-semibold">
+                                ${clip.approval_status.replace('_', ' ')}
+                            </span>
+                            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                QA PASS
+                            </span>
+                        </div>
+                    </div>
+
+                    <h4 class="text-sm font-semibold text-white leading-snug mb-1.5">${clip.title}</h4>
+                    <p class="text-xs text-slate-400 italic mb-3 line-clamp-2 font-serif">"${clip.hook_sentence}"</p>
+
+                    <div class="pt-2 border-t border-slate-800/80 grid grid-cols-4 gap-2 text-[10px] font-mono">
+                        <div><span class="text-slate-500 block">SCORE</span><span class="text-cyanAccent font-bold text-xs">${clip.score}</span></div>
+                        <div><span class="text-slate-500 block">HOOK</span><span class="text-slate-300 font-semibold">${clip.score_breakdown.hook}%</span></div>
+                        <div><span class="text-slate-500 block">STORY</span><span class="text-slate-300 font-semibold">${clip.score_breakdown.story}%</span></div>
+                        <div><span class="text-slate-500 block">CURIOSITY</span><span class="text-slate-300 font-semibold">${clip.score_breakdown.curiosity}%</span></div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function selectClip(index) {
+            activeClipIndex = index;
+            const clip = clipsData[index];
+            if (!clip) return;
+
+            document.getElementById("active-clip-badge").innerText = `CLIP #0${index + 1}`;
+            document.getElementById("active-clip-title").innerText = clip.title;
+            document.getElementById("active-clip-subtitle").innerText = `DURATION: 00:${Math.round(clip.duration)}s | VIRALITY SCORE: ${clip.score}`;
+            document.getElementById("duration-display").innerText = `00:${Math.round(clip.duration)}.0`;
+
+            const statusBadge = document.getElementById("active-status-badge");
+            statusBadge.innerText = clip.approval_status.replace('_', ' ').toUpperCase();
+            if (clip.approval_status === "approved") {
+                statusBadge.className = "px-2.5 py-1 text-xs font-mono font-semibold rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+            } else if (clip.approval_status === "rejected") {
+                statusBadge.className = "px-2.5 py-1 text-xs font-mono font-semibold rounded bg-rose-500/10 text-rose-400 border border-rose-500/30";
+            } else {
+                statusBadge.className = "px-2.5 py-1 text-xs font-mono font-semibold rounded bg-amber-500/10 text-amber-300 border border-amber-500/30";
+            }
+
+            const words = clip.hook_sentence.split(" ");
+            const highlightedWord = words[0] || "AUTOMATED";
+            const rest = words.slice(1, 5).join(" ");
+            document.getElementById("subtitle-preview").innerHTML = `
+                <span class="text-cyanAccent underline decoration-cyan-400 underline-offset-4">${highlightedWord}</span> ${rest}
+            `;
+            renderClips();
+        }
+
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            const btn = document.getElementById("btn-play-pause");
+            if (isPlaying) {
+                btn.innerHTML = `<span>⏸ PAUSE</span>`;
+                progressInterval = setInterval(() => {
+                    progress = (progress + 2) % 100;
+                    document.getElementById("video-progress-bar").style.width = `${progress}%`;
+                    const currentSec = (progress / 100 * 32).toFixed(1);
+                    document.getElementById("current-time-display").innerText = `00:${currentSec.padStart(4, '0')}`;
+                }, 200);
+            } else {
+                btn.innerHTML = `<span>▶ PLAY</span>`;
+                clearInterval(progressInterval);
+            }
+        }
+
+        function seekTimeline(event) {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            progress = Math.min(100, Math.max(0, (clickX / rect.width) * 100));
+            document.getElementById("video-progress-bar").style.width = `${progress}%`;
+            const currentSec = (progress / 100 * 32).toFixed(1);
+            document.getElementById("current-time-display").innerText = `00:${currentSec.padStart(4, '0')}`;
+        }
+
+        async function submitDecision(action) {
+            const clip = clipsData[activeClipIndex];
+            if (!clip) return;
+
+            clip.approval_status = (action === "approve") ? "approved" : "rejected";
+            selectClip(activeClipIndex);
+
+            try {
+                await fetch(`/api/jobs/job_default/clips/${clip.clip_id}/decision`, {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ action: action, notes: "Console Operator decision" })
+                });
+            } catch (e) {
+                console.log("Recorded state locally in Console");
+            }
+        }
+
+        // Master Control Modal & Actions
+        function openMasterControlModal() {
+            document.getElementById("master-control-modal").classList.remove("hidden");
+            const token = localStorage.getItem("al_amr_clipping_operator_token") || "";
+            document.getElementById("operator-token-input").value = token;
+        }
+
+        function closeMasterControlModal() {
+            document.getElementById("master-control-modal").classList.add("hidden");
+        }
+
+        async function confirmEmergencyStop() {
+            const reason = prompt("EMERGENCY STOP RATIONALE (Mandatory):", "Operator manual safety stop");
+            if (!reason) return;
+
+            try {
+                const res = await fetch("/api/control/emergency-stop", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reason: reason })
+                });
+                if (res.ok) {
+                    alert("🛑 GLOBAL EMERGENCY STOP ACTIVATED.");
+                    await fetchControlState();
+                } else {
+                    alert("Failed to activate emergency stop. Check authorization token.");
+                }
+            } catch (e) {
+                alert("Network error executing emergency stop.");
+            }
+        }
+
+        async function confirmAction(action) {
+            if (action === "resume") {
+                try {
+                    const res = await fetch("/api/control/resume", {
+                        method: "POST",
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ reason: "Operator resumed automation" })
+                    });
+                    if (res.ok) {
+                        alert("Automation resumed.");
+                        await fetchControlState();
+                    }
+                } catch (e) {
+                    alert("Error resuming automation.");
+                }
+            }
+        }
+
+        async function togglePauseAutomation() {
+            const isPaused = controlState && controlState.automation_paused;
+            const endpoint = isPaused ? "/api/control/resume" : "/api/control/pause";
+            try {
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ reason: isPaused ? "Resumed by operator" : "Paused by operator" })
+                });
+                if (res.ok) {
+                    await fetchControlState();
+                }
+            } catch (e) {
+                console.log(e);
+            }
+        }
+
+        async function togglePublishLock() {
+            const isLocked = controlState && controlState.publishing_locked;
+            try {
+                const res = await fetch("/api/control/publish-lock", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ locked: !isLocked, reason: "Operator toggle" })
+                });
+                if (res.ok) {
+                    await fetchControlState();
+                }
+            } catch (e) {
+                console.log(e);
+            }
+        }
+
+        async function triggerAction(action) {
+            if (action === "run-now") {
+                try {
+                    const res = await fetch("/api/control/run-now", {
+                        method: "POST",
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ reason: "Manual operator trigger" })
+                    });
+                    const data = await res.json();
+                    alert(data.message || "Run triggered");
+                } catch (e) {
+                    alert("Failed to trigger run.");
+                }
+            }
+        }
+
+        window.addEventListener("DOMContentLoaded", () => {
+            fetchFullState();
+        });
+    </script>
+</body>
+</html>
