@@ -69,8 +69,7 @@ jobs:
         run: |
           pytest -v --tb=short
 
-      - name: Google Drive Cloud Storage Smoke Test (Secret Gated)
-        if: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN != '' }}
+      - name: Google Drive Cloud Storage Smoke Test
         env:
           GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
           GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
@@ -85,6 +84,10 @@ jobs:
           from clipping.storage.factory import create_storage_driver
 
           async def test_gdrive():
+              token = os.environ.get('GOOGLE_DRIVE_REFRESH_TOKEN')
+              if not token:
+                  print('GOOGLE DRIVE CLOUD STORAGE CHECK SKIPPED (No secret in PR context)')
+                  return
               driver = create_storage_driver()
               test_key = 'smoke_test/cloud_probe.txt'
               test_data = b'CLOUD_SMOKE_TEST_OK'
