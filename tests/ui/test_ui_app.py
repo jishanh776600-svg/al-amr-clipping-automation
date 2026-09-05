@@ -109,3 +109,32 @@ async def test_ui_get_clips_and_submit_decision(ui_test_env):
         audits = await app_repo.list_audits_for_job(job_id)
         assert len(audits) >= 1
         assert "Approved for YouTube Shorts" in audits[-1].reason
+
+
+@pytest.mark.asyncio
+async def test_ui_spa_routes_and_static_assets():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Verify SPA direct route entrypoints
+        spa_routes = [
+            "/dashboard", "/agent", "/campaigns", "/accounts",
+            "/clipping", "/approvals", "/publishing", "/tasks",
+            "/workers", "/escalations", "/activity", "/system"
+        ]
+        for route in spa_routes:
+            resp = await client.get(route)
+            assert resp.status_code == 200, f"Route {route} failed with {resp.status_code}"
+            assert "text/html" in resp.headers["content-type"]
+            assert "AL AMR CLIPPING" in resp.text
+
+        # Verify static asset accessibility
+        assets = [
+            "/static/css/dashboard.css",
+            "/static/js/api.js",
+            "/static/js/shell.js",
+            "/static/js/app.js",
+        ]
+        for asset in assets:
+            resp = await client.get(asset)
+            assert resp.status_code == 200, f"Asset {asset} failed with {resp.status_code}"
+

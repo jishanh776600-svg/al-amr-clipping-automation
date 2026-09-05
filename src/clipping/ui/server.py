@@ -1174,6 +1174,18 @@ if STATIC_DIR.exists():
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/agent", response_class=HTMLResponse)
+@app.get("/campaigns", response_class=HTMLResponse)
+@app.get("/accounts", response_class=HTMLResponse)
+@app.get("/clipping", response_class=HTMLResponse)
+@app.get("/approvals", response_class=HTMLResponse)
+@app.get("/publishing", response_class=HTMLResponse)
+@app.get("/tasks", response_class=HTMLResponse)
+@app.get("/workers", response_class=HTMLResponse)
+@app.get("/escalations", response_class=HTMLResponse)
+@app.get("/activity", response_class=HTMLResponse)
+@app.get("/system", response_class=HTMLResponse)
 async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
