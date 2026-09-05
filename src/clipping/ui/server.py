@@ -1357,6 +1357,108 @@ async def reconcile_campaign_submission_api(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.get("/api/orchestration/status")
+async def get_orchestration_status_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Provides overall orchestration engine health, current safety locks, and execution stats."""
+    from clipping.agent.orchestration.repository import OrchestrationRepository
+    from clipping.control.repository import ControlRepository
+
+    orch_repo = OrchestrationRepository(storage_driver=storage)
+    ctrl_repo = ControlRepository(storage_driver=storage)
+
+    ctrl_state = await ctrl_repo.get_state()
+    latest_cycle = await orch_repo.get_latest_cycle_summary()
+    active_records = await orch_repo.list_records(limit=200)
+
+    active_count = sum(1 for r in active_records if r.current_stage.is_active)
+    blocked_count = sum(1 for r in active_records if r.current_stage.value == "blocked")
+    escalated_count = sum(1 for r in active_records if r.current_stage.value == "escalated")
+    finalized_count = sum(1 for r in active_records if r.current_stage.value == "finalized")
+
+    return {
+        "engine_state": "operational" if not ctrl_state.emergency_stopped and not ctrl_state.automation_paused else "paused_or_stopped",
+        "emergency_stopped": ctrl_state.emergency_stopped,
+        "automation_paused": ctrl_state.automation_paused,
+        "publishing_locked": ctrl_state.publishing_locked,
+        "active_orchestrations_count": active_count,
+        "blocked_count": blocked_count,
+        "escalated_count": escalated_count,
+        "finalized_count": finalized_count,
+        "latest_cycle": latest_cycle.model_dump(mode="json") if latest_cycle else None,
+    }
+
+
+@app.get("/api/orchestration/records")
+async def list_orchestration_records_api(
+    stage: Optional[str] = None,
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists durable campaign orchestration records with optional stage filter."""
+    from clipping.agent.orchestration.models import OrchestrationStage
+    from clipping.agent.orchestration.repository import OrchestrationRepository
+
+    orch_repo = OrchestrationRepository(storage_driver=storage)
+    filter_stage = OrchestrationStage(stage) if stage else None
+    records = await orch_repo.list_records(stage=filter_stage, limit=limit)
+    return [r.model_dump(mode="json") for r in records]
+
+
+@app.get("/api/orchestration/records/{campaign_id}")
+async def get_orchestration_record_api(
+    campaign_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full orchestration history and checkpoints for a specific campaign."""
+    from clipping.agent.orchestration.repository import OrchestrationRepository
+
+    orch_repo = OrchestrationRepository(storage_driver=storage)
+    record = await orch_repo.get_record(campaign_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No orchestration record found for campaign '{campaign_id}'")
+    return record.model_dump(mode="json")
+
+
+@app.post("/api/orchestration/cycle")
+async def trigger_orchestration_cycle_api(
+    campaign_id: Optional[str] = None,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Triggers an on-demand autonomous orchestration cycle across campaigns."""
+    from clipping.agent.orchestration.engine import AutonomousOrchestrationEngine
+    from clipping.agent.campaign.repository import CampaignRepository
+    from clipping.agent.repository import AgentTaskRepository
+    from clipping.control.repository import ControlRepository
+
+    ctrl_repo = ControlRepository(storage_driver=storage)
+    camp_repo = CampaignRepository(storage_driver=storage)
+    task_repo = AgentTaskRepository(storage_driver=storage)
+
+    engine = AutonomousOrchestrationEngine(
+        storage_driver=storage,
+        control_repository=ctrl_repo,
+        campaign_repository=camp_repo,
+        task_repository=task_repo,
+    )
+    summary = await engine.run_orchestration_cycle(target_campaign_id=campaign_id)
+    return summary.model_dump(mode="json")
+
+
+@app.get("/api/orchestration/history")
+async def list_orchestration_cycle_history_api(
+    limit: int = 20,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists historical orchestration cycle runs and execution summaries."""
+    from clipping.agent.orchestration.repository import OrchestrationRepository
+
+    orch_repo = OrchestrationRepository(storage_driver=storage)
+    summaries = await orch_repo.list_cycle_summaries(limit=limit)
+    return [s.model_dump(mode="json") for s in summaries]
+
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
