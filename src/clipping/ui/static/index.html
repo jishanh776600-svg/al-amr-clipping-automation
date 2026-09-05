@@ -369,6 +369,155 @@
         </div>
     </div>
 
+    <!-- LAUNCH CAMPAIGN DISCOVERY MODAL -->
+    <div id="modal-launch-discovery" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-lg bg-surface1 border-cyan-500/40">
+            <div class="tech-card-header">
+                <div class="tech-card-title text-cyanAccent flex items-center gap-2">
+                    <span>🚀 LAUNCH AUTONOMOUS CAMPAIGN DISCOVERY</span>
+                </div>
+                <button onclick="AlAmrModals.closeLaunchDiscoveryModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <p class="text-xs text-slate-300 mb-4">
+                Enqueues an autonomous discovery task into the Cloud Task Queue. The cloud worker will crawl the discovery source, extract campaign briefs, check policy criteria, and register validated campaigns.
+            </p>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Discovery Target / Portal URL:</label>
+                    <input id="discovery-source-input" type="text" value="https://campaigns.internal/discover" placeholder="https://..." class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:border-cyan-500 outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Target Platform:</label>
+                        <select id="discovery-platform-select" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none">
+                            <option value="youtube_shorts">YouTube Shorts</option>
+                            <option value="tiktok">TikTok</option>
+                            <option value="instagram_reels">Instagram Reels</option>
+                            <option value="multi_platform">Multi-Platform</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Queue Priority:</label>
+                        <select id="discovery-priority-select" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none">
+                            <option value="normal">Normal (20)</option>
+                            <option value="high">High (30)</option>
+                            <option value="critical">Critical (40)</option>
+                            <option value="low">Low (10)</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Target Niche / Content Category (Optional):</label>
+                    <input id="discovery-niche-input" type="text" placeholder="e.g. tech, gaming, finance, entertainment" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:border-cyan-500 outline-none">
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 mt-5">
+                <button onclick="AlAmrModals.closeLaunchDiscoveryModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                    Cancel
+                </button>
+                <button onclick="AlAmrModals.submitLaunchDiscovery()" class="px-3.5 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5">
+                    <span>ENQUEUE DISCOVERY TASK</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TASK DETAIL & AUDIT MODAL -->
+    <div id="modal-task-detail" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-2xl bg-surface1 border-slate-700 max-h-[90vh] flex flex-col">
+            <div class="tech-card-header">
+                <div class="tech-card-title text-cyanAccent flex items-center gap-2">
+                    <span>TASK INSPECTOR //</span>
+                    <span id="task-detail-id" class="text-white font-mono">--</span>
+                </div>
+                <button onclick="AlAmrModals.closeTaskDetailModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div id="task-detail-content" class="flex-1 overflow-y-auto space-y-4 text-xs font-mono pr-1">
+                <!-- Dynamically filled by AlAmrModals.openTaskDetail -->
+            </div>
+            <div class="flex items-center justify-between pt-3 border-t border-slate-800 mt-3">
+                <div id="task-detail-actions" class="flex items-center gap-2"></div>
+                <button onclick="AlAmrModals.closeTaskDetailModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ACCOUNT STATUS UPDATE MODAL -->
+    <div id="modal-account-status" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-md bg-surface1">
+            <div class="tech-card-header">
+                <div class="tech-card-title text-cyanAccent">UPDATE ACCOUNT STATUS</div>
+                <button onclick="AlAmrModals.closeAccountStatusModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <input type="hidden" id="account-status-platform">
+            <input type="hidden" id="account-status-id">
+            <div class="space-y-3 text-xs">
+                <div>
+                    <span class="text-slate-400 font-mono">Account:</span>
+                    <span id="account-status-display" class="font-mono text-white font-bold ml-1"></span>
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Operating Status:</label>
+                    <select id="account-status-select" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none">
+                        <option value="active">ACTIVE</option>
+                        <option value="suspended">SUSPENDED</option>
+                        <option value="rate_limited">RATE LIMITED</option>
+                        <option value="cooldown">COOLDOWN</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 mt-5">
+                <button onclick="AlAmrModals.closeAccountStatusModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                    Cancel
+                </button>
+                <button onclick="AlAmrModals.submitAccountStatus()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition">
+                    Update Status
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CAMPAIGN STATUS UPDATE MODAL -->
+    <div id="modal-campaign-status" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-md bg-surface1">
+            <div class="tech-card-header">
+                <div class="tech-card-title text-cyanAccent">UPDATE CAMPAIGN STATUS</div>
+                <button onclick="AlAmrModals.closeCampaignStatusModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <input type="hidden" id="campaign-status-id">
+            <div class="space-y-3 text-xs">
+                <div>
+                    <span class="text-slate-400 font-mono">Campaign:</span>
+                    <span id="campaign-status-display" class="font-mono text-white font-bold ml-1"></span>
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Campaign Status:</label>
+                    <select id="campaign-status-select" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none">
+                        <option value="active">ACTIVE</option>
+                        <option value="paused">PAUSED</option>
+                        <option value="discovered">DISCOVERED</option>
+                        <option value="completed">COMPLETED</option>
+                        <option value="rejected">REJECTED</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Reason / Notes:</label>
+                    <input id="campaign-status-reason" type="text" placeholder="Operator status update reason" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 font-mono outline-none">
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 mt-5">
+                <button onclick="AlAmrModals.closeCampaignStatusModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                    Cancel
+                </button>
+                <button onclick="AlAmrModals.submitCampaignStatus()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition">
+                    Update Status
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 5. TOAST NOTIFICATION CONTAINER -->
     <div id="toast-container"></div>
 

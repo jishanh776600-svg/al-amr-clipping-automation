@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AL AMR CLIPPING // Central API Client & State Synchronization Layer
  * Zero mock data. Authoritative connection to backend control layer.
  */
@@ -160,6 +160,14 @@ class AlAmrAPI {
             body: JSON.stringify({ status, reason })
         });
     }
+
+    static async launchCampaignDiscovery(data) {
+        return this.request("/api/campaigns/discover", {
+            method: "POST",
+            body: JSON.stringify(data)
+        });
+    }
+
 
     // 8. Account & Vault Management
     static async listAccounts() {

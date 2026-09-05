@@ -209,6 +209,33 @@ async def test_campaign_operations_endpoints(dashboard_env):
         updated = await camp_repo.get_campaign("camp_target_01")
         assert updated.status == CampaignStatus.ACTIVE
 
+        # Launch campaign discovery task
+        disc_resp = await client.post(
+            "/api/campaigns/discover",
+            json={
+                "source": "https://test.internal/discovery",
+                "platform": "youtube_shorts",
+                "priority": "high",
+                "niche": "autonomous_ai"
+            },
+        )
+        assert disc_resp.status_code == 200
+        disc_data = disc_resp.json()
+        assert disc_data["status"] == "success"
+        assert "task_id" in disc_data
+        assert disc_data["task_id"].startswith("task_disc_")
+
+        # Verify task is in TaskRepository and CloudTaskQueue
+        task_repo = dashboard_env["task_repo"]
+        disc_task = await task_repo.get_task(disc_data["task_id"])
+        assert disc_task is not None
+        assert disc_task.task_type.value == "campaign_discovery"
+        assert disc_task.inputs["niche"] == "autonomous_ai"
+
+        queue_item = await dashboard_env["queue"].get_item(disc_data["task_id"])
+        assert queue_item is not None
+        assert queue_item.status.value == "pending"
+
 
 @pytest.mark.asyncio
 async def test_account_vault_security_and_status(dashboard_env):

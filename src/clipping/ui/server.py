@@ -157,6 +157,13 @@ class EscalationResolveRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class LaunchCampaignDiscoveryRequest(BaseModel):
+    source: str = Field(default="https://campaigns.internal/discover", max_length=512)
+    platform: str = Field(default="youtube_shorts", max_length=64)
+    niche: Optional[str] = Field(default=None, max_length=128)
+    priority: str = Field(default="normal", max_length=32)
+
+
 # --- READ ENDPOINTS ---
 
 @app.get("/api/system/status")
@@ -895,6 +902,75 @@ async def update_campaign_status_api(
         "status": "success",
         "campaign_id": campaign_id,
         "new_status": new_status.value,
+    }
+
+
+@app.post("/api/campaigns/discover")
+async def launch_campaign_discovery_api(
+    req: LaunchCampaignDiscoveryRequest = LaunchCampaignDiscoveryRequest(),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Enqueues an autonomous campaign discovery task into the Cloud Task Queue."""
+    import uuid
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    from clipping.agent.cloud.telemetry import CloudTelemetryEngine, TelemetryEventType
+    from clipping.agent.models import AgentTask, TaskPriority, TaskType
+    from clipping.agent.repository import TaskRepository
+
+    control_repo = ControlRepository(storage_driver=storage)
+    ctrl = await control_repo.get_state()
+    if ctrl.emergency_stopped:
+        raise HTTPException(status_code=403, detail="Cannot launch discovery: Global emergency stop active")
+    if ctrl.automation_paused:
+        raise HTTPException(status_code=403, detail="Cannot launch discovery: Automation is currently paused")
+
+    prio_map = {
+        "low": TaskPriority.LOW,
+        "normal": TaskPriority.NORMAL,
+        "high": TaskPriority.HIGH,
+        "critical": TaskPriority.CRITICAL,
+    }
+    prio = prio_map.get(req.priority.lower(), TaskPriority.NORMAL)
+    task_id = f"task_disc_{uuid.uuid4().hex[:10]}"
+
+    task = AgentTask(
+        task_id=task_id,
+        objective=f"Autonomous campaign discovery: {req.platform} via {req.source}",
+        task_type=TaskType.CAMPAIGN_DISCOVERY,
+        priority=prio,
+        inputs={
+            "capability": "campaign_discovery",
+            "source": req.source,
+            "platform": req.platform,
+            "niche": req.niche,
+            "launched_by": operator,
+        },
+    )
+
+    repo = TaskRepository(storage_driver=storage)
+    await repo.save_task(task)
+
+    queue = CloudTaskQueue(storage_driver=storage)
+    await queue.enqueue(
+        task_id=task.task_id,
+        priority=int(prio),
+        metadata={"platform": req.platform, "source": req.source, "launched_by": operator},
+    )
+
+    telemetry = CloudTelemetryEngine(storage_driver=storage)
+    await telemetry.record(
+        event_type=TelemetryEventType.TASK_CLAIMED,
+        task_id=task.task_id,
+        worker_id="operator_console",
+        capability_name="campaign_discovery",
+        metadata={"platform": req.platform, "source": req.source, "priority": req.priority, "operator": operator},
+    )
+    logger.info("Operator launched campaign discovery task", task_id=task.task_id, operator=operator)
+    return {
+        "status": "success",
+        "task_id": task.task_id,
+        "message": f"Campaign discovery task {task.task_id} enqueued in Cloud Task Queue",
     }
 
 
