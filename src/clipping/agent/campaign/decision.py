@@ -1,8 +1,9 @@
-"""Campaign Decision Engine integrating PolicyEngine and Account Vault."""
+"""Campaign Decision Engine integrating PolicyEngine, Evaluator, and Account Vault."""
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
+from clipping.agent.campaign.evaluator import CampaignEvaluator, CampaignOpportunityScore, OpportunityTier
 from clipping.agent.campaign.models import CampaignPlatform, CampaignRecord, CampaignStatus
 from clipping.agent.escalation import EscalationContext, EscalationReason, EscalationSeverity
 from clipping.agent.policy import ActionRiskTier, ActionScope, PolicyDecisionType, PolicyEngine
@@ -22,6 +23,8 @@ class CampaignDecisionResult(BaseModel):
     selected_account_platform: Optional[str] = None
     selected_source_uri: Optional[str] = None
     decision_reason: str
+    opportunity_score: Optional[float] = None
+    opportunity_tier: Optional[str] = None
     escalation_required: bool = False
     escalation_context: Optional[EscalationContext] = None
 
@@ -29,17 +32,19 @@ class CampaignDecisionResult(BaseModel):
 class CampaignDecisionEngine:
     """
     Autonomous decision engine for campaign operations.
-    Evaluates campaign rules, account eligibility, and system policies to make routine
-    decisions automatically and escalate only for genuine exceptions.
+    Evaluates campaign rules, economic opportunity score, account eligibility,
+    and system policies to make routine decisions automatically and escalate only for genuine exceptions.
     """
 
     def __init__(
         self,
         vault: EncryptedCredentialVault,
         policy_engine: PolicyEngine,
+        evaluator: Optional[CampaignEvaluator] = None,
     ):
         self.vault = vault
         self.policy = policy_engine
+        self.evaluator = evaluator or CampaignEvaluator()
 
     async def evaluate_campaign_for_execution(
         self,
@@ -70,7 +75,9 @@ class CampaignDecisionEngine:
                     why_it_happened=contradiction,
                     decision_required="Resolve contradictory campaign rules before continuing",
                     available_options=["resolve_contradiction", "reject_campaign"],
-                    metadata={"task_id": task_id, "campaign_id": cid, "reason": EscalationReason.CONTRADICTORY_INSTRUCTIONS.value},
+                    reason=EscalationReason.CONTRADICTORY_INSTRUCTIONS,
+                    severity=EscalationSeverity.HIGH,
+                    metadata={"task_id": task_id, "campaign_id": cid, "contradiction": contradiction},
                 ),
             )
 
@@ -83,9 +90,7 @@ class CampaignDecisionEngine:
         eligible_account: Optional[AccountMetadata] = None
 
         for acc in accounts:
-            if acc.status == AccountStatus.SUSPENDED:
-                continue
-            if acc.status == AccountStatus.RESTRICTED:
+            if acc.status in (AccountStatus.SUSPENDED, AccountStatus.RESTRICTED, AccountStatus.DEPRECATED):
                 continue
 
             if campaign.account_requirements.allow_account_reuse and acc.reuse_eligibility:
@@ -123,10 +128,35 @@ class CampaignDecisionEngine:
                     ),
                 )
 
-        # 4. Source Video Eligibility Check
+        # 4. Economic Opportunity Evaluation ($1-$5 CPM target, $2 preferred)
+        eval_score = self.evaluator.evaluate(campaign, vault_accounts=accounts)
+        if eval_score.tier == OpportunityTier.REJECT:
+            reason = eval_score.recommendation_notes[0] if eval_score.recommendation_notes else "Opportunity rejected by economic evaluator"
+            return CampaignDecisionResult(
+                is_approved=False,
+                campaign_id=cid,
+                decision_reason=reason,
+                opportunity_score=eval_score.overall_score,
+                opportunity_tier=eval_score.tier.value,
+            )
+
+        if not eval_score.is_worth_pursuing():
+            return CampaignDecisionResult(
+                is_approved=False,
+                campaign_id=cid,
+                decision_reason=f"Opportunity score {eval_score.overall_score}/100 is below pursue threshold (40.0)",
+                opportunity_score=eval_score.overall_score,
+                opportunity_tier=eval_score.tier.value,
+            )
+
+        # 5. Source Video Eligibility Check
         source_uri = candidate_source_uri
-        if not source_uri and campaign.discovered_source_uris:
-            source_uri = campaign.discovered_source_uris[0]
+        if not source_uri:
+            # Check source_material first, then discovered_source_uris
+            if campaign.source_material.video_urls:
+                source_uri = campaign.source_material.video_urls[0]
+            elif campaign.discovered_source_uris:
+                source_uri = campaign.discovered_source_uris[0]
 
         if source_uri:
             if not campaign.is_eligible_source_url(source_uri):
@@ -140,14 +170,19 @@ class CampaignDecisionEngine:
                         why_it_happened=f"URL '{source_uri}' fails campaign source requirements",
                         decision_required="Provide an approved source video URL",
                         available_options=["provide_url", "skip_video"],
-                        metadata={"task_id": task_id, "campaign_id": cid, "source_uri": source_uri, "reason": EscalationReason.POLICY_VIOLATION.value},
+                        reason=EscalationReason.POLICY_VIOLATION,
+                        severity=EscalationSeverity.LOW,
+                        metadata={"task_id": task_id, "campaign_id": cid, "source_uri": source_uri},
                     ),
                 )
 
-        # 5. Routine Auto-Approval
+        # 6. Routine Auto-Approval
         logger.info(
             "Campaign evaluated: APPROVED",
             campaign_id=cid,
+            score=eval_score.overall_score,
+            tier=eval_score.tier.value,
+            cpm=campaign.payout_terms.cpm_rate,
             account_id=eligible_account.account_id if eligible_account else "auto_create",
             source_uri=source_uri,
         )
@@ -157,5 +192,7 @@ class CampaignDecisionEngine:
             selected_account_id=eligible_account.account_id if eligible_account else None,
             selected_account_platform=vault_platform.value,
             selected_source_uri=source_uri,
-            decision_reason="Routine campaign requirements, account eligibility, and system policies verified",
+            opportunity_score=eval_score.overall_score,
+            opportunity_tier=eval_score.tier.value,
+            decision_reason=f"Approved with opportunity score {eval_score.overall_score} ({eval_score.tier.value.upper()})",
         )

@@ -74,12 +74,18 @@ class AutonomousOperationsLoop:
         enqueued_tasks: List[str] = []
         escalations_raised: List[str] = []
 
-        # 2. Evaluate each discovered campaign
+        # 2. Load and prioritize discovered campaigns by opportunity score
+        loaded_campaigns: List[CampaignRecord] = []
         for cid in campaign_ids:
-            campaign = await self.campaign_repo.get_campaign(cid)
-            if not campaign or campaign.status != CampaignStatus.ACTIVE:
-                continue
+            camp = await self.campaign_repo.get_campaign(cid)
+            if camp and camp.status == CampaignStatus.ACTIVE:
+                loaded_campaigns.append(camp)
 
+        # Prioritize highest opportunity scores first
+        loaded_campaigns.sort(key=lambda c: (c.opportunity_score or 0.0), reverse=True)
+
+        for campaign in loaded_campaigns:
+            cid = campaign.campaign_id
             decision = await self.decision_engine.evaluate_campaign_for_execution(campaign)
 
             if decision.escalation_required and decision.escalation_context:

@@ -13,12 +13,85 @@ class CampaignStatus(str, Enum):
     COMPLETED = "completed"
     DRAFT = "draft"
     EXPIRED = "expired"
+    UNAVAILABLE = "unavailable"
 
 
 class CampaignPlatform(str, Enum):
     YOUTUBE_SHORTS = "youtube_shorts"
     INSTAGRAM_REELS = "instagram_reels"
     TIKTOK = "tiktok"
+
+
+class PayoutModel(str, Enum):
+    CPM = "cpm"
+    FIXED_PER_CLIP = "fixed_per_clip"
+    REV_SHARE = "rev_share"
+    BOUNTY = "bounty"
+
+
+class PayoutTerms(BaseModel):
+    """Normalized payout terms, rates, and budget constraints."""
+    model_config = ConfigDict(frozen=True)
+
+    model: PayoutModel = PayoutModel.CPM
+    cpm_rate: Optional[float] = Field(default=None, ge=0.0, description="Rate per 1,000 views in USD")
+    fixed_amount: Optional[float] = Field(default=None, ge=0.0, description="Fixed payout per accepted clip")
+    min_payout: Optional[float] = Field(default=None, ge=0.0)
+    max_payout: Optional[float] = Field(default=None, ge=0.0)
+    currency: str = "USD"
+    total_budget: Optional[float] = Field(default=None, ge=0.0)
+    remaining_budget: Optional[float] = Field(default=None, ge=0.0)
+    budget_exhausted: bool = False
+
+    def is_healthy_budget(self) -> bool:
+        if self.budget_exhausted:
+            return False
+        if self.remaining_budget is not None and self.remaining_budget <= 0.0:
+            return False
+        return True
+
+
+class CampaignDuration(BaseModel):
+    """Timeline, duration boundaries, and expiration tracking."""
+    model_config = ConfigDict(frozen=True)
+
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    deadline: Optional[datetime] = None
+    timezone_name: str = "UTC"
+    is_expired: bool = False
+
+    def check_expired_at(self, current_time: datetime) -> bool:
+        if self.is_expired:
+            return True
+        effective_end = self.deadline or self.end_date
+        if effective_end and current_time >= effective_end:
+            return True
+        return False
+
+
+class SourceMaterial(BaseModel):
+    """Source video footage, drive links, and approved creator material."""
+    model_config = ConfigDict(frozen=True)
+
+    video_urls: List[str] = Field(default_factory=list)
+    google_drive_folder: Optional[str] = None
+    podcast_stream_url: Optional[str] = None
+    allowed_channel_patterns: List[str] = Field(default_factory=list)
+    preferred_segments: List[str] = Field(default_factory=list)
+
+
+class QuotasAndCaps(BaseModel):
+    """Submission frequencies, creator limits, and campaign caps."""
+    model_config = ConfigDict(frozen=True)
+
+    daily_creator_limit: int = Field(default=3, ge=1, le=50)
+    max_submissions_per_creator: Optional[int] = Field(default=None, ge=1)
+    campaign_total_clip_cap: Optional[int] = Field(default=None, ge=1)
+    current_total_submissions: int = Field(default=0, ge=0)
+
+    def is_creator_cap_reached(self, creator_submissions_today: int) -> bool:
+        return creator_submissions_today >= self.daily_creator_limit
 
 
 class PostingRequirements(BaseModel):
@@ -30,6 +103,8 @@ class PostingRequirements(BaseModel):
     required_mentions: List[str] = Field(default_factory=list)
     required_title_keywords: List[str] = Field(default_factory=list)
     daily_post_limit: int = Field(default=3, ge=1, le=20)
+    caption_template: Optional[str] = None
+    pinned_comment: Optional[str] = None
 
 
 class AccountRequirements(BaseModel):
@@ -38,19 +113,33 @@ class AccountRequirements(BaseModel):
     allowed_platforms: List[CampaignPlatform] = Field(default_factory=lambda: [CampaignPlatform.YOUTUBE_SHORTS])
     allow_account_reuse: bool = True
     min_subscribers: int = 0
+    min_account_age_days: int = 0
     verified_only: bool = False
     required_niche: Optional[str] = None
+    disallowed_regions: List[str] = Field(default_factory=list)
+
+
+class TermChangeRecord(BaseModel):
+    """Audit record capturing changes in campaign terms over time."""
+    model_config = ConfigDict(frozen=True)
+
+    field_name: str
+    old_value: Any
+    new_value: Any
+    changed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    impact_summary: str = ""
 
 
 class CampaignRecord(BaseModel):
     """
     Durable, normalized representation of a discovered campaign and its strict execution boundaries.
+    Enriched with full autonomous campaign intelligence, Whop source integration, economics & ranking.
     """
     model_config = ConfigDict(frozen=True)
 
     campaign_id: str = Field(..., min_length=1, max_length=128)
     name: str = Field(..., min_length=1, max_length=256)
-    source: str = Field(..., description="Origin source URL or ingestion channel")
+    source: str = Field(..., description="Origin source URL or ingestion channel (e.g. 'whop', 'https://whop.com/...')")
     description: str = Field(default="")
     status: CampaignStatus = CampaignStatus.ACTIVE
     required_platforms: List[CampaignPlatform] = Field(default_factory=lambda: [CampaignPlatform.YOUTUBE_SHORTS])
@@ -66,8 +155,20 @@ class CampaignRecord(BaseModel):
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # Campaign Intelligence Additions
+    payout_terms: PayoutTerms = Field(default_factory=PayoutTerms)
+    duration_terms: CampaignDuration = Field(default_factory=CampaignDuration)
+    source_material: SourceMaterial = Field(default_factory=SourceMaterial)
+    quotas: QuotasAndCaps = Field(default_factory=QuotasAndCaps)
+    term_changes: List[TermChangeRecord] = Field(default_factory=list)
+    opportunity_score: Optional[float] = None
+    opportunity_tier: Optional[str] = None
+    canonical_url: Optional[str] = None
+    creator_community: Optional[str] = None
+    external_source_id: Optional[str] = None
+
     def validate_rules(self) -> Optional[str]:
-        """Detects contradictions or impossible constraints."""
+        """Detects contradictions or impossible constraints in the campaign brief."""
         if self.posting_requirements.min_duration_seconds > self.posting_requirements.max_duration_seconds:
             return f"Contradictory duration: min ({self.posting_requirements.min_duration_seconds}s) exceeds max ({self.posting_requirements.max_duration_seconds}s)"
 
@@ -78,14 +179,38 @@ class CampaignRecord(BaseModel):
         if intersection:
             return f"Contradictory content rules: {list(intersection)} is both allowed and prohibited"
 
+        # Check for contradictory payout bounds
+        if (
+            self.payout_terms.min_payout is not None
+            and self.payout_terms.max_payout is not None
+            and self.payout_terms.min_payout > self.payout_terms.max_payout
+        ):
+            return f"Contradictory payout: min payout (${self.payout_terms.min_payout}) exceeds max payout (${self.payout_terms.max_payout})"
+
+        # Check duration dates
+        if (
+            self.duration_terms.start_date is not None
+            and self.duration_terms.end_date is not None
+            and self.duration_terms.start_date > self.duration_terms.end_date
+        ):
+            return f"Contradictory dates: start date ({self.duration_terms.start_date}) is after end date ({self.duration_terms.end_date})"
+
         return None
 
     def is_eligible_source_url(self, url: str) -> bool:
         """Validates if a source URL satisfies campaign source video requirements."""
         if not url or not (url.startswith("http://") or url.startswith("https://")):
             return False
-        # If campaign has strict source channel/domain requirements
+
+        # Check source video requirements dictionary
         required_channel = self.source_video_requirements.get("required_channel")
         if required_channel and required_channel.lower() not in url.lower():
             return False
+
+        # Check source material allowed channel patterns if specified
+        if self.source_material.allowed_channel_patterns:
+            matches_pattern = any(p.lower() in url.lower() for p in self.source_material.allowed_channel_patterns)
+            if not matches_pattern:
+                return False
+
         return True

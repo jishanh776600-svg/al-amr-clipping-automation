@@ -1217,6 +1217,8 @@ async def get_dashboard_overview_api(
         "publishing_locked": control_state.publishing_locked,
         "can_start_new_jobs": control_state.can_start_new_jobs(),
         "can_publish": control_state.can_publish(),
+        "campaigns_count": len(campaigns),
+        "accounts_count": len(accounts),
         "counts": {
             "campaigns": len(campaigns),
             "accounts": len(accounts),
