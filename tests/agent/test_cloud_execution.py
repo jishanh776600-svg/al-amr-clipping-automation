@@ -343,7 +343,7 @@ async def test_09_bounded_retry(cloud_env):
         task_id="t_retry_01",
         objective="Retry test",
         inputs={"capability": "flaky_transient"},
-        retry_policy=RetryPolicy(max_attempts=3, initial_delay_seconds=0.01),
+        retry_policy=RetryPolicy(max_attempts=3, initial_delay_seconds=0.0),
     )
     await task_repo.save_task(task)
     await queue.enqueue(task.task_id)
@@ -373,7 +373,7 @@ async def test_10_retry_exhaustion(cloud_env):
         task_id="t_exhaust_01",
         objective="Retry exhaustion test",
         inputs={"capability": "flaky_transient"},
-        retry_policy=RetryPolicy(max_attempts=2, initial_delay_seconds=0.01),
+        retry_policy=RetryPolicy(max_attempts=2, initial_delay_seconds=0.0),
     )
     await task_repo.save_task(task)
     await queue.enqueue(task.task_id)
@@ -488,7 +488,7 @@ async def test_16_checkpoint_recovery(cloud_env):
         task_id="t_chkpt_01",
         objective="Process with checkpoints",
         inputs={"capability": "checkpoint_progress"},
-        retry_policy=RetryPolicy(max_attempts=3, initial_delay_seconds=0.01),
+        retry_policy=RetryPolicy(max_attempts=3, initial_delay_seconds=0.0),
     )
     await task_repo.save_task(task)
     await queue.enqueue(task.task_id)
