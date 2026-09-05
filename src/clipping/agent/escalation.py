@@ -48,6 +48,8 @@ class EscalationContext(BaseModel):
     what_was_attempted: List[str] = Field(default_factory=list, description="Automated remedies tried by agent")
     decision_required: str = Field(..., description="Exact question or choice needed from human operator")
     available_options: List[str] = Field(default_factory=list, description="Actionable options available to the operator")
+    reason: Optional[EscalationReason] = None
+    severity: Optional[EscalationSeverity] = None
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Diagnostic payload (secrets strictly omitted)")
 
 

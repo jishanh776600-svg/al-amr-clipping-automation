@@ -557,11 +557,162 @@ async def make_clip_decision(
     )
     await app_repo.record_audit(audit)
 
-    logger.info("Operator decided clip in Console", clip_id=clip_id, action=req.action, new_status=new_status.value)
+
+# --- PHASE 3 MISSION CONTROL BACKEND ENDPOINTS ---
+
+@app.get("/api/agent/status")
+async def get_agent_status(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves operational status of the Master Agent and Cloud Worker subsystems."""
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    from clipping.agent.repository import TaskRepository
+
+    control_repo = ControlRepository(storage_driver=storage)
+    control_state = await control_repo.get_state()
+
+    queue = CloudTaskQueue(storage_driver=storage)
+    pending_items = await queue.list_pending_items(limit=100)
+
+    task_repo = TaskRepository(storage_driver=storage)
+    recent_tasks = await task_repo.list_tasks(limit=50)
+
+    active_tasks = [t for t in recent_tasks if t.status.value in ["running", "pending"]]
+    failed_tasks = [t for t in recent_tasks if t.status.value in ["failed", "escalated"]]
+
     return {
-        "clip_id": clip_id,
-        "new_status": new_status.value,
-        "message": f"Clip {clip_id} successfully marked {new_status.value}",
+        "status": "operational" if not control_state.emergency_stopped else "emergency_stopped",
+        "operating_mode": control_state.mode.value,
+        "queue_depth": len(pending_items),
+        "active_tasks_count": len(active_tasks),
+        "recent_failures_count": len(failed_tasks),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/campaigns")
+async def list_campaigns_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists all discovered and active campaigns."""
+    from clipping.agent.campaign.repository import CampaignRepository
+    repo = CampaignRepository(storage_driver=storage)
+    campaigns = await repo.list_campaigns()
+    return [c.model_dump(mode="json") for c in campaigns]
+
+
+@app.get("/api/campaigns/{campaign_id}")
+async def get_campaign_detail_api(
+    campaign_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves detailed record for a specific campaign."""
+    from clipping.agent.campaign.repository import CampaignRepository
+    repo = CampaignRepository(storage_driver=storage)
+    campaign = await repo.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign.model_dump(mode="json")
+
+
+@app.get("/api/accounts")
+async def list_accounts_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists safe account metadata from the Encrypted Credential Vault (zero credentials exposed)."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    accounts = await vault.list_accounts()
+    return [a.to_safe_dict() for a in accounts]
+
+
+@app.get("/api/agent/tasks")
+async def list_agent_tasks_api(
+    task_type: Optional[str] = None,
+    task_status: Optional[str] = None,
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists recent Master Agent tasks."""
+    from clipping.agent.repository import TaskRepository
+    from clipping.agent.models import TaskType
+    from clipping.agent.state import TaskState
+
+    repo = TaskRepository(storage_driver=storage)
+    type_filter = TaskType(task_type) if task_type else None
+    status_filter = TaskState(task_status) if task_status else None
+    tasks = await repo.list_tasks(status=status_filter, task_type=type_filter, limit=limit)
+    return [t.model_dump(mode="json") for t in tasks]
+
+
+@app.get("/api/agent/queue")
+async def get_agent_queue_status_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves current Cloud Task Queue items and backlog."""
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    queue = CloudTaskQueue(storage_driver=storage)
+    pending = await queue.list_pending_items(limit=100)
+    return {
+        "depth": len(pending),
+        "pending_items": [item.model_dump(mode="json") for item in pending],
+    }
+
+
+@app.get("/api/agent/escalations")
+async def list_agent_escalations_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists operator escalations requiring human intervention."""
+    from clipping.agent.repository import TaskRepository
+    repo = TaskRepository(storage_driver=storage)
+    escalations = await repo.list_escalations(limit=50)
+    return [e.model_dump(mode="json") for e in escalations]
+
+
+@app.get("/api/mission-control/overview")
+async def get_mission_control_overview_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Single aggregated view for future Mission Control dashboard."""
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    from clipping.agent.campaign.repository import CampaignRepository
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.repository import TaskRepository
+
+    control_repo = ControlRepository(storage_driver=storage)
+    control_state = await control_repo.get_state()
+
+    camp_repo = CampaignRepository(storage_driver=storage)
+    campaigns = await camp_repo.list_campaigns()
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    accounts = await vault.list_accounts()
+
+    task_repo = TaskRepository(storage_driver=storage)
+    recent_tasks = await task_repo.list_tasks(limit=50)
+    escalations = await task_repo.list_escalations(limit=20)
+
+    queue = CloudTaskQueue(storage_driver=storage)
+    pending = await queue.list_pending_items(limit=100)
+
+    browser_tasks = [t for t in recent_tasks if t.task_type.value == "browser_operation"]
+    clipping_tasks = [t for t in recent_tasks if t.task_type.value == "media_clipping"]
+    failures = [t for t in recent_tasks if t.status.value == "failed"]
+
+    return {
+        "status": "operational" if not control_state.emergency_stopped else "emergency_stopped",
+        "operating_mode": control_state.mode.value,
+        "campaigns_count": len(campaigns),
+        "accounts_count": len(accounts),
+        "queue_depth": len(pending),
+        "browser_jobs_count": len(browser_tasks),
+        "clipping_jobs_count": len(clipping_tasks),
+        "open_escalations_count": len([e for e in escalations if e.status.value == "open"]),
+        "recent_failures_count": len(failures),
+        "recent_failures": [f.model_dump(mode="json") for f in failures[:5]],
+        "open_escalations": [e.model_dump(mode="json") for e in escalations if e.status.value == "open"][:5],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

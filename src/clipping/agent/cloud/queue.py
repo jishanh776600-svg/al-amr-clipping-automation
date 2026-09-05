@@ -331,3 +331,18 @@ class CloudTaskQueue:
         except Exception as e:
             logger.error("Failed to calculate queue depth", error=str(e))
         return depth
+
+    async def list_pending_items(self, limit: int = 100) -> List[QueueItem]:
+        """Lists pending queue items up to limit."""
+        results: List[QueueItem] = []
+        try:
+            pointers = await self.storage.list_files("queue/pending/")
+            pointers.sort(key=lambda x: x.storage_key)
+            for p in pointers[:limit]:
+                task_id = p.storage_key.split("_")[-1].replace(".json", "")
+                item = await self.get_item(task_id)
+                if item and item.status == QueueItemStatus.PENDING:
+                    results.append(item)
+        except Exception as e:
+            logger.error("Failed to list pending queue items", error=str(e))
+        return results

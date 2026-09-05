@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional
 from clipping.agent.models import AgentTask
 from clipping.agent.state import TaskState
-from clipping.agent.escalation import EscalationRecord, EscalationStatus
+from clipping.agent.escalation import EscalationContext, EscalationReason, EscalationRecord, EscalationSeverity, EscalationStatus
 from clipping.storage.base import StorageDriver
 from clipping.logging.logger import get_logger
 
@@ -118,6 +118,41 @@ class AgentTaskRepository:
         await self.storage.upload_bytes(ptr, status_key, content_type="application/json")
         logger.info("Saved escalation record", escalation_id=escalation.escalation_id, status=escalation.status.value)
 
+    async def create_escalation(
+        self,
+        context: EscalationContext,
+        task_id: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        reason: Optional[EscalationReason] = None,
+        severity: Optional[EscalationSeverity] = None,
+    ) -> EscalationRecord:
+        """Helper to create and persist an EscalationRecord directly from an EscalationContext."""
+        import uuid
+        from clipping.agent.escalation import EscalationReason, EscalationSeverity
+
+        effective_task_id = task_id or context.metadata.get("task_id", f"task_{uuid.uuid4().hex[:8]}")
+        effective_reason = (
+            reason
+            or context.reason
+            or (EscalationReason(context.metadata["reason"]) if "reason" in context.metadata else EscalationReason.UNCLASSIFIED_FAILURE)
+        )
+        effective_severity = (
+            severity
+            or context.severity
+            or (EscalationSeverity(context.metadata["severity"]) if "severity" in context.metadata else EscalationSeverity.MEDIUM)
+        )
+
+        record = EscalationRecord(
+            escalation_id=f"esc_{uuid.uuid4().hex[:12]}",
+            task_id=effective_task_id,
+            campaign_id=campaign_id or context.metadata.get("campaign_id"),
+            reason=effective_reason,
+            severity=effective_severity,
+            context=context,
+        )
+        await self.save_escalation(record)
+        return record
+
     async def get_escalation(self, escalation_id: str) -> Optional[EscalationRecord]:
         """Retrieves an escalation record by id."""
         esc_key = self._escalation_key(escalation_id)
@@ -130,8 +165,12 @@ class AgentTaskRepository:
             logger.error("Failed to read escalation record", escalation_id=escalation_id, error=str(e))
             return None
 
-    async def list_escalations(self, status: Optional[EscalationStatus] = None) -> List[EscalationRecord]:
-        """Lists escalations filtered optionally by status."""
+    async def list_escalations(
+        self,
+        status: Optional[EscalationStatus] = None,
+        limit: int = 50,
+    ) -> List[EscalationRecord]:
+        """Lists escalations filtered optionally by status up to limit."""
         try:
             if status:
                 prefix = f"escalations/by_status/{status.value}/"
@@ -146,7 +185,7 @@ class AgentTaskRepository:
                 ]
 
             records: List[EscalationRecord] = []
-            for eid in ids:
+            for eid in ids[:limit]:
                 rec = await self.get_escalation(eid)
                 if rec:
                     records.append(rec)
@@ -155,3 +194,7 @@ class AgentTaskRepository:
         except Exception as e:
             logger.error("Failed to list escalations", error=str(e))
             return []
+
+
+# Convenient alias
+TaskRepository = AgentTaskRepository
