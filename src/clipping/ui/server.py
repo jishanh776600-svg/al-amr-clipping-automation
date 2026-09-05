@@ -1247,6 +1247,117 @@ async def get_mission_control_overview_api(
     return await get_dashboard_overview_api(storage=storage)
 
 
+# --- CAMPAIGN SUBMISSION & PUBLISHING OBSERVABILITY ENDPOINTS ---
+
+@app.get("/api/submissions")
+async def list_campaign_submissions_api(
+    campaign_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Lists durable campaign content submissions with current state, platform post IDs, and reconciliation status."""
+    from clipping.agent.publishing.repository import CampaignSubmissionRepository
+    from clipping.agent.publishing.models import SubmissionStatus
+    from clipping.agent.vault.models import AccountPlatform
+
+    repo = CampaignSubmissionRepository(storage_driver=storage)
+    plat_enum = AccountPlatform(platform) if platform else None
+    stat_enum = SubmissionStatus(status) if status else None
+    records = await repo.list_submissions(campaign_id=campaign_id, platform=plat_enum, status=stat_enum, limit=limit)
+
+    return {
+        "submissions": [r.model_dump(mode="json") for r in records],
+        "count": len(records),
+        "filters": {"campaign_id": campaign_id, "platform": platform, "status": status},
+    }
+
+
+@app.get("/api/submissions/{campaign_id}/{submission_id}")
+async def get_campaign_submission_detail_api(
+    campaign_id: str,
+    submission_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full submission record including complete state transition history."""
+    from clipping.agent.publishing.repository import CampaignSubmissionRepository
+
+    repo = CampaignSubmissionRepository(storage_driver=storage)
+    sub = await repo.get_submission(campaign_id, submission_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail=f"Submission '{submission_id}' not found for campaign '{campaign_id}'")
+    return sub.model_dump(mode="json")
+
+
+@app.get("/api/submissions/quotas/{campaign_id}")
+async def get_campaign_quota_status_api(
+    campaign_id: str,
+    account_id: Optional[str] = None,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Observes quota consumption, daily creator caps, and campaign caps."""
+    from clipping.agent.campaign.repository import CampaignRepository
+    from clipping.agent.publishing.repository import CampaignSubmissionRepository
+
+    camp_repo = CampaignRepository(storage_driver=storage)
+    sub_repo = CampaignSubmissionRepository(storage_driver=storage)
+
+    campaign = await camp_repo.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail=f"Campaign '{campaign_id}' not found")
+
+    today_count = 0
+    if account_id:
+        today_count = await sub_repo.count_submissions_today(account_id, campaign_id)
+
+    all_subs = await sub_repo.list_submissions(campaign_id=campaign_id, limit=200)
+
+    return {
+        "campaign_id": campaign_id,
+        "daily_creator_limit": campaign.quotas.daily_creator_limit,
+        "account_submissions_today": today_count,
+        "campaign_total_clip_cap": campaign.quotas.campaign_total_clip_cap,
+        "current_total_submissions": len(all_subs),
+        "remaining_budget": campaign.payout_terms.remaining_budget,
+        "budget_exhausted": campaign.payout_terms.budget_exhausted,
+    }
+
+
+@app.post("/api/submissions/{campaign_id}/{submission_id}/reconcile")
+async def reconcile_campaign_submission_api(
+    campaign_id: str,
+    submission_id: str,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Manually triggers reconciliation of a submission against live platform state."""
+    from clipping.agent.publishing.repository import CampaignSubmissionRepository
+    from clipping.agent.publishing.reconciliation import PublishingReconciliationService
+    from clipping.agent.publishing.adapters.youtube import YouTubePublishingAdapter
+    from clipping.agent.publishing.adapters.instagram import InstagramPublishingAdapter
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform
+
+    sub_repo = CampaignSubmissionRepository(storage_driver=storage)
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    adapters = {
+        AccountPlatform.YOUTUBE: YouTubePublishingAdapter(),
+        AccountPlatform.INSTAGRAM: InstagramPublishingAdapter(),
+    }
+    reconciler = PublishingReconciliationService(
+        repository=sub_repo,
+        adapters=adapters,
+        vault=vault,
+    )
+    try:
+        result = await reconciler.reconcile_submission(campaign_id, submission_id)
+        return result.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
