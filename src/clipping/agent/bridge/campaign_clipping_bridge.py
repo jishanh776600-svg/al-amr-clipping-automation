@@ -49,6 +49,8 @@ class CampaignClippingBridge:
         task_id = f"task_clip_{cid_slug}_{url_hash}"
         job_id = custom_job_id or f"job_{cid_slug}_{url_hash}"
 
+        target_platform = campaign.required_platforms[0].value if campaign.required_platforms else "youtube_shorts"
+
         task = AgentTask(
             task_id=task_id,
             task_type=TaskType.MEDIA_CLIPPING,
@@ -56,14 +58,18 @@ class CampaignClippingBridge:
             inputs={
                 "capability": "media_clipping",
                 "source_uri": source_uri,
+                "source_video_id": url_hash,
                 "campaign_id": campaign.campaign_id,
                 "job_id": job_id,
                 "account_id": account_id,
+                "platform": target_platform,
+                "task_id": task_id,
                 "hashtags": campaign.posting_requirements.required_hashtags,
                 "mentions": campaign.posting_requirements.required_mentions,
             },
             priority=TaskPriority.HIGH,
         )
+
 
         # Persist task in repository
         await self.task_repo.save_task(task)

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from clipping.agent.campaign.evaluator import CampaignEvaluator, CampaignOpportunityScore, OpportunityTier
-from clipping.agent.campaign.models import CampaignPlatform, CampaignRecord, CampaignStatus
+from clipping.agent.campaign.models import CampaignLifecycleState, CampaignPlatform, CampaignRecord, CampaignStatus
 from clipping.agent.escalation import EscalationContext, EscalationReason, EscalationSeverity
 from clipping.agent.policy import ActionRiskTier, ActionScope, PolicyDecisionType, PolicyEngine
 from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
@@ -23,10 +23,12 @@ class CampaignDecisionResult(BaseModel):
     selected_account_platform: Optional[str] = None
     selected_source_uri: Optional[str] = None
     decision_reason: str
+    lifecycle_state: Optional[CampaignLifecycleState] = None
     opportunity_score: Optional[float] = None
     opportunity_tier: Optional[str] = None
     escalation_required: bool = False
     escalation_context: Optional[EscalationContext] = None
+
 
 
 class CampaignDecisionEngine:
@@ -69,6 +71,7 @@ class CampaignDecisionEngine:
                 is_approved=False,
                 campaign_id=cid,
                 decision_reason="Contradictory campaign requirements",
+                lifecycle_state=CampaignLifecycleState.ESCALATED,
                 escalation_required=True,
                 escalation_context=EscalationContext(
                     what_happened=f"Campaign '{campaign.name}' has conflicting rules",
@@ -107,8 +110,8 @@ class CampaignDecisionEngine:
                 capability_name="account_management",
                 action_name="create_channel",
                 target_resource=f"account:{vault_platform.value}",
-                is_reversible=False,
-                risk_tier=ActionRiskTier.MUTATING_IRREVERSIBLE,
+                is_reversible=True,
+                risk_tier=ActionRiskTier.MUTATING_REVERSIBLE,
             )
             policy_eval = self.policy.evaluate(scope)
             if policy_eval.decision == PolicyDecisionType.REQUIRE_CONFIRMATION or not policy_eval.allowed:
@@ -116,6 +119,7 @@ class CampaignDecisionEngine:
                     is_approved=False,
                     campaign_id=cid,
                     decision_reason="No eligible account available and account creation requires operator confirmation",
+                    lifecycle_state=CampaignLifecycleState.ESCALATED,
                     escalation_required=True,
                     escalation_context=EscalationContext(
                         what_happened=f"No eligible account found for campaign '{campaign.name}'",
@@ -128,6 +132,7 @@ class CampaignDecisionEngine:
                     ),
                 )
 
+
         # 4. Economic Opportunity Evaluation ($1-$5 CPM target, $2 preferred)
         eval_score = self.evaluator.evaluate(campaign, vault_accounts=accounts)
         if eval_score.tier == OpportunityTier.REJECT:
@@ -136,6 +141,7 @@ class CampaignDecisionEngine:
                 is_approved=False,
                 campaign_id=cid,
                 decision_reason=reason,
+                lifecycle_state=CampaignLifecycleState.BLOCKED,
                 opportunity_score=eval_score.overall_score,
                 opportunity_tier=eval_score.tier.value,
             )
@@ -145,6 +151,7 @@ class CampaignDecisionEngine:
                 is_approved=False,
                 campaign_id=cid,
                 decision_reason=f"Opportunity score {eval_score.overall_score}/100 is below pursue threshold (40.0)",
+                lifecycle_state=CampaignLifecycleState.BLOCKED,
                 opportunity_score=eval_score.overall_score,
                 opportunity_tier=eval_score.tier.value,
             )
@@ -164,6 +171,7 @@ class CampaignDecisionEngine:
                     is_approved=False,
                     campaign_id=cid,
                     decision_reason=f"Source URL '{source_uri}' does not satisfy campaign requirements",
+                    lifecycle_state=CampaignLifecycleState.ESCALATED,
                     escalation_required=True,
                     escalation_context=EscalationContext(
                         what_happened=f"Ineligible source URL for campaign '{campaign.name}'",
@@ -192,7 +200,9 @@ class CampaignDecisionEngine:
             selected_account_id=eligible_account.account_id if eligible_account else None,
             selected_account_platform=vault_platform.value,
             selected_source_uri=source_uri,
+            lifecycle_state=CampaignLifecycleState.SELECTED,
             opportunity_score=eval_score.overall_score,
             opportunity_tier=eval_score.tier.value,
             decision_reason=f"Approved with opportunity score {eval_score.overall_score} ({eval_score.tier.value.upper()})",
         )
+

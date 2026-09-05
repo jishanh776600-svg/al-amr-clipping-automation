@@ -122,7 +122,30 @@ class PolicyEngine:
                 priority=300,
                 reason="Destructive account mutations require explicit escalation to human owner",
             ),
+            # 5. Allow routine autonomous channel and account creation within policy limits
+            PolicyRule(
+                rule_id="RULE_ALLOW_CHANNEL_CREATION",
+                description="Allow routine autonomous channel and account creation within policy limits",
+                capability_pattern="account_*",
+                action_pattern="create_*",
+                decision=PolicyDecisionType.ALLOW,
+                requires_human_confirmation=False,
+                priority=150,
+                reason="Routine channel creation is pre-authorized by policy",
+            ),
+            # 6. Allow routine account configuration and campaign association
+            PolicyRule(
+                rule_id="RULE_ALLOW_ACCOUNT_MANAGEMENT",
+                description="Allow routine channel configuration, metadata updates, and campaign association",
+                capability_pattern="account_*",
+                action_pattern="*",
+                decision=PolicyDecisionType.ALLOW,
+                requires_human_confirmation=False,
+                priority=110,
+                reason="Routine account configuration is pre-authorized",
+            ),
         ]
+
 
     def evaluate(self, scope: ActionScope) -> PolicyEvaluationResult:
         """Evaluates whether an action is permitted according to configured policy rules."""

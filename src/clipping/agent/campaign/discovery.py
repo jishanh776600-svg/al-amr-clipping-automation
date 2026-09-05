@@ -19,6 +19,7 @@ from clipping.agent.campaign.models import (
     CampaignStatus,
     PayoutModel,
     PayoutTerms,
+    PostCampaignRules,
     PostingRequirements,
     QuotasAndCaps,
     SourceMaterial,
@@ -274,6 +275,7 @@ class CampaignDiscoveryCapability(AgentCapability):
             item.get("discovered_source_uris")
             or item.get("source_video_uris")
             or item.get("video_urls")
+            or item.get("source_urls")
             or (item.get("source_material", {}).get("video_urls") if isinstance(item.get("source_material"), dict) else [])
             or []
         )
@@ -302,6 +304,21 @@ class CampaignDiscoveryCapability(AgentCapability):
             max_submissions_per_creator=quotas_raw.get("max_submissions_per_creator", item.get("max_submissions_per_creator")),
         )
 
+        # Post Campaign Rules
+        post_rules_raw = item.get("post_campaign_rules", {})
+        if isinstance(post_rules_raw, dict):
+            post_campaign_rules = PostCampaignRules(
+                allow_account_reuse_after_campaign=post_rules_raw.get("allow_account_reuse_after_campaign", True),
+                privatize_videos_on_completion=post_rules_raw.get("privatize_videos_on_completion", False),
+                delete_videos_on_completion=post_rules_raw.get("delete_videos_on_completion", False),
+                cooldown_days_before_reuse=post_rules_raw.get("cooldown_days_before_reuse", 0),
+                retain_branding=post_rules_raw.get("retain_branding", True),
+            )
+        elif isinstance(post_rules_raw, PostCampaignRules):
+            post_campaign_rules = post_rules_raw
+        else:
+            post_campaign_rules = PostCampaignRules()
+
         return CampaignRecord(
             campaign_id=cid,
             name=title,
@@ -313,6 +330,7 @@ class CampaignDiscoveryCapability(AgentCapability):
             prohibited_content_rules=item.get("prohibited_content_rules", []),
             posting_requirements=posting_reqs,
             account_requirements=account_reqs,
+            post_campaign_rules=post_campaign_rules,
             reuse_restrictions=item.get("reuse_restrictions"),
             seo_requirements=item.get("seo_requirements", {}),
             payment_info=payout_raw,
@@ -325,6 +343,7 @@ class CampaignDiscoveryCapability(AgentCapability):
             creator_community=item.get("creator_community") or item.get("community"),
             canonical_url=item.get("canonical_url") or item.get("source"),
         )
+
 
     @staticmethod
     def _generate_id(name: str, source: str) -> str:

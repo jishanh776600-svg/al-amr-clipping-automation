@@ -16,6 +16,29 @@ class CampaignStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
+class CampaignLifecycleState(str, Enum):
+    """Granular state transitions of an autonomous campaign from discovery to closure."""
+    DISCOVERED = "discovered"
+    EVALUATING = "evaluating"
+    SELECTED = "selected"
+    ACCOUNT_ASSIGNED = "account_assigned"
+    ACCOUNT_CREATING = "account_creating"
+    ACCOUNT_CONFIGURING = "account_configuring"
+    CONTENT_PRODUCTION = "content_production"
+    CONTENT_READY = "content_ready"
+    SUBMISSION_ACTIVE = "submission_active"
+    CAMPAIGN_ACTIVE = "campaign_active"
+    CAMPAIGN_COMPLETED = "campaign_completed"
+    PAYMENT_PENDING = "payment_pending"
+    PAYMENT_CONFIRMED = "payment_confirmed"
+    REUSE_ELIGIBLE = "reuse_eligible"
+    REUSE_PROHIBITED = "reuse_prohibited"
+    CLOSED = "closed"
+    BLOCKED = "blocked"
+    ESCALATED = "escalated"
+
+
+
 class CampaignPlatform(str, Enum):
     YOUTUBE_SHORTS = "youtube_shorts"
     INSTAGRAM_REELS = "instagram_reels"
@@ -130,6 +153,17 @@ class TermChangeRecord(BaseModel):
     impact_summary: str = ""
 
 
+class PostCampaignRules(BaseModel):
+    """Rules governing channel, video, and credential state after a campaign concludes."""
+    model_config = ConfigDict(frozen=True)
+
+    allow_account_reuse_after_campaign: bool = True
+    privatize_videos_on_completion: bool = False
+    delete_videos_on_completion: bool = False
+    cooldown_days_before_reuse: int = Field(default=0, ge=0)
+    retain_branding: bool = True
+
+
 class CampaignRecord(BaseModel):
     """
     Durable, normalized representation of a discovered campaign and its strict execution boundaries.
@@ -142,11 +176,13 @@ class CampaignRecord(BaseModel):
     source: str = Field(..., description="Origin source URL or ingestion channel (e.g. 'whop', 'https://whop.com/...')")
     description: str = Field(default="")
     status: CampaignStatus = CampaignStatus.ACTIVE
+    lifecycle_state: CampaignLifecycleState = CampaignLifecycleState.DISCOVERED
     required_platforms: List[CampaignPlatform] = Field(default_factory=lambda: [CampaignPlatform.YOUTUBE_SHORTS])
     allowed_content_rules: List[str] = Field(default_factory=list)
     prohibited_content_rules: List[str] = Field(default_factory=list)
     posting_requirements: PostingRequirements = Field(default_factory=PostingRequirements)
     account_requirements: AccountRequirements = Field(default_factory=AccountRequirements)
+    post_campaign_rules: PostCampaignRules = Field(default_factory=PostCampaignRules)
     reuse_restrictions: Optional[str] = None
     seo_requirements: Dict[str, Any] = Field(default_factory=dict)
     payment_info: Optional[Dict[str, Any]] = None
@@ -166,6 +202,7 @@ class CampaignRecord(BaseModel):
     canonical_url: Optional[str] = None
     creator_community: Optional[str] = None
     external_source_id: Optional[str] = None
+
 
     def validate_rules(self) -> Optional[str]:
         """Detects contradictions or impossible constraints in the campaign brief."""

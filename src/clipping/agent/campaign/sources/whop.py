@@ -200,9 +200,10 @@ class WhopCampaignSource(CampaignSource):
         else:
             cpm_rate = 2.0  # default preferred CPM
 
-        source_uris = raw.get("source_video_uris") or raw.get("video_urls") or raw.get("discovered_source_uris") or []
+        source_uris = raw.get("source_video_uris") or raw.get("video_urls") or raw.get("source_urls") or raw.get("discovered_source_uris") or []
         if isinstance(source_uris, str):
             source_uris = [source_uris]
+
 
         hashtags = raw.get("hashtags") or raw.get("required_hashtags") or ["#whop"]
         hashtags = [h if h.startswith("#") else f"#{h}" for h in hashtags]
