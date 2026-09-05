@@ -116,3 +116,40 @@ class ApprovalRepository:
         except Exception as e:
             logger.error("Failed to list approval audits for job", job_id=job_id, error=str(e))
             return []
+
+    async def list_all_pending_requests(self, limit: int = 50) -> List[ApprovalRequest]:
+        """Lists pending approval requests across all jobs."""
+        from clipping.approval.models import ApprovalStatus
+        try:
+            files = await self.storage_driver.list_files("approvals/by_id/")
+            pending: List[ApprovalRequest] = []
+            for f in files:
+                if not f.storage_key.endswith(".json"):
+                    continue
+                req_id = f.storage_key.split("/")[-1].replace(".json", "")
+                req = await self.get_request_by_id(req_id)
+                if req and req.status == ApprovalStatus.AWAITING_APPROVAL:
+                    pending.append(req)
+                    if len(pending) >= limit:
+                        break
+            pending.sort(key=lambda r: r.score, reverse=True)
+            return pending
+        except Exception as e:
+            logger.error("Failed to list pending approval requests", error=str(e))
+            return []
+
+    async def list_all_audits(self, limit: int = 50) -> List[ApprovalAuditRecord]:
+        """Lists recent approval decisions and audit trail records across all jobs."""
+        try:
+            files = await self.storage_driver.list_files("jobs/")
+            audit_files = [f for f in files if "/approvals/audit/" in f.storage_key and f.storage_key.endswith(".json")]
+            audits: List[ApprovalAuditRecord] = []
+            for f in audit_files[:limit]:
+                raw = await self.storage_driver.download_bytes(f.storage_key)
+                rec = ApprovalAuditRecord.model_validate_json(raw.decode("utf-8"))
+                audits.append(rec)
+            audits.sort(key=lambda a: a.timestamp, reverse=True)
+            return audits[:limit]
+        except Exception as e:
+            logger.error("Failed to list all approval audits", error=str(e))
+            return []

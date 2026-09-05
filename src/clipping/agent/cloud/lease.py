@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from pydantic import BaseModel, Field, ConfigDict
 
 from clipping.storage.base import StorageDriver
@@ -182,3 +182,18 @@ class WorkerLeaseEngine:
         data = reclaimed.model_dump_json(indent=2).encode("utf-8")
         await self.storage.upload_bytes(data, self._lease_key(task_id), content_type="application/json")
         return True, reclaimed
+
+    async def list_leases(self, limit: int = 50) -> List[WorkerLease]:
+        """Lists stored worker lease records."""
+        leases: List[WorkerLease] = []
+        try:
+            files = await self.storage.list_files("leases/")
+            for f in files[:limit]:
+                if f.storage_key.endswith(".json"):
+                    task_id = f.storage_key.split("/")[-1].replace(".json", "")
+                    lease = await self.get_lease(task_id)
+                    if lease:
+                        leases.append(lease)
+        except Exception as e:
+            logger.error("Failed to list worker leases", error=str(e))
+        return leases

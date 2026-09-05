@@ -106,3 +106,19 @@ class CloudTelemetryEngine:
         if task_id:
             return [e for e in self._buffer if e.task_id == task_id]
         return list(self._buffer)
+
+    async def list_events(self, limit: int = 50) -> List[CloudTelemetryEvent]:
+        """Lists recent telemetry events from buffer and persistent storage."""
+        events: List[CloudTelemetryEvent] = list(self._buffer)
+        try:
+            files = await self.storage.list_files("telemetry/")
+            for f in files[:limit]:
+                if f.storage_key.endswith(".json"):
+                    data = await self.storage.download_bytes(f.storage_key)
+                    evt = CloudTelemetryEvent.model_validate_json(data.decode("utf-8"))
+                    if evt.telemetry_id not in [e.telemetry_id for e in events]:
+                        events.append(evt)
+        except Exception as e:
+            logger.error("Failed to list telemetry events from storage", error=str(e))
+        events.sort(key=lambda x: x.timestamp, reverse=True)
+        return events[:limit]

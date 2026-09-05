@@ -148,3 +148,18 @@ class PublishingRepository:
         except Exception as e:
             logger.error("Failed to list publishing audits", job_id=job_id, error=str(e))
             return []
+
+    async def list_all_records(self, limit: int = 50) -> List[PublishRequest]:
+        """Lists publishing records across all jobs."""
+        try:
+            files = await self.storage_driver.list_files("jobs/")
+            pub_files = [f for f in files if "/publishing/" in f.storage_key and not "/audit/" in f.storage_key and f.storage_key.endswith(".json")]
+            records: List[PublishRequest] = []
+            for f in pub_files[:limit]:
+                raw = await self.storage_driver.download_bytes(f.storage_key)
+                rec = PublishRequest.model_validate_json(raw.decode("utf-8"))
+                records.append(rec)
+            return records
+        except Exception as e:
+            logger.error("Failed to list all publishing records", error=str(e))
+            return []

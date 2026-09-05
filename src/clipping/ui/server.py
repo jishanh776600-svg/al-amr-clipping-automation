@@ -1,7 +1,8 @@
 """FastAPI Master Control Backend for AL AMR Clipping Automation Console."""
 
+import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Header, Depends, status
@@ -128,6 +129,32 @@ class PublishLockRequest(BaseModel):
 class JobControlRequest(BaseModel):
     job_id: str
     reason: str = Field(..., min_length=2, max_length=500)
+
+
+class TaskRetryRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class TaskCancelRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class ReclaimStaleWorkersRequest(BaseModel):
+    stale_threshold_seconds: int = Field(default=0, ge=0)
+
+
+class AccountStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="'active', 'suspended', 'rate_limited', 'cooldown'")
+
+
+class CampaignStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="'discovered', 'active', 'paused', 'completed', 'rejected'")
+    reason: Optional[str] = None
+
+
+class EscalationResolveRequest(BaseModel):
+    action: str = Field(..., description="'resolve' or 'reject' or operator action")
+    notes: Optional[str] = None
 
 
 # --- READ ENDPOINTS ---
@@ -269,14 +296,30 @@ async def get_job_clips(
     job_id: str,
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> List[Dict[str, Any]]:
-    """Retrieves all candidate clips for a job, with score breakdown, QA status, and approval decision."""
+    """Retrieves all candidate clips for a job, with real score breakdown, QA status, and approval decision."""
     app_repo = ApprovalRepository(storage_driver=storage)
     requests = await app_repo.list_requests_for_job(job_id)
+
+    # Attempt to load discovery selection result for real score breakdown
+    selected_clips_map: Dict[str, Any] = {}
+    if requests:
+        src_id = requests[0].source_video_id
+        selected_key = f"sources/{src_id}/selected_clips.json"
+        if await storage.exists(selected_key):
+            try:
+                sel_bytes = await storage.download_bytes(selected_key)
+                sel_data = json.loads(sel_bytes.decode("utf-8"))
+                for sc in sel_data.get("selected_clips", []):
+                    cand_id = sc.get("candidate", {}).get("candidate_id")
+                    if cand_id:
+                        selected_clips_map[cand_id] = sc
+            except Exception:
+                pass
 
     results = []
     for r in requests:
         qa_key = f"clips/{r.clip_id}/qa_report.json"
-        qa_status = "UNKNOWN"
+        qa_status = r.qa_status or "UNKNOWN"
         can_publish = False
         if await storage.exists(qa_key):
             try:
@@ -292,6 +335,18 @@ async def get_job_clips(
             except Exception:
                 pass
 
+        # Real score breakdown from discovery engine if available
+        matched_sc = selected_clips_map.get(r.clip_id)
+        score_breakdown = None
+        if matched_sc and "score" in matched_sc:
+            score_obj = matched_sc["score"]
+            score_breakdown = {
+                "hook": round(score_obj.get("hook_strength", 0.0), 1),
+                "story": round(score_obj.get("narrative_completeness", 0.0), 1),
+                "curiosity": round(score_obj.get("curiosity_factor", 0.0), 1),
+                "virality": round(score_obj.get("overall_virality_score", r.score), 1),
+            }
+
         results.append({
             "clip_id": r.clip_id,
             "approval_request_id": r.approval_request_id,
@@ -306,12 +361,7 @@ async def get_job_clips(
             "video_storage_key": r.video_storage_key,
             "qa_status": qa_status,
             "can_publish": can_publish,
-            "score_breakdown": {
-                "hook": min(98, round(r.score + 2.0, 1)),
-                "story": min(95, round(r.score - 1.5, 1)),
-                "curiosity": min(96, round(r.score + 1.0, 1)),
-                "pacing": min(92, round(r.score - 3.0, 1)),
-            },
+            "score_breakdown": score_breakdown,
         })
 
     return results
@@ -556,9 +606,43 @@ async def make_clip_decision(
         reason=f"Decided via AL AMR Console by {operator}: {req.notes or 'No notes'}",
     )
     await app_repo.record_audit(audit)
+    return {
+        "status": "success",
+        "job_id": job_id,
+        "clip_id": clip_id,
+        "new_status": new_status.value,
+        "decided_by": operator,
+    }
 
 
-# --- PHASE 3 MISSION CONTROL BACKEND ENDPOINTS ---
+# --- FUNCTIONAL CONTROL LAYER & DASHBOARD BACKEND ENDPOINTS ---
+
+@app.get("/api/pipeline/stages")
+async def get_pipeline_stages() -> Dict[str, Any]:
+    """Retrieves the canonical 9-stage sequence and technical descriptions."""
+    descriptions = {
+        "01_INGESTION": "Download source video, validate format, extract audio, probe streams",
+        "02_TRANSCRIPTION": "Run Faster-Whisper, generate word-level timestamped transcripts",
+        "03_UNDERSTANDING": "Active speaker detection, face tracking, PySceneDetect shot cuts",
+        "04_DISCOVERY": "Candidate generation, heuristic multi-factor virality scoring, deduplication",
+        "05_REFRAME": "Speaker tracking bounding box crop, 9:16 layout composition",
+        "06_RENDER": "FFmpeg GPU/CPU rendering, subtitle burn-in, EBU R128 loudness normalization",
+        "07_QA": "ffprobe technical verification, video bitstream validation, audio loudness check",
+        "08_APPROVAL": "Telegram human review & approval gateway, inline interactive keyboards",
+        "09_PUBLISH": "Multi-platform distribution with idempotency and safety gate enforcement",
+    }
+    return {
+        "stage_count": PIPELINE_STAGE_COUNT,
+        "stages": [
+            {
+                "index": i + 1,
+                "name": stage,
+                "description": descriptions.get(stage, ""),
+            }
+            for i, stage in enumerate(CANONICAL_PIPELINE_STAGES)
+        ],
+    }
+
 
 @app.get("/api/agent/status")
 async def get_agent_status(
@@ -590,6 +674,173 @@ async def get_agent_status(
     }
 
 
+@app.get("/api/agent/tasks")
+async def list_agent_tasks_api(
+    task_type: Optional[str] = None,
+    task_status: Optional[str] = None,
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists recent Master Agent tasks with optional filtering."""
+    from clipping.agent.repository import TaskRepository
+    from clipping.agent.models import TaskType
+    from clipping.agent.state import TaskState
+
+    repo = TaskRepository(storage_driver=storage)
+    type_filter = TaskType(task_type) if task_type else None
+    status_filter = TaskState(task_status) if task_status else None
+    tasks = await repo.list_tasks(status=status_filter, limit=limit)
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type == type_filter]
+    return [t.model_dump(mode="json") for t in tasks]
+
+
+@app.get("/api/agent/tasks/{task_id}")
+async def get_agent_task_api(
+    task_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full details for a specific Master Agent task."""
+    from clipping.agent.repository import TaskRepository
+    repo = TaskRepository(storage_driver=storage)
+    task = await repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task.model_dump(mode="json")
+
+
+@app.post("/api/agent/tasks/{task_id}/retry")
+async def retry_agent_task_api(
+    task_id: str,
+    req: TaskRetryRequest = TaskRetryRequest(),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retries a failed or escalated task and re-enqueues it to the cloud queue."""
+    from clipping.agent.repository import TaskRepository
+    from clipping.agent.state import TaskState
+    from clipping.agent.cloud.queue import CloudTaskQueue
+
+    repo = TaskRepository(storage_driver=storage)
+    task = await repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    updated = task.transition_to(
+        new_state=TaskState.PENDING,
+        reason=req.reason or f"Manually retried by operator: {operator}",
+        actor=operator,
+    )
+    await repo.save_task(updated)
+
+    queue = CloudTaskQueue(storage_driver=storage)
+    await queue.enqueue(
+        task_id=task_id,
+        priority=task.priority,
+        metadata={"retried_by": operator, "retry_reason": req.reason or "manual_retry"},
+    )
+    logger.info("Operator retried task", task_id=task_id, operator=operator)
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "task_status": updated.status.value,
+        "message": f"Task {task_id} re-enqueued for cloud worker execution",
+    }
+
+
+@app.post("/api/agent/tasks/{task_id}/cancel")
+async def cancel_agent_task_api(
+    task_id: str,
+    req: TaskCancelRequest = TaskCancelRequest(),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Cancels an active or pending task."""
+    from clipping.agent.repository import TaskRepository
+    from clipping.agent.state import TaskState
+    from clipping.agent.cloud.queue import CloudTaskQueue
+
+    repo = TaskRepository(storage_driver=storage)
+    task = await repo.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    updated = task.transition_to(
+        new_state=TaskState.CANCELLED,
+        reason=req.reason or f"Cancelled by operator: {operator}",
+        actor=operator,
+    )
+    await repo.save_task(updated)
+
+    queue = CloudTaskQueue(storage_driver=storage)
+    await queue.cancel(task_id=task_id)
+    logger.info("Operator cancelled task", task_id=task_id, operator=operator)
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "task_status": updated.status.value,
+        "message": f"Task {task_id} cancelled",
+    }
+
+
+@app.get("/api/agent/queue")
+async def get_agent_queue_status_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves current Cloud Task Queue items and backlog."""
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    queue = CloudTaskQueue(storage_driver=storage)
+    pending = await queue.list_pending_items(limit=100)
+    return {
+        "depth": len(pending),
+        "pending_items": [item.model_dump(mode="json") for item in pending],
+    }
+
+
+@app.get("/api/agent/workers")
+async def list_workers_api(
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists current worker leases, status, and health metrics."""
+    from clipping.agent.cloud.lease import WorkerLeaseEngine
+    engine = WorkerLeaseEngine(storage_driver=storage)
+    leases = await engine.list_leases(limit=limit)
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "task_id": l.task_id,
+            "worker_id": l.worker_id,
+            "status": l.status,
+            "claimed_at": l.claimed_at.isoformat(),
+            "last_heartbeat_at": l.last_heartbeat_at.isoformat(),
+            "lease_expires_at": l.lease_expires_at.isoformat(),
+            "heartbeat_count": l.heartbeat_count,
+            "is_valid": l.is_valid_at(now),
+            "is_stale": l.is_stale_at(now),
+        }
+        for l in leases
+    ]
+
+
+@app.post("/api/agent/workers/reclaim-stale")
+async def reclaim_stale_workers_api(
+    req: ReclaimStaleWorkersRequest = ReclaimStaleWorkersRequest(),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Scans and reclaims stale worker leases back into the pending queue."""
+    from clipping.agent.cloud.queue import CloudTaskQueue
+    queue = CloudTaskQueue(storage_driver=storage)
+    reclaimed = await queue.reclaim_stale_tasks(stale_threshold_seconds=req.stale_threshold_seconds)
+    logger.info("Operator triggered stale task reclamation", operator=operator, reclaimed_count=len(reclaimed))
+    return {
+        "status": "success",
+        "reclaimed_count": len(reclaimed),
+        "reclaimed_task_ids": reclaimed,
+    }
+
+
 @app.get("/api/campaigns")
 async def list_campaigns_api(
     storage: StorageDriver = Depends(get_storage_driver),
@@ -615,6 +866,38 @@ async def get_campaign_detail_api(
     return campaign.model_dump(mode="json")
 
 
+@app.post("/api/campaigns/{campaign_id}/status")
+async def update_campaign_status_api(
+    campaign_id: str,
+    req: CampaignStatusUpdateRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Updates status for an existing campaign."""
+    from clipping.agent.campaign.repository import CampaignRepository
+    from clipping.agent.campaign.models import CampaignStatus
+    repo = CampaignRepository(storage_driver=storage)
+    camp = await repo.get_campaign(campaign_id)
+    if not camp:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    try:
+        new_status = CampaignStatus(req.status.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported campaign status: {req.status}")
+
+    updated = camp.model_copy(update={
+        "status": new_status,
+        "updated_at": datetime.now(timezone.utc),
+    })
+    await repo.save_campaign(updated)
+    logger.info("Operator updated campaign status", campaign_id=campaign_id, status=req.status, operator=operator)
+    return {
+        "status": "success",
+        "campaign_id": campaign_id,
+        "new_status": new_status.value,
+    }
+
+
 @app.get("/api/accounts")
 async def list_accounts_api(
     storage: StorageDriver = Depends(get_storage_driver),
@@ -626,60 +909,191 @@ async def list_accounts_api(
     return [a.to_safe_dict() for a in accounts]
 
 
-@app.get("/api/agent/tasks")
-async def list_agent_tasks_api(
-    task_type: Optional[str] = None,
-    task_status: Optional[str] = None,
+@app.get("/api/accounts/{platform}/{account_id}")
+async def get_account_detail_api(
+    platform: str,
+    account_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves safe account metadata (zero credentials exposed)."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    try:
+        p_enum = AccountPlatform(platform.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+    meta = await vault.get_account_metadata(platform=p_enum, account_id=account_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return meta.to_safe_dict()
+
+
+@app.post("/api/accounts/{platform}/{account_id}/status")
+async def update_account_status_api(
+    platform: str,
+    account_id: str,
+    req: AccountStatusUpdateRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Updates account operating status in the credential vault."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    try:
+        p_enum = AccountPlatform(platform.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+    try:
+        st_enum = AccountStatus(req.status.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported status: {req.status}")
+
+    updated = await vault.update_account_status(platform=p_enum, account_id=account_id, new_status=st_enum)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Account not found")
+    logger.info("Operator updated account status", platform=platform, account_id=account_id, status=req.status, operator=operator)
+    return {
+        "status": "success",
+        "platform": platform,
+        "account_id": account_id,
+        "new_status": st_enum.value,
+    }
+
+
+@app.get("/api/approvals/pending")
+async def list_pending_approvals_api(
     limit: int = 50,
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> List[Dict[str, Any]]:
-    """Lists recent Master Agent tasks."""
-    from clipping.agent.repository import TaskRepository
-    from clipping.agent.models import TaskType
-    from clipping.agent.state import TaskState
-
-    repo = TaskRepository(storage_driver=storage)
-    type_filter = TaskType(task_type) if task_type else None
-    status_filter = TaskState(task_status) if task_status else None
-    tasks = await repo.list_tasks(status=status_filter, task_type=type_filter, limit=limit)
-    return [t.model_dump(mode="json") for t in tasks]
+    """Lists pending clip approvals awaiting human review across all jobs."""
+    app_repo = ApprovalRepository(storage_driver=storage)
+    requests = await app_repo.list_all_pending_requests(limit=limit)
+    return [r.model_dump(mode="json") for r in requests]
 
 
-@app.get("/api/agent/queue")
-async def get_agent_queue_status_api(
+@app.get("/api/approvals/history")
+async def list_approval_history_api(
+    limit: int = 50,
     storage: StorageDriver = Depends(get_storage_driver),
-) -> Dict[str, Any]:
-    """Retrieves current Cloud Task Queue items and backlog."""
-    from clipping.agent.cloud.queue import CloudTaskQueue
-    queue = CloudTaskQueue(storage_driver=storage)
-    pending = await queue.list_pending_items(limit=100)
-    return {
-        "depth": len(pending),
-        "pending_items": [item.model_dump(mode="json") for item in pending],
-    }
+) -> List[Dict[str, Any]]:
+    """Lists past approval audit records across all jobs."""
+    app_repo = ApprovalRepository(storage_driver=storage)
+    audits = await app_repo.list_all_audits(limit=limit)
+    return [a.model_dump(mode="json") for a in audits]
+
+
+@app.get("/api/publishing/queue")
+async def list_publishing_queue_api(
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists all publishing requests across jobs with publish gate status."""
+    pub_repo = PublishingRepository(storage_driver=storage)
+    control_repo = ControlRepository(storage_driver=storage)
+    control_state = await control_repo.get_state()
+    records = await pub_repo.list_all_records(limit=limit)
+    return [
+        {
+            **r.model_dump(mode="json"),
+            "publish_lock_active": control_state.publishing_locked,
+            "emergency_stopped": control_state.emergency_stopped,
+            "can_publish": control_state.can_publish(),
+        }
+        for r in records
+    ]
 
 
 @app.get("/api/agent/escalations")
 async def list_agent_escalations_api(
+    status: Optional[str] = None,
+    limit: int = 50,
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> List[Dict[str, Any]]:
     """Lists operator escalations requiring human intervention."""
     from clipping.agent.repository import TaskRepository
+    from clipping.agent.escalation import EscalationStatus
     repo = TaskRepository(storage_driver=storage)
-    escalations = await repo.list_escalations(limit=50)
+    st_filter = EscalationStatus(status.lower()) if status else None
+    escalations = await repo.list_escalations(status=st_filter, limit=limit)
     return [e.model_dump(mode="json") for e in escalations]
 
 
-@app.get("/api/mission-control/overview")
-async def get_mission_control_overview_api(
+@app.get("/api/agent/escalations/{escalation_id}")
+async def get_escalation_detail_api(
+    escalation_id: str,
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> Dict[str, Any]:
-    """Single aggregated view for future Mission Control dashboard."""
+    """Retrieves full details and context for a specific escalation record."""
+    from clipping.agent.repository import TaskRepository
+    repo = TaskRepository(storage_driver=storage)
+    esc = await repo.get_escalation(escalation_id)
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    return esc.model_dump(mode="json")
+
+
+@app.post("/api/agent/escalations/{escalation_id}/resolve")
+async def resolve_escalation_api(
+    escalation_id: str,
+    req: EscalationResolveRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Resolves or rejects an active operator escalation."""
+    from clipping.agent.repository import TaskRepository
+    repo = TaskRepository(storage_driver=storage)
+    esc = await repo.get_escalation(escalation_id)
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+
+    if req.action.lower() == "reject":
+        resolved = esc.reject(operator=operator, notes=req.notes)
+    else:
+        resolved = esc.resolve(operator=operator, action=req.action, notes=req.notes)
+
+    await repo.save_escalation(resolved)
+    logger.info("Operator resolved escalation", escalation_id=escalation_id, operator=operator, action=req.action)
+    return {
+        "status": "success",
+        "escalation_id": escalation_id,
+        "escalation_status": resolved.status.value,
+        "resolved_by": operator,
+    }
+
+
+@app.get("/api/agent/telemetry")
+async def list_agent_telemetry_api(
+    limit: int = 50,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Retrieves recent cloud telemetry events."""
+    from clipping.agent.cloud.telemetry import CloudTelemetryEngine
+    engine = CloudTelemetryEngine(storage_driver=storage)
+    events = await engine.list_events(limit=limit)
+    return [e.model_dump(mode="json") for e in events]
+
+
+@app.get("/api/dashboard/overview")
+async def get_dashboard_overview_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """
+    Unified operational state across all 11 AL AMR CLIPPING functional subsystems:
+    Control, Agent, Tasks, Workers, Campaigns, Accounts, Clipping Jobs,
+    Approvals, Publishing, Escalations, and Telemetry.
+    """
     from clipping.agent.cloud.queue import CloudTaskQueue
     from clipping.agent.campaign.repository import CampaignRepository
     from clipping.agent.vault.vault import EncryptedCredentialVault
     from clipping.agent.repository import TaskRepository
+    from clipping.agent.cloud.lease import WorkerLeaseEngine
+    from clipping.approval.repository import ApprovalRepository
+    from clipping.publishing.repository import PublishingRepository
+    from clipping.agent.cloud.telemetry import CloudTelemetryEngine
 
+    settings = Settings()
     control_repo = ControlRepository(storage_driver=storage)
     control_state = await control_repo.get_state()
 
@@ -696,24 +1110,63 @@ async def get_mission_control_overview_api(
     queue = CloudTaskQueue(storage_driver=storage)
     pending = await queue.list_pending_items(limit=100)
 
+    lease_engine = WorkerLeaseEngine(storage_driver=storage)
+    leases = await lease_engine.list_leases(limit=20)
+    now = datetime.now(timezone.utc)
+    active_leases = [l for l in leases if l.is_valid_at(now)]
+
+    state_repo = RemoteStorageStateRepository(storage_driver=storage)
+    recent_jobs = await state_repo.list_jobs(limit=10)
+
+    app_repo = ApprovalRepository(storage_driver=storage)
+    pending_approvals = await app_repo.list_all_pending_requests(limit=50)
+
+    pub_repo = PublishingRepository(storage_driver=storage)
+    pub_records = await pub_repo.list_all_records(limit=20)
+
+    telemetry_engine = CloudTelemetryEngine(storage_driver=storage)
+    telemetry_events = await telemetry_engine.list_events(limit=10)
+
     browser_tasks = [t for t in recent_tasks if t.task_type.value == "browser_operation"]
     clipping_tasks = [t for t in recent_tasks if t.task_type.value == "media_clipping"]
     failures = [t for t in recent_tasks if t.status.value == "failed"]
+    open_escalations = [e for e in escalations if e.status.value == "open"]
 
     return {
+        "project_name": settings.PRODUCT_NAME,
         "status": "operational" if not control_state.emergency_stopped else "emergency_stopped",
         "operating_mode": control_state.mode.value,
-        "campaigns_count": len(campaigns),
-        "accounts_count": len(accounts),
-        "queue_depth": len(pending),
-        "browser_jobs_count": len(browser_tasks),
-        "clipping_jobs_count": len(clipping_tasks),
-        "open_escalations_count": len([e for e in escalations if e.status.value == "open"]),
-        "recent_failures_count": len(failures),
+        "emergency_stopped": control_state.emergency_stopped,
+        "automation_paused": control_state.automation_paused,
+        "publishing_locked": control_state.publishing_locked,
+        "can_start_new_jobs": control_state.can_start_new_jobs(),
+        "can_publish": control_state.can_publish(),
+        "counts": {
+            "campaigns": len(campaigns),
+            "accounts": len(accounts),
+            "queue_depth": len(pending),
+            "active_workers": len(active_leases),
+            "browser_jobs": len(browser_tasks),
+            "clipping_jobs": len(clipping_tasks),
+            "recent_jobs": len(recent_jobs),
+            "pending_approvals": len(pending_approvals),
+            "publishing_records": len(pub_records),
+            "open_escalations": len(open_escalations),
+            "recent_failures": len(failures),
+        },
         "recent_failures": [f.model_dump(mode="json") for f in failures[:5]],
-        "open_escalations": [e.model_dump(mode="json") for e in escalations if e.status.value == "open"][:5],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "open_escalations": [e.model_dump(mode="json") for e in open_escalations[:5]],
+        "recent_telemetry": [e.model_dump(mode="json") for e in telemetry_events[:5]],
+        "timestamp": now.isoformat(),
     }
+
+
+@app.get("/api/mission-control/overview")
+async def get_mission_control_overview_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Backward compatibility alias for AL AMR CLIPPING dashboard overview."""
+    return await get_dashboard_overview_api(storage=storage)
 
 
 if STATIC_DIR.exists():
