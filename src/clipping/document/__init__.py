@@ -8,6 +8,12 @@ from clipping.document.base import (
 )
 from clipping.document.extractor import DeterministicRuleExtractor
 from clipping.document.docling_parser import DoclingCampaignParser
+from clipping.document.brief_engine import (
+    BriefDocumentReader,
+    BriefDeterministicExtractor,
+    CampaignBriefIntelligenceEngine,
+)
+from clipping.document.ai_extractor import BriefAIExtractor
 
 __all__ = [
     "CampaignDocumentParser",
@@ -16,4 +22,8 @@ __all__ = [
     "ExtractedTable",
     "DeterministicRuleExtractor",
     "DoclingCampaignParser",
+    "BriefDocumentReader",
+    "BriefDeterministicExtractor",
+    "CampaignBriefIntelligenceEngine",
+    "BriefAIExtractor",
 ]

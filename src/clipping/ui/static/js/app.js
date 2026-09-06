@@ -2370,6 +2370,20 @@ window.AlAmrModals = {
         if (nameEl) nameEl.textContent = file.name;
         if (sizeEl) sizeEl.textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
         if (badgeEl) badgeEl.textContent = ext.toUpperCase();
+
+        // Immediately upload & extract requirements with Brief Intelligence Engine
+        window.AlAmrShellInstance.showToast(`Analyzing campaign brief (${file.name})...`, "info");
+        AlAmrAPI.uploadBrief(file).then(res => {
+            this.currentBriefStorageKey = res.brief_storage_key;
+            this.currentBriefFilename = res.filename;
+            if (res.requirements) {
+                this.displayExtractedRequirements(res.requirements, res.brief_storage_key);
+                window.AlAmrShellInstance.showToast("Campaign brief analyzed successfully!", "success");
+            }
+        }).catch(err => {
+            console.error("Brief analysis failed:", err);
+            window.AlAmrShellInstance.showToast(`Brief upload failed: ${err.message}`, "error");
+        });
     },
 
     clearBriefFile(event) {
@@ -2378,13 +2392,233 @@ window.AlAmrModals = {
             event.preventDefault();
         }
         this.campaignBriefFile = null;
+        this.currentRequirements = null;
+        this.currentBriefStorageKey = null;
         const input = document.getElementById("campaign-brief-file-input");
         if (input) input.value = "";
 
         const dropzone = document.getElementById("campaign-brief-dropzone");
         const chip = document.getElementById("campaign-brief-selected");
+        const panel = document.getElementById("campaign-requirements-panel");
         if (dropzone) dropzone.classList.remove("hidden");
         if (chip) chip.classList.add("hidden");
+        if (panel) panel.classList.add("hidden");
+    },
+
+    displayExtractedRequirements(reqs, storageKey) {
+        this.currentRequirements = reqs;
+        if (storageKey) this.currentBriefStorageKey = storageKey;
+
+        const panel = document.getElementById("campaign-requirements-panel");
+        if (!panel) return;
+        panel.classList.remove("hidden");
+
+        // 1. Confidence badge
+        const badge = document.getElementById("brief-confidence-badge");
+        if (badge) {
+            const isSuccess = reqs.metadata && reqs.metadata.extraction_status === "SUCCESS";
+            badge.textContent = isSuccess ? "HIGH CONFIDENCE" : "NEEDS REVIEW";
+            badge.className = `text-[10px] px-2 py-0.5 rounded border font-bold ${
+                isSuccess ? "bg-emerald-950 border-emerald-500/40 text-emerald-400" : "bg-amber-950 border-amber-500/40 text-amber-400"
+            }`;
+        }
+
+        // 2. Clips
+        const clips = reqs.clips || {};
+        const countStr = clips.clip_count_required ? `${clips.clip_count_required} required` : "3 required";
+        const durStr = (clips.min_duration_seconds && clips.max_duration_seconds)
+            ? `${clips.min_duration_seconds}-${clips.max_duration_seconds}s`
+            : "30-60s";
+        const clipsSum = document.getElementById("req-clips-summary");
+        if (clipsSum) clipsSum.textContent = `${countStr} • ${durStr}`;
+        const clipsMod = document.getElementById("req-clips-modality");
+        if (clipsMod) clipsMod.textContent = clips.duration_modality || "REQUIRED";
+
+        // 3. Platform & Aspect
+        const plats = (reqs.platform && reqs.platform.platforms) || [];
+        const platSum = document.getElementById("req-platform-summary");
+        if (platSum) {
+            platSum.textContent = plats.length > 0
+                ? plats.map(p => p === "instagram_reels" ? "Instagram Reels" : "YouTube Shorts").join(" • ")
+                : "YouTube Shorts / Reels";
+        }
+        const aspSum = document.getElementById("req-aspect-summary");
+        if (aspSum) aspSum.textContent = `${clips.aspect_ratio || "9:16"} Vertical • ${clips.resolution || "1080x1920"}`;
+
+        // 4. Monetization & Submission
+        const mon = reqs.monetization || {};
+        const monSum = document.getElementById("req-monetization-summary");
+        if (monSum) {
+            const cpm = mon.cpm_rate ? `CPM $${mon.cpm_rate.toFixed(2)}` : "CPM $1.50";
+            const bud = mon.total_budget ? `$${mon.total_budget}` : "$500 pool";
+            monSum.textContent = `${cpm} • ${bud}`;
+        }
+        const sub = reqs.submission || {};
+        const subSum = document.getElementById("req-submission-summary");
+        if (subSum) subSum.textContent = sub.deadline ? `Due: ${sub.deadline}` : "Open deadline";
+
+        // 5. Hashtags & CTA
+        const textReqs = reqs.text || {};
+        const hashContainer = document.getElementById("req-hashtags-container");
+        if (hashContainer) {
+            const tags = textReqs.required_hashtags || [];
+            if (tags.length > 0) {
+                hashContainer.innerHTML = tags.map(t =>
+                    `<span class="px-2 py-0.5 bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-[10px] rounded-full font-bold">${t}</span>`
+                ).join("");
+            } else {
+                hashContainer.innerHTML = `<span class="text-[10px] text-slate-500 italic">No specific hashtags detected in brief</span>`;
+            }
+        }
+        const ctaEl = document.getElementById("req-cta-text");
+        if (ctaEl) ctaEl.textContent = textReqs.call_to_action || "None specified";
+
+        // 6. Content Rules
+        const contentRulesEl = document.getElementById("req-content-rules");
+        if (contentRulesEl) {
+            const allowed = (reqs.content && reqs.content.allowed_topics) || [];
+            const prohibited = (reqs.content && reqs.content.prohibited_topics) || [];
+            const talking = (reqs.content && reqs.content.required_talking_points) || [];
+            let html = "";
+            if (allowed.length > 0) html += `<div class="text-emerald-400">✓ Allowed Topics: ${allowed.join(", ")}</div>`;
+            if (prohibited.length > 0) html += `<div class="text-rose-400">✕ Prohibited: ${prohibited.join(", ")}</div>`;
+            if (talking.length > 0) html += `<div class="text-cyan-300">★ Key Points: ${talking.slice(0, 2).join("; ")}</div>`;
+            if (!html) html = `<div class="text-slate-400">Standard community guidelines and content rules apply</div>`;
+            contentRulesEl.innerHTML = html;
+        }
+
+        // 7. Override Count Indicator
+        const countEl = document.getElementById("req-override-count");
+        if (countEl) {
+            const overrides = reqs.overrides || [];
+            countEl.textContent = overrides.length > 0 ? `[${overrides.length} OPERATOR OVERRIDE${overrides.length > 1 ? 'S' : ''}]` : "";
+        }
+
+        // Pre-populate override inputs
+        const clipInput = document.getElementById("override-clip-count");
+        if (clipInput) clipInput.value = clips.clip_count_required || 3;
+        const minDurInput = document.getElementById("override-min-duration");
+        if (minDurInput) minDurInput.value = clips.min_duration_seconds || 30;
+        const maxDurInput = document.getElementById("override-max-duration");
+        if (maxDurInput) maxDurInput.value = clips.max_duration_seconds || 60;
+        const hashInput = document.getElementById("override-hashtags");
+        if (hashInput) hashInput.value = (textReqs.required_hashtags || []).join(", ");
+
+        // Autofill campaign name if empty
+        const nameInput = document.getElementById("campaign-name-input");
+        if (nameInput && !nameInput.value.trim() && reqs.identity && reqs.identity.campaign_name) {
+            nameInput.value = reqs.identity.campaign_name;
+        }
+    },
+
+    toggleOverridePanel() {
+        const drawer = document.getElementById("campaign-override-drawer");
+        const arrow = document.getElementById("override-drawer-arrow");
+        if (!drawer) return;
+        const isHidden = drawer.classList.contains("hidden");
+        if (isHidden) {
+            drawer.classList.remove("hidden");
+            if (arrow) arrow.textContent = "▲";
+        } else {
+            drawer.classList.add("hidden");
+            if (arrow) arrow.textContent = "▼";
+        }
+    },
+
+    async applyRequirementsOverride() {
+        if (!this.currentRequirements) return;
+        const clipCount = parseInt(document.getElementById("override-clip-count").value, 10);
+        const minDur = parseFloat(document.getElementById("override-min-duration").value);
+        const maxDur = parseFloat(document.getElementById("override-max-duration").value);
+        const hashStr = document.getElementById("override-hashtags").value;
+
+        if (minDur >= maxDur) {
+            alert("Min duration must be less than max duration.");
+            return;
+        }
+
+        const tags = hashStr.split(",").map(t => t.trim()).filter(t => t.length > 0).map(t => t.startsWith("#") ? t : `#${t}`);
+
+        try {
+            // Send override mutation to preserve audit record
+            let res = await AlAmrAPI.overrideRequirements({
+                requirements: this.currentRequirements,
+                field_path: "clips.clip_count_required",
+                override_value: clipCount,
+                reason: "Operator modified clip count"
+            });
+            res = await AlAmrAPI.overrideRequirements({
+                requirements: res.requirements,
+                field_path: "clips.min_duration_seconds",
+                override_value: minDur,
+                reason: "Operator adjusted min duration"
+            });
+            res = await AlAmrAPI.overrideRequirements({
+                requirements: res.requirements,
+                field_path: "clips.max_duration_seconds",
+                override_value: maxDur,
+                reason: "Operator adjusted max duration"
+            });
+            res = await AlAmrAPI.overrideRequirements({
+                requirements: res.requirements,
+                field_path: "text.required_hashtags",
+                override_value: tags,
+                reason: "Operator updated required hashtags"
+            });
+
+            this.displayExtractedRequirements(res.requirements);
+            this.toggleOverridePanel();
+            window.AlAmrShellInstance.showToast("Requirements override saved with audit trail!", "success");
+        } catch (err) {
+            alert(`Failed to save override: ${err.message}`);
+        }
+    },
+
+    async openBriefContentModal() {
+        if (!this.currentBriefStorageKey) {
+            alert("No brief storage key available.");
+            return;
+        }
+        const modal = document.getElementById("modal-brief-content");
+        const bodyEl = document.getElementById("brief-modal-body");
+        const nameEl = document.getElementById("brief-modal-filename");
+        const pagesEl = document.getElementById("brief-modal-pages");
+        const formatEl = document.getElementById("brief-modal-format");
+
+        if (modal) modal.classList.remove("hidden");
+        if (bodyEl) bodyEl.textContent = "Loading original brief...";
+
+        try {
+            const data = await AlAmrAPI.getBriefContent(this.currentBriefStorageKey);
+            if (nameEl) nameEl.textContent = data.filename;
+            if (pagesEl) pagesEl.textContent = `Pages: ${data.num_pages}`;
+            if (formatEl) formatEl.textContent = `Format: ${data.format.toUpperCase()}`;
+            if (bodyEl) bodyEl.textContent = data.full_text || "(No selectable text in document)";
+        } catch (err) {
+            if (bodyEl) bodyEl.textContent = `Failed to load brief content: ${err.message}`;
+        }
+    },
+
+    closeBriefContentModal() {
+        const modal = document.getElementById("modal-brief-content");
+        if (modal) modal.classList.add("hidden");
+    },
+
+    async reanalyzeBrief() {
+        if (!this.currentBriefStorageKey) {
+            alert("No uploaded brief to re-analyze.");
+            return;
+        }
+        window.AlAmrShellInstance.showToast("Re-analyzing campaign brief...", "info");
+        try {
+            const res = await AlAmrAPI.analyzeBrief({ brief_storage_key: this.currentBriefStorageKey });
+            if (res.requirements) {
+                this.displayExtractedRequirements(res.requirements, this.currentBriefStorageKey);
+                window.AlAmrShellInstance.showToast("Brief re-analyzed successfully!", "success");
+            }
+        } catch (err) {
+            alert(`Re-analysis failed: ${err.message}`);
+        }
     },
 
     onVideoFileSelected(event) {
@@ -2535,13 +2769,14 @@ window.AlAmrModals = {
                 name,
                 source_uri,
                 source_type: this.campaignSourceType,
-                brief_storage_key,
-                brief_filename,
+                brief_storage_key: brief_storage_key || this.currentBriefStorageKey,
+                brief_filename: brief_filename || this.currentBriefFilename,
                 requirements_text,
+                requirements: this.currentRequirements,
                 target_platforms: [platform],
                 target_account_id: targetAccountId,
-                cpm_rate: 1.5,
-                payout_budget: 500.0,
+                cpm_rate: (this.currentRequirements && this.currentRequirements.monetization && this.currentRequirements.monetization.cpm_rate) || 1.5,
+                payout_budget: (this.currentRequirements && this.currentRequirements.monetization && this.currentRequirements.monetization.total_budget) || 500.0,
             });
 
             this.closeCreateCampaignModal();

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from clipping.contracts.requirements import CampaignRequirements
 
 
 class CampaignStatus(str, Enum):
@@ -202,6 +203,7 @@ class CampaignRecord(BaseModel):
     canonical_url: Optional[str] = None
     creator_community: Optional[str] = None
     external_source_id: Optional[str] = None
+    requirements: Optional[CampaignRequirements] = None
 
 
     def validate_rules(self) -> Optional[str]:

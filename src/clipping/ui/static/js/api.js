@@ -127,6 +127,24 @@ class AlAmrAPI {
         });
     }
 
+    static async analyzeBrief({ brief_storage_key = null, raw_text = null, filename = "brief.txt" }) {
+        return this.request("/api/campaigns/analyze-brief", {
+            method: "POST",
+            body: JSON.stringify({ brief_storage_key, raw_text, filename })
+        });
+    }
+
+    static async overrideRequirements({ requirements, field_path, override_value, reason = "" }) {
+        return this.request("/api/campaigns/override-requirements", {
+            method: "POST",
+            body: JSON.stringify({ requirements, field_path, override_value, reason })
+        });
+    }
+
+    static async getBriefContent(briefStorageKey) {
+        return this.request(`/api/campaigns/brief-content?brief_storage_key=${encodeURIComponent(briefStorageKey)}`);
+    }
+
     static async uploadSourceVideo(file) {
         const formData = new FormData();
         formData.append("file", file);

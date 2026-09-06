@@ -22,6 +22,7 @@ from clipping.core.constants import CANONICAL_PIPELINE_STAGES, PIPELINE_STAGE_CO
 from clipping.logging.logger import get_logger
 from clipping.publishing.models import PublishStatus
 from clipping.publishing.repository import PublishingRepository
+from clipping.contracts.requirements import CampaignRequirements
 from clipping.state.models import JobState
 from clipping.state.remote import RemoteStorageStateRepository
 from clipping.storage.base import StorageDriver
@@ -215,6 +216,19 @@ class YouTubeTokenExchangeRequest(BaseModel):
     redirect_uri: str = "http://localhost:8000/api/auth/youtube/callback"
 
 
+class AnalyzeBriefRequest(BaseModel):
+    brief_storage_key: Optional[str] = None
+    raw_text: Optional[str] = None
+    filename: Optional[str] = "brief.txt"
+
+
+class OverrideRequirementsRequest(BaseModel):
+    requirements: Dict[str, Any]
+    field_path: str
+    override_value: Any
+    reason: Optional[str] = None
+
+
 class CreateAndRunCampaignRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
     source_uri: str = Field(..., min_length=1, max_length=1024)
@@ -222,6 +236,7 @@ class CreateAndRunCampaignRequest(BaseModel):
     brief_storage_key: Optional[str] = Field(default=None, description="Storage key of uploaded brief file")
     brief_filename: Optional[str] = Field(default=None, description="Original filename of brief")
     requirements_text: Optional[str] = Field(default=None, max_length=10000)
+    requirements: Optional[CampaignRequirements] = Field(default=None, description="Structured extracted/overridden requirements")
     target_platforms: List[str] = Field(default=["youtube_shorts"])
     target_account_id: Optional[str] = Field(default=None, description="Selected destination account ID from vault")
     cpm_rate: float = Field(default=1.5, ge=0.0)
@@ -1242,6 +1257,34 @@ async def list_campaigns_api(
     return [c.model_dump(mode="json") for c in campaigns]
 
 
+@app.get("/api/campaigns/brief-content")
+async def get_brief_content_api(
+    brief_storage_key: str = Query(...),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full extracted text and provenance for viewing original brief."""
+    clean_key = brief_storage_key.strip()
+    if ".." in clean_key:
+        raise HTTPException(status_code=400, detail="Invalid path traversal")
+    if not await storage.exists(clean_key):
+        raise HTTPException(status_code=404, detail=f"Brief file not found at '{clean_key}'")
+
+    content = await storage.download_bytes(clean_key)
+    filename = Path(clean_key).name
+    from clipping.document.brief_engine import BriefDocumentReader
+    full_text, pages, is_image_only = BriefDocumentReader.read_document_bytes(content, filename)
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "format": Path(filename).suffix.lower().lstrip("."),
+        "full_text": full_text,
+        "num_pages": len(pages),
+        "is_image_only": is_image_only,
+    }
+
+
 @app.get("/api/campaigns/{campaign_id}")
 async def get_campaign_detail_api(
     campaign_id: str,
@@ -1391,13 +1434,73 @@ async def upload_campaign_brief_api(
     storage_key = f"campaigns/briefs/{uuid.uuid4().hex[:12]}_{clean_filename}"
     await storage.upload_bytes(content, storage_key)
     logger.info("Campaign brief uploaded successfully", filename=clean_filename, storage_key=storage_key, operator=operator)
+
+    # Automatically analyze brief through the Brief Intelligence Engine
+    from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+    engine = CampaignBriefIntelligenceEngine()
+    requirements = await engine.analyze_document_bytes(content, clean_filename)
+
     return {
         "status": "success",
         "brief_storage_key": storage_key,
         "filename": clean_filename,
         "size_bytes": len(content),
         "format": ext.lstrip("."),
+        "requirements": requirements.model_dump(),
     }
+
+
+@app.post("/api/campaigns/analyze-brief")
+async def analyze_campaign_brief_api(
+    req: AnalyzeBriefRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Analyzes a campaign brief (from storage key or direct text) and returns structured CampaignRequirements."""
+    from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+    engine = CampaignBriefIntelligenceEngine()
+
+    if req.brief_storage_key:
+        clean_key = req.brief_storage_key.strip()
+        if ".." in clean_key:
+            raise HTTPException(status_code=400, detail="Invalid path traversal in storage key")
+        if not await storage.exists(clean_key):
+            raise HTTPException(status_code=404, detail=f"Brief file not found at '{clean_key}'")
+        reqs = await engine.analyze_from_storage(storage, clean_key)
+    elif req.raw_text:
+        content = req.raw_text.encode("utf-8")
+        reqs = await engine.analyze_document_bytes(content, req.filename or "brief.txt")
+    else:
+        raise HTTPException(status_code=400, detail="Either brief_storage_key or raw_text is required")
+
+    return {
+        "status": "success",
+        "requirements": reqs.model_dump(),
+    }
+
+
+@app.post("/api/campaigns/override-requirements")
+async def override_requirements_api(
+    req: OverrideRequirementsRequest,
+    operator: str = Depends(get_current_operator),
+) -> Dict[str, Any]:
+    """Records an operator override of an extracted requirement without losing the original value."""
+    from clipping.contracts.requirements import CampaignRequirements
+    try:
+        reqs = CampaignRequirements.model_validate(req.requirements)
+        reqs.apply_override(
+            field_path=req.field_path,
+            override_value=req.override_value,
+            operator=operator,
+            reason=req.reason,
+        )
+        return {
+            "status": "success",
+            "requirements": reqs.model_dump(),
+            "override_count": len(reqs.overrides),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to apply override: {str(e)}")
 
 
 @app.post("/api/campaigns/upload-video")
@@ -1539,6 +1642,14 @@ async def create_and_run_campaign_api(
     rules = [line.strip() for line in req.requirements_text.splitlines() if line.strip()] if req.requirements_text else []
     resolved_source_urls = [clean_source] if clean_source.startswith("http") else []
 
+    active_requirements = req.requirements
+    if not active_requirements and req.brief_storage_key and await storage.exists(req.brief_storage_key):
+        try:
+            from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+            active_requirements = await CampaignBriefIntelligenceEngine().analyze_from_storage(storage, req.brief_storage_key)
+        except Exception as e:
+            logger.warning("Could not auto-extract requirements on campaign run", error=str(e))
+
     record = CampaignRecord(
         campaign_id=campaign_id,
         name=req.name,
@@ -1558,6 +1669,7 @@ async def create_and_run_campaign_api(
         source_material=SourceMaterial(video_urls=resolved_source_urls),
         allowed_content_rules=rules,
         posting_requirements=PostingRequirements(),
+        requirements=active_requirements,
     )
     await camp_repo.save_campaign(record)
 
@@ -1578,6 +1690,8 @@ async def create_and_run_campaign_api(
         job_metadata["brief_storage_key"] = req.brief_storage_key
     if req.brief_filename:
         job_metadata["brief_filename"] = req.brief_filename
+    if active_requirements:
+        job_metadata["campaign_requirements"] = active_requirements.model_dump()
 
     await state_repo.create_job(
         job_id=job_id,
@@ -1610,6 +1724,7 @@ async def create_and_run_campaign_api(
         "target_platform": p_enum.value,
         "target_account_id": target_acc_id,
         "source_type": source_ref.source_type.value,
+        "requirements": active_requirements.model_dump() if active_requirements else None,
         "message": f"Campaign '{req.name}' created and autonomous clipping pipeline started.",
     }
 
