@@ -81,6 +81,24 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
                 }
                 # Check for mock vs real
                 if credentials.get("use_mock_graph_api", False) or "mock" in access_token:
+                    if mode in (PublishingMode.IMMEDIATE, PublishingMode.SCHEDULED) and not credentials.get("allow_mock_client", False):
+                        logger.error("Mock Instagram Graph API rejected in live publishing mode", submission_id=submission.submission_id)
+                        return PlatformPublishResult(
+                            success=False,
+                            status=SubmissionStatus.FAILED,
+                            error_message="Mock Instagram Graph API is prohibited in live publishing mode",
+                            failure_classification="mock_client_prohibited",
+                            escalation_required=True,
+                            escalation_context=EscalationContext(
+                                what_happened="Live publishing attempted with mock Instagram token",
+                                why_it_happened="Mock credentials cannot be used for live production publishing",
+                                decision_required="Provide valid Instagram Graph API access token",
+                                available_options=["configure_vault_account", "set_environment_credentials"],
+                                reason=EscalationReason.POLICY_VIOLATION,
+                                severity=EscalationSeverity.CRITICAL,
+                                metadata={"submission_id": submission.submission_id, "platform": "instagram"},
+                            ),
+                        )
                     post_id = f"ig_reel_{submission.clip_id}_{abs(hash(caption)) % 1000000:06d}"
                     return PlatformPublishResult(
                         success=True,
@@ -197,6 +215,24 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
 
             # Check if explicit MockBrowserDriver was provided (in unit tests)
             if isinstance(self._driver, MockBrowserDriver):
+                if mode in (PublishingMode.IMMEDIATE, PublishingMode.SCHEDULED) and not credentials.get("allow_mock_client", False):
+                    logger.error("MockBrowserDriver rejected in live publishing mode", submission_id=submission.submission_id)
+                    return PlatformPublishResult(
+                        success=False,
+                        status=SubmissionStatus.FAILED,
+                        error_message="MockBrowserDriver is prohibited in live publishing mode",
+                        failure_classification="mock_client_prohibited",
+                        escalation_required=True,
+                        escalation_context=EscalationContext(
+                            what_happened="Live publishing attempted with MockBrowserDriver",
+                            why_it_happened="Mock browser drivers cannot perform live production publishing",
+                            decision_required="Configure real authenticated browser session or Graph API access token",
+                            available_options=["configure_vault_account", "set_environment_credentials"],
+                            reason=EscalationReason.POLICY_VIOLATION,
+                            severity=EscalationSeverity.CRITICAL,
+                            metadata={"submission_id": submission.submission_id, "platform": "instagram"},
+                        ),
+                    )
                 post_id = f"ig_reel_{submission.clip_id}_{abs(hash(caption)) % 1000000:06d}"
                 return PlatformPublishResult(
                     success=True,

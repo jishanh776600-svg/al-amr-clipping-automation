@@ -214,12 +214,12 @@ async def get_system_status(
                 "concurrency": settings.WORKER_CONCURRENCY,
             },
             "approval_gateway": {
-                "status": "connected" if settings.TELEGRAM_BOT_TOKEN else "ready_mock",
+                "status": "connected" if settings.TELEGRAM_BOT_TOKEN else "unconfigured",
                 "chat_configured": settings.TELEGRAM_CHAT_ID is not None,
                 "authorized_users": len(settings.get_allowed_telegram_user_ids()),
             },
             "youtube_publisher": {
-                "status": "locked" if (ctrl_state.publishing_locked or ctrl_state.emergency_stopped) else ("configured" if settings.YOUTUBE_CLIENT_ID else "ready_mock"),
+                "status": "locked" if (ctrl_state.publishing_locked or ctrl_state.emergency_stopped) else ("configured" if settings.YOUTUBE_CLIENT_ID else "unconfigured"),
                 "default_privacy": settings.YOUTUBE_DEFAULT_PRIVACY,
                 "channel_id": settings.YOUTUBE_CHANNEL_ID or "NOT_CONFIGURED",
             },
@@ -229,6 +229,17 @@ async def get_system_status(
             },
         },
     }
+
+
+@app.get("/api/activation/matrix")
+async def get_activation_matrix(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves 12-vector activation readiness matrix and real integration report."""
+    from clipping.preflight.validator import SystemPreflightValidator
+    validator = SystemPreflightValidator(storage_driver=storage)
+    report = await validator.validate()
+    return report.model_dump(mode="json")
 
 
 @app.get("/api/control/state")

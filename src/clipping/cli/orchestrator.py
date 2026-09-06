@@ -26,13 +26,15 @@ from clipping.control.repository import ControlRepository
 from clipping.logging.logger import get_logger
 from clipping.preflight.validator import OverallPreflightStatus, SystemPreflightValidator
 from clipping.storage.factory import StorageFactory
+from clipping.storage.base import StorageDriver
 
 logger = get_logger("clipping.cli.orchestrator")
 
 
-async def run_orchestrator(args: argparse.Namespace) -> int:
+async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[StorageDriver] = None) -> int:
     """Executes preflight and coordinates activation modes."""
-    storage_driver = StorageFactory.create()
+    if storage_driver is None:
+        storage_driver = StorageFactory.create()
     control_repo = ControlRepository(storage_driver)
 
     # 1. Resolve Execution Mode
@@ -76,6 +78,28 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
             logger.warning("Preflight passed with non-fatal warnings", summary=report.summary)
         else:
             logger.info("Preflight verification passed cleanly")
+
+        # Mode-specific Fail-Closed Enforcement
+        if mode == "single-live" and not report.activation_matrix.can_run_single_live:
+            logger.error("Single Live mode rejected: 12-vector activation gate is incomplete")
+            print(f"\n[!] LIVE OPERATION REFUSED (FAIL-CLOSED): System is not approved for live publishing.")
+            print(f"    Missing requirements: {', '.join(report.actionable_recommendations) if report.actionable_recommendations else 'Real integrations unverified'}")
+            print("    Run 'python -m clipping.cli.preflight' to inspect all 12 activation vectors.")
+            print("    Use '--mode dry-run' for safe end-to-end execution without live publishing.\n")
+            return 1
+
+        if mode == "continuous" and not report.activation_matrix.can_run_continuous:
+            logger.error("Continuous mode rejected: Live operation or escalation gate is incomplete")
+            print(f"\n[!] CONTINUOUS OPERATION REFUSED (FAIL-CLOSED): System is not approved for continuous autonomous execution.")
+            print(f"    Missing requirements: {', '.join(report.actionable_recommendations)}")
+            print("    Run 'python -m clipping.cli.preflight' to inspect all 12 activation vectors.\n")
+            return 1
+
+        if mode == "dry-run" and not report.activation_matrix.can_run_dry_run:
+            logger.error("Dry-Run mode rejected: Mandatory runtime prerequisites missing")
+            print(f"\n[!] DRY-RUN OPERATION REFUSED (FAIL-CLOSED): Storage, media pipeline, or worker unavailable.")
+            print(f"    Missing requirements: {', '.join(report.actionable_recommendations)}\n")
+            return 1
 
     # 3. Dry-Run Safety Enforcement
     is_dry_run = (mode == "dry-run")

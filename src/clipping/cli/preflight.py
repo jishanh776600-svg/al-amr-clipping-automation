@@ -27,23 +27,25 @@ async def run_preflight(args: argparse.Namespace) -> int:
         print("-" * 88)
 
         m = report.activation_matrix
-        print(" ACTIVATION READINESS CHECKLIST:")
-        print(f"   [+] CODE READY:              {'READY' if m.code_ready else 'NOT READY'}")
-        print(f"   [{'+' if m.environment_ready else '!'}] ENVIRONMENT READY:       {'READY' if m.environment_ready else 'NOT READY (FFmpeg/FFprobe missing in PATH)'}")
-        print(f"   [{'+' if m.credential_ready else '!'}] CREDENTIAL READY:        {'READY' if m.credential_ready else 'WARNING (ENCRYPTION_MASTER_KEY not set in env)'}")
-        print(f"   [{'+' if m.account_ready else '!'}] ACCOUNT READY:           {'READY' if m.account_ready else 'NOT READY (No creator accounts registered in vault)'}")
-        print(f"   [{'+' if m.campaign_source_ready else '!'}] CAMPAIGN SOURCE READY:  {'READY' if m.campaign_source_ready else 'WARNING (WHOP_API_KEY missing, using cache)'}")
-        print(f"   [{'+' if m.media_pipeline_ready else '!'}] MEDIA PIPELINE READY:   {'READY' if m.media_pipeline_ready else 'NOT READY (FFmpeg/FFprobe required for video)'}")
-        print(f"   [{'+' if m.storage_ready else '!'}] STORAGE READY:          {'READY' if m.storage_ready else 'NOT READY (Storage probe failed)'}")
-        print(f"   [{'+' if m.worker_ready else '!'}] WORKER READY:           {'READY' if m.worker_ready else 'NOT READY (Queue / lease engine probe failed)'}")
-        print(f"   [{'+' if m.publishing_ready else '!'}] PUBLISHING READY:       {'READY' if m.publishing_ready else 'WARNING (YouTube/Instagram live credentials missing)'}")
-        print(f"   [{'+' if m.escalation_ready else '!'}] ESCALATION READY:       {'READY' if m.escalation_ready else 'WARNING (Telegram credentials missing)'}")
+        print(" ACTIVATION READINESS CHECKLIST (12 CORE VECTORS):")
+        print(f"   [+] 1.  CODE READY:                 {'READY' if m.code_ready else 'NOT READY'}")
+        print(f"   [{'+' if m.environment_ready else '!'}] 2.  ENVIRONMENT READY:          {'READY' if m.environment_ready else 'NOT READY (FFmpeg missing)'}")
+        print(f"   [{'+' if m.credential_ready else '!'}] 3.  CREDENTIAL READY:           {'READY' if m.credential_ready else 'WARNING (ENCRYPTION_MASTER_KEY not set)'}")
+        print(f"   [{'+' if m.account_ready else '!'}] 4.  ACCOUNT READY:              {'READY' if m.account_ready else 'NOT READY (No creator accounts in vault)'}")
+        print(f"   [{'+' if m.campaign_source_ready else '!'}] 5.  CAMPAIGN SOURCE READY:     {'READY' if m.campaign_source_ready else 'WARNING (WHOP_API_KEY missing)'}")
+        print(f"   [{'+' if m.media_pipeline_ready else '!'}] 6.  MEDIA PIPELINE READY:      {'READY' if m.media_pipeline_ready else 'NOT READY'}")
+        print(f"   [{'+' if m.storage_ready else '!'}] 7.  STORAGE READY:             {'READY' if m.storage_ready else 'NOT READY'}")
+        print(f"   [{'+' if m.worker_ready else '!'}] 8.  WORKER READY:              {'READY' if m.worker_ready else 'NOT READY'}")
+        print(f"   [{'+' if m.publishing_ready else '!'}] 9.  PUBLISHING READY:          {'READY' if m.publishing_ready else 'WARNING (Platform credentials unconfigured)'}")
+        print(f"   [{'+' if m.escalation_ready else '!'}] 10. ESCALATION READY:          {'READY' if m.escalation_ready else 'WARNING (Telegram unconfigured)'}")
+        print(f"   [{'+' if m.real_integration_verified else '!'}] 11. REAL INTEGRATION VERIFIED: {'VERIFIED' if m.real_integration_verified else 'NOT VERIFIED (Awaiting credentials)'}")
+        print(f"   [{'+' if m.live_operation_allowed else '!'}] 12. LIVE OPERATION ALLOWED:    {'APPROVED' if m.live_operation_allowed else 'PROHIBITED (Fail-closed gate active)'}")
         print("-" * 88)
 
         print(" SUPPORTED EXECUTION MODES:")
         print(f"   MODE A [PREFLIGHT]:         {'[OK] ENABLED' if m.can_run_preflight else '[X] DISABLED'}")
         print(f"   MODE B [DRY RUN]:           {'[OK] ENABLED (Safe Mode - no external uploads)' if m.can_run_dry_run else '[X] BLOCKED (Requires Storage + Media Pipeline + Worker)'}")
-        print(f"   MODE C [SINGLE LIVE]:       {'[OK] ENABLED' if m.can_run_single_live else '[X] BLOCKED (Requires Publishing Credentials + Creator Account)'}")
+        print(f"   MODE C [SINGLE LIVE]:       {'[OK] ENABLED' if m.can_run_single_live else '[X] BLOCKED (Requires 12/12 Live Approval Gate)'}")
         print(f"   MODE D [CONTINUOUS]:        {'[OK] ENABLED' if m.can_run_continuous else '[X] BLOCKED (Requires Live Mode + Telegram Escalation)'}")
         print("-" * 88)
 
@@ -57,6 +59,21 @@ async def run_preflight(args: argparse.Namespace) -> int:
                 print(f"         Why Required: {check.why_required}")
                 print(f"         Fix:          {check.configuration_requirement}")
                 print(f"         Impact:       Blocks Dry-Run: {check.blocks_dry_run} | Blocks Live Publishing: {check.blocks_live_publishing}")
+
+        # Real Media Smoke Test execution if requested
+        if args.smoke_test:
+            print("-" * 88)
+            print(" EXECUTING REAL MEDIA PIPELINE SMOKE TEST (Zero Mocks)...")
+            from clipping.preflight.media_smoke import RealMediaEnvironmentSmokeTest
+            smoke_tester = RealMediaEnvironmentSmokeTest()
+            smoke_res = await smoke_tester.execute()
+            if smoke_res.success:
+                print(f" [PASS] REAL MEDIA SMOKE TEST SUCCEEDED in {smoke_res.duration_seconds}s")
+                print(f"        Output: {smoke_res.output_resolution} MP4 ({smoke_res.output_file_size_bytes} bytes)")
+                print(f"        QA Passed: {smoke_res.qa_passed} | Idempotent Reuse: {smoke_res.idempotent_reuse_verified}")
+            else:
+                print(f" [FAIL] REAL MEDIA SMOKE TEST FAILED: {smoke_res.error}")
+                print(f"        Failed QA checks: {smoke_res.qa_failed_checks}")
 
         if report.actionable_recommendations:
             print("-" * 88)
@@ -78,6 +95,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AL AMR CLIPPING System Preflight Validator")
     parser.add_argument("--json", action="store_true", help="Output report in raw JSON format")
     parser.add_argument("--strict", action="store_true", help="Fail with non-zero exit code on any warning")
+    parser.add_argument("--smoke-test", action="store_true", help="Execute real media rendering and QA smoke test")
     args = parser.parse_args()
 
     exit_code = asyncio.run(run_preflight(args))

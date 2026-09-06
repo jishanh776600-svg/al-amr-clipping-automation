@@ -352,6 +352,25 @@ class PublishingCapability(AgentCapability):
             )
 
         # Upload Succeeded: Update submission record to target status
+        post_id = adapter_res.platform_post_id or ""
+        is_synthetic = (
+            not post_id
+            or post_id.startswith(("yt_mock", "mock_", "ig_mock", "synthetic_"))
+            or "mock" in post_id.lower()
+            or "synthetic" in post_id.lower()
+        )
+        if is_synthetic and mode in (PublishingMode.IMMEDIATE, PublishingMode.SCHEDULED):
+            logger.error("Live publishing rejected: Synthetic or mock platform post ID detected", post_id=post_id)
+            submission = submission.transition_to(
+                new_status=SubmissionStatus.FAILED,
+                reason=f"Live publishing rejected: Synthetic or mock post ID '{post_id}' detected from adapter",
+            )
+            await self.repo.save_submission(submission)
+            return CapabilityResult.failed(
+                error_type="SyntheticPostIdRejected",
+                message=f"Live publishing rejected: Adapter returned synthetic/mock post ID '{post_id}' instead of real platform confirmation",
+            )
+
         submission = submission.transition_to(
             new_status=adapter_res.status,
             platform_post_id=adapter_res.platform_post_id,

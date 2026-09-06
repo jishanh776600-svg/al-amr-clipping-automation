@@ -8,6 +8,7 @@ platform reconciliation -> campaign finalization -> continuous loop.
 """
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
@@ -498,13 +499,44 @@ class AutonomousOrchestrationEngine:
                         if pub_res.success:
                             sub_payload = pub_res.outputs.get("submission", {})
                             sub_id = sub_payload.get("submission_id", f"sub_{clip_id}")
+                            post_id = sub_payload.get("platform_post_id") or ""
+
+                            # Safety boundary: strictly reject synthetic post IDs in live mode
+                            if not dry_run:
+                                is_synthetic = (
+                                    not post_id
+                                    or post_id.startswith(("yt_mock", "mock_", "ig_mock", "synthetic_"))
+                                    or "mock" in post_id.lower()
+                                    or "synthetic" in post_id.lower()
+                                )
+                                if is_synthetic:
+                                    logger.error("Live publishing returned synthetic post ID; rejecting publication", post_id=post_id)
+                                    esc_ctx = EscalationContext(
+                                        what_happened="Live publishing returned synthetic/mock post ID",
+                                        why_it_happened=f"Platform adapter returned post ID '{post_id}' which is synthetic",
+                                        decision_required="Verify platform credentials and adapter configuration",
+                                        available_options=["verify_credentials", "retry_live_publish"],
+                                        reason=EscalationReason.POLICY_VIOLATION,
+                                        severity=EscalationSeverity.CRITICAL,
+                                        metadata={"campaign_id": cid, "submission_id": sub_id},
+                                    )
+                                    esc = await self.task_repo.create_escalation(esc_ctx)
+                                    record = record.record_stage(
+                                        OrchestrationStage.ESCALATED,
+                                        {"escalation_id": esc.escalation_id, "reason": "Synthetic post ID detected in live mode"},
+                                    )
+                                    record = record.model_copy(update={"escalation_id": esc.escalation_id, "blocking_reason": "Synthetic post ID rejected"})
+                                    await self.orchestration_repo.save_record(record)
+                                    summary.escalations_raised += 1
+                                    continue
+
                             record = record.record_stage(
                                 OrchestrationStage.SUBMISSION_COMPLETED,
                                 {"submission_id": sub_id},
                             )
                             record = record.record_stage(
                                 OrchestrationStage.PUBLISHED,
-                                {"platform_post_id": sub_payload.get("platform_post_id")},
+                                {"platform_post_id": post_id},
                             )
                             record = record.model_copy(update={"submission_id": sub_id})
                             await self.orchestration_repo.save_record(record)

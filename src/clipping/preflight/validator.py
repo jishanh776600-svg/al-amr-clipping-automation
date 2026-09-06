@@ -77,6 +77,8 @@ class ActivationReadinessMatrix(BaseModel):
     worker_ready: bool = Field(default=False, description="Task queue and lease management operational")
     publishing_ready: bool = Field(default=False, description="YouTube or Instagram live publishing credentials configured")
     escalation_ready: bool = Field(default=False, description="Telegram Bot and Chat ID configured for human escalations")
+    real_integration_verified: bool = Field(default=False, description="Actual connectivity to external platforms (Whop/YouTube/IG/Telegram) verified")
+    live_operation_allowed: bool = Field(default=False, description="Strict fail-closed approval: all prerequisites and live integrations verified")
 
     can_operate_now: bool = Field(default=False, description="Can execute live autonomous cycles right now")
     can_run_preflight: bool = Field(default=True, description="Mode A: Preflight check capability")
@@ -198,6 +200,15 @@ class SystemPreflightValidator:
 
         # FFmpeg check
         ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            try:
+                import imageio_ffmpeg
+                exe = imageio_ffmpeg.get_ffmpeg_exe()
+                if exe and os.path.exists(exe):
+                    ffmpeg_path = exe
+            except Exception:
+                pass
+
         if ffmpeg_path:
             checks.append(
                 PreflightCheck(
@@ -205,9 +216,9 @@ class SystemPreflightValidator:
                     category=PreflightCategory.SYSTEM_BINARY,
                     is_mandatory=True,
                     status=PreflightStatus.PASS,
-                    message="FFmpeg executable discovered in system PATH",
+                    message=f"FFmpeg executable operational (path: {ffmpeg_path})",
                     why_required="Video segment cutting, 9:16 aspect reframing, and final 1080x1920 MP4 rendering",
-                    configuration_requirement="FFmpeg in system PATH (e.g. winget install Gyan.FFmpeg or apt install ffmpeg)",
+                    configuration_requirement="FFmpeg in system PATH or imageio_ffmpeg",
                     blocks_dry_run=True,
                     blocks_live_publishing=True,
                     details={"path": ffmpeg_path},
@@ -220,7 +231,7 @@ class SystemPreflightValidator:
                     category=PreflightCategory.SYSTEM_BINARY,
                     is_mandatory=True,
                     status=PreflightStatus.FAIL,
-                    message="FFmpeg not found in PATH; required for video clipping and rendering",
+                    message="FFmpeg not found in PATH or environment; required for video clipping and rendering",
                     why_required="Video segment cutting, 9:16 aspect reframing, and final 1080x1920 MP4 rendering",
                     configuration_requirement="Install FFmpeg and add to PATH (e.g. winget install Gyan.FFmpeg or apt install ffmpeg)",
                     blocks_dry_run=True,
@@ -236,31 +247,54 @@ class SystemPreflightValidator:
                 PreflightCheck(
                     name="ffprobe_binary",
                     category=PreflightCategory.SYSTEM_BINARY,
-                    is_mandatory=True,
+                    is_mandatory=False,
                     status=PreflightStatus.PASS,
                     message="FFprobe executable discovered in system PATH",
                     why_required="Audio stream inspection, duration validation, and container integrity verification",
                     configuration_requirement="FFprobe in system PATH",
-                    blocks_dry_run=True,
-                    blocks_live_publishing=True,
+                    blocks_dry_run=False,
+                    blocks_live_publishing=False,
                     details={"path": ffprobe_path},
                 )
             )
         else:
-            checks.append(
-                PreflightCheck(
-                    name="ffprobe_binary",
-                    category=PreflightCategory.SYSTEM_BINARY,
-                    is_mandatory=True,
-                    status=PreflightStatus.FAIL,
-                    message="FFprobe not found in PATH; required for video metadata probing",
-                    why_required="Audio stream inspection, duration validation, and container integrity verification",
-                    configuration_requirement="Install FFprobe and add to PATH",
-                    blocks_dry_run=True,
-                    blocks_live_publishing=True,
-                    details={},
+            has_cv2 = False
+            try:
+                import cv2
+                has_cv2 = True
+            except ImportError:
+                pass
+
+            if has_cv2:
+                checks.append(
+                    PreflightCheck(
+                        name="ffprobe_binary",
+                        category=PreflightCategory.SYSTEM_BINARY,
+                        is_mandatory=False,
+                        status=PreflightStatus.WARN,
+                        message="FFprobe not found in PATH; MediaProber operating with OpenCV video probe fallback",
+                        why_required="Audio stream inspection, duration validation, and container integrity verification",
+                        configuration_requirement="Install FFprobe and add to PATH for full container audio stream probing",
+                        blocks_dry_run=False,
+                        blocks_live_publishing=False,
+                        details={"fallback": "cv2"},
+                    )
                 )
-            )
+            else:
+                checks.append(
+                    PreflightCheck(
+                        name="ffprobe_binary",
+                        category=PreflightCategory.SYSTEM_BINARY,
+                        is_mandatory=True,
+                        status=PreflightStatus.FAIL,
+                        message="Neither FFprobe nor OpenCV available for video container probing",
+                        why_required="Audio stream inspection, duration validation, and container integrity verification",
+                        configuration_requirement="Install FFprobe and add to PATH or install opencv-python",
+                        blocks_dry_run=True,
+                        blocks_live_publishing=True,
+                        details={},
+                    )
+                )
 
         return checks
 
@@ -595,161 +629,79 @@ class SystemPreflightValidator:
                 )
             ]
 
-    def check_platform_credentials(self) -> List[PreflightCheck]:
-        """Validates platform integration tokens without leaking secret values."""
+    async def check_platform_credentials(self) -> List[PreflightCheck]:
+        """Validates platform integration tokens without leaking secret values, probing live APIs when configured."""
         checks = []
+        from clipping.preflight.service_verifier import RealServiceVerifier
 
-        # Whop configuration
-        has_whop = bool(
-            os.getenv("WHOP_API_KEY")
-            or os.getenv("WHOP_API_TOKEN")
-            or (self.settings.WHOP_API_KEY and self.settings.WHOP_API_KEY.get_secret_value())
+        verifier = RealServiceVerifier()
+        # 1. Whop
+        whop_res = await verifier.verify_whop()
+        checks.append(
+            PreflightCheck(
+                name="whop_campaign_discovery",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS if whop_res.verified else (PreflightStatus.WARN if not whop_res.configured else PreflightStatus.FAIL),
+                message=whop_res.message,
+                why_required=whop_res.why_required,
+                configuration_requirement=whop_res.configuration_requirement,
+                blocks_dry_run=whop_res.blocks_dry_run,
+                blocks_live_publishing=whop_res.blocks_live_operation,
+                details=whop_res.details,
+            )
         )
-        if has_whop:
-            checks.append(
-                PreflightCheck(
-                    name="whop_campaign_discovery",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.PASS,
-                    message="Whop API token configured for real-time campaign discovery",
-                    why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
-                    configuration_requirement="Set WHOP_API_KEY or WHOP_API_TOKEN in environment or .env",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": True},
-                )
-            )
-        else:
-            checks.append(
-                PreflightCheck(
-                    name="whop_campaign_discovery",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.WARN,
-                    message="WHOP_API_KEY not configured; campaign discovery will fall back to cached campaigns or manual injection",
-                    why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
-                    configuration_requirement="Set WHOP_API_KEY in environment or .env for live Whop campaign discovery",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": False},
-                )
-            )
 
-        # YouTube configuration
-        has_yt_id = bool(os.getenv("YOUTUBE_CLIENT_ID") or self.settings.YOUTUBE_CLIENT_ID)
-        has_yt_sec = bool(os.getenv("YOUTUBE_CLIENT_SECRET") or self.settings.YOUTUBE_CLIENT_SECRET)
-        has_yt_ref = bool(os.getenv("YOUTUBE_REFRESH_TOKEN") or self.settings.YOUTUBE_REFRESH_TOKEN)
-        if has_yt_id and has_yt_sec and has_yt_ref:
-            checks.append(
-                PreflightCheck(
-                    name="youtube_publishing_integration",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.PASS,
-                    message="YouTube OAuth credentials configured for automated Shorts publishing",
-                    why_required="Automated YouTube Shorts video upload and post ID reconciliation via YouTube Data API v3",
-                    configuration_requirement="Google Cloud OAuth2 Client ID, Secret, and Refresh Token configured",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": True},
-                )
+        # 2. YouTube
+        yt_res = await verifier.verify_youtube()
+        checks.append(
+            PreflightCheck(
+                name="youtube_publishing_integration",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS if yt_res.verified else PreflightStatus.WARN,
+                message=yt_res.message,
+                why_required=yt_res.why_required,
+                configuration_requirement=yt_res.configuration_requirement,
+                blocks_dry_run=yt_res.blocks_dry_run,
+                blocks_live_publishing=yt_res.blocks_live_operation,
+                details=yt_res.details,
             )
-        else:
-            missing_parts = []
-            if not has_yt_id:
-                missing_parts.append("CLIENT_ID")
-            if not has_yt_sec:
-                missing_parts.append("CLIENT_SECRET")
-            if not has_yt_ref:
-                missing_parts.append("REFRESH_TOKEN")
-            checks.append(
-                PreflightCheck(
-                    name="youtube_publishing_integration",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.WARN,
-                    message=f"YouTube OAuth credentials incomplete (missing: {', '.join(missing_parts)}); automated YouTube uploads disabled",
-                    why_required="Automated YouTube Shorts video upload and post ID reconciliation via YouTube Data API v3",
-                    configuration_requirement="Configure Google Cloud OAuth2 credentials in environment or store account credentials in EncryptedCredentialVault",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=True,
-                    details={"configured": False, "missing": missing_parts},
-                )
-            )
-
-        # Instagram configuration
-        has_ig = bool(
-            os.getenv("INSTAGRAM_ACCESS_TOKEN")
-            or (self.settings.INSTAGRAM_ACCESS_TOKEN and self.settings.INSTAGRAM_ACCESS_TOKEN.get_secret_value())
         )
-        if has_ig:
-            checks.append(
-                PreflightCheck(
-                    name="instagram_publishing_integration",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.PASS,
-                    message="Instagram Graph API access token configured for Reels publishing",
-                    why_required="Automated Instagram Reels video publishing and metrics reconciliation via Meta Graph API",
-                    configuration_requirement="Meta Graph API access token with instagram_content_publish scope",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": True},
-                )
-            )
-        else:
-            checks.append(
-                PreflightCheck(
-                    name="instagram_publishing_integration",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.WARN,
-                    message="INSTAGRAM_ACCESS_TOKEN not configured; automated Instagram Reels publishing disabled",
-                    why_required="Automated Instagram Reels video publishing and metrics reconciliation via Meta Graph API",
-                    configuration_requirement="Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCOUNT_ID, or configure browser session",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=True,
-                    details={"configured": False},
-                )
-            )
 
-        # Telegram Escalation configuration
-        has_tg_tok = bool(
-            os.getenv("TELEGRAM_BOT_TOKEN")
-            or (self.settings.TELEGRAM_BOT_TOKEN and self.settings.TELEGRAM_BOT_TOKEN.get_secret_value())
+        # 3. Instagram
+        ig_res = await verifier.verify_instagram()
+        checks.append(
+            PreflightCheck(
+                name="instagram_publishing_integration",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS if ig_res.verified else PreflightStatus.WARN,
+                message=ig_res.message,
+                why_required=ig_res.why_required,
+                configuration_requirement=ig_res.configuration_requirement,
+                blocks_dry_run=ig_res.blocks_dry_run,
+                blocks_live_publishing=ig_res.blocks_live_operation,
+                details=ig_res.details,
+            )
         )
-        has_tg_chat = bool(os.getenv("TELEGRAM_CHAT_ID") or self.settings.TELEGRAM_CHAT_ID)
-        if has_tg_tok and has_tg_chat:
-            checks.append(
-                PreflightCheck(
-                    name="telegram_escalation_notifier",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.PASS,
-                    message="Telegram Bot and Chat ID configured for instant operator escalation alerts",
-                    why_required="Instant mobile push alerts to human operators for CAPTCHA, MFA, QA failures, and blocking issues",
-                    configuration_requirement="Telegram Bot Token and Chat ID",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": True},
-                )
+
+        # 4. Telegram
+        tg_res = await verifier.verify_telegram()
+        checks.append(
+            PreflightCheck(
+                name="telegram_escalation_notifier",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS if tg_res.verified else PreflightStatus.WARN,
+                message=tg_res.message,
+                why_required=tg_res.why_required,
+                configuration_requirement=tg_res.configuration_requirement,
+                blocks_dry_run=tg_res.blocks_dry_run,
+                blocks_live_publishing=tg_res.blocks_live_operation,
+                details=tg_res.details,
             )
-        else:
-            checks.append(
-                PreflightCheck(
-                    name="telegram_escalation_notifier",
-                    category=PreflightCategory.PLATFORM_INTEGRATION,
-                    is_mandatory=False,
-                    status=PreflightStatus.WARN,
-                    message="Telegram escalation credentials incomplete; human operator alerts will be logged locally only",
-                    why_required="Instant mobile push alerts to human operators for CAPTCHA, MFA, QA failures, and blocking issues",
-                    configuration_requirement="Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in environment or settings",
-                    blocks_dry_run=False,
-                    blocks_live_publishing=False,
-                    details={"configured": False},
-                )
-            )
+        )
 
         return checks
 
@@ -764,13 +716,10 @@ class SystemPreflightValidator:
         all_checks.extend(await self.check_worker_queue())
         all_checks.extend(await self.check_control_state())
         all_checks.extend(await self.check_creator_accounts())
-        all_checks.extend(self.check_platform_credentials())
+        all_checks.extend(await self.check_platform_credentials())
 
         # Evaluate activation matrix
-        env_ready = (
-            any(c.name == "ffmpeg_binary" and c.status == PreflightStatus.PASS for c in all_checks)
-            and any(c.name == "ffprobe_binary" and c.status == PreflightStatus.PASS for c in all_checks)
-        )
+        env_ready = any(c.name == "ffmpeg_binary" and c.status == PreflightStatus.PASS for c in all_checks)
         cred_ready = any(c.name == "vault_master_key" and c.status == PreflightStatus.PASS for c in all_checks)
         acct_ready = any(c.name == "creator_accounts_registered" and c.status == PreflightStatus.PASS for c in all_checks)
         whop_ready = any(c.name == "whop_campaign_discovery" and c.status == PreflightStatus.PASS for c in all_checks)
@@ -784,8 +733,28 @@ class SystemPreflightValidator:
         esc_ready = any(c.name == "telegram_escalation_notifier" and c.status == PreflightStatus.PASS for c in all_checks)
         control_clear = not any(c.name == "emergency_stop_state" and c.status == PreflightStatus.FAIL for c in all_checks)
 
+        # Real integration verified requires actual successful connectivity to at least one publishing platform and whop
+        real_int_verified = (
+            any(c.name == "youtube_publishing_integration" and c.status == PreflightStatus.PASS for c in all_checks)
+            or any(c.name == "instagram_publishing_integration" and c.status == PreflightStatus.PASS for c in all_checks)
+        )
+
+        live_op_allowed = (
+            env_ready
+            and cred_ready
+            and acct_ready
+            and whop_ready
+            and storage_ready
+            and worker_ready
+            and media_ready
+            and pub_ready
+            and esc_ready
+            and real_int_verified
+            and control_clear
+        )
+
         can_dry_run = storage_ready and media_ready and worker_ready and control_clear
-        can_single_live = can_dry_run and pub_ready and acct_ready
+        can_single_live = can_dry_run and live_op_allowed
         can_continuous = can_single_live and esc_ready
 
         matrix = ActivationReadinessMatrix(
@@ -799,6 +768,8 @@ class SystemPreflightValidator:
             worker_ready=worker_ready,
             publishing_ready=pub_ready,
             escalation_ready=esc_ready,
+            real_integration_verified=real_int_verified,
+            live_operation_allowed=live_op_allowed,
             can_operate_now=can_single_live or can_continuous,
             can_run_preflight=True,
             can_run_dry_run=can_dry_run,

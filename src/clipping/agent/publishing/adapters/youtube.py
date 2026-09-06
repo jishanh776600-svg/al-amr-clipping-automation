@@ -36,8 +36,9 @@ logger = get_logger("clipping.agent.publishing.adapters.youtube")
 class YouTubePublishingAdapter(PlatformPublishingAdapter):
     """Real YouTube Data API v3 publishing and scheduling adapter."""
 
-    def __init__(self, client: Optional[YouTubeClient] = None):
+    def __init__(self, client: Optional[YouTubeClient] = None, allow_mock_client: bool = False):
         self._client = client
+        self._allow_mock_client = allow_mock_client
 
     @property
     def platform(self) -> AccountPlatform:
@@ -126,6 +127,26 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
                     metadata={"submission_id": submission.submission_id, "platform": "youtube"},
                 ),
             )
+
+        from clipping.publishing.client import MockYouTubeClient
+        if isinstance(client, MockYouTubeClient) and mode == PublishingMode.IMMEDIATE:
+            if not self._allow_mock_client and not credentials.get("allow_mock_client", False):
+                logger.error("MockYouTubeClient rejected in live publishing mode", submission_id=submission.submission_id)
+                return PlatformPublishResult(
+                    success=False,
+                    status=SubmissionStatus.FAILED,
+                    error_message="MockYouTubeClient is prohibited in live publishing mode",
+                    failure_classification="mock_client_prohibited",
+                    escalation_required=True,
+                    escalation_context=EscalationContext(
+                        what_happened="Live publishing attempted with MockYouTubeClient",
+                        why_it_happened="Mock publishing clients cannot be used for live production publishing",
+                        decision_required="Provide valid Google OAuth2 credentials in vault or environment",
+                        available_options=["configure_vault_account", "set_environment_credentials"],
+                        reason=EscalationReason.POLICY_VIOLATION,
+                        severity=EscalationSeverity.CRITICAL,
+                    ),
+                )
 
         try:
             ref = await client.upload_video(video_path=media_path, metadata=yt_meta)
