@@ -125,6 +125,36 @@ class EncryptedCredentialVault:
         """Convenience alias for get_account_credentials."""
         return await self.get_account_credentials(platform, account_id)
 
+    async def get_credentials(
+        self,
+        platform: AccountPlatform | str,
+        account_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Convenience alias for get_account_credentials."""
+        return await self.get_account_credentials(platform, account_id)
+
+    async def delete_account(
+        self,
+        platform: AccountPlatform | str,
+        account_id: str,
+    ) -> bool:
+        """Removes an account from index and clears stored metadata & secrets."""
+        platform_str = platform.value if isinstance(platform, AccountPlatform) else str(platform)
+        index = await self._load_index()
+        new_index = [entry for entry in index if not (entry["platform"] == platform_str and entry["account_id"] == account_id)]
+        if len(new_index) == len(index):
+            return False
+        index_json = json.dumps(new_index, indent=2).encode("utf-8")
+        await self.storage.upload_bytes(index_json, "vault/accounts/index.json", content_type="application/json")
+        base_dir = f"vault/accounts/{platform_str}/{account_id}"
+        try:
+            await self.storage.delete(f"{base_dir}/metadata.json")
+            await self.storage.delete(f"{base_dir}/secret.enc")
+        except Exception as e:
+            logger.warning("Error removing vault account files", platform=platform_str, account_id=account_id, error=str(e))
+        logger.info("Deleted account from encrypted vault", platform=platform_str, account_id=account_id)
+        return True
+
     async def list_accounts(
         self,
         platform: Optional[AccountPlatform | str] = None,

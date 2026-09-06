@@ -39,6 +39,8 @@ class AccountMetadata(BaseModel):
     campaign_restrictions: List[str] = Field(default_factory=list)
     session_ref: Optional[str] = None  # Storage key of encrypted session state
     tags: List[str] = Field(default_factory=list)
+    last_verified_at: Optional[datetime] = None
+    verification_message: Optional[str] = None
 
     def to_safe_dict(self) -> Dict[str, Any]:
         """Dictionary representation safe for public APIs and audit logs."""

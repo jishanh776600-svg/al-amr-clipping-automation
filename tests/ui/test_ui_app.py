@@ -219,6 +219,21 @@ async def test_ui_publish_clip_lifecycle(ui_test_env, monkeypatch):
     media_key = f"clips/{clip_id}/final_1080x1920.mp4"
     await storage.upload_bytes(b"dummy mp4 content", media_key)
 
+    # Enroll active YouTube creator channel in test vault
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    await vault.save_account(
+        AccountMetadata(
+            platform=AccountPlatform.YOUTUBE,
+            account_id="UC_channel_real",
+            username="al_amr_creator",
+            display_name="AL AMR Official Shorts",
+            status=AccountStatus.ACTIVE,
+        ),
+        sensitive_credentials={"client_id": "test_id", "client_secret": "test_secret"},
+    )
+
     # 1. Unapproved clip fails closed
     req = ApprovalRequest(
         approval_request_id="app_req_pub_01",
@@ -347,5 +362,164 @@ async def test_ui_verify_account_live_meta_and_youtube(ui_test_env, monkeypatch)
         enrolled_ver = await client.get("/api/accounts/instagram/178414001/verify")
         assert enrolled_ver.status_code == 200
         assert enrolled_ver.json()["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_ui_connect_meta_token_lifecycle_and_fail_closed_publishing(ui_test_env, monkeypatch):
+    """
+    Validates:
+    1. Enrolling Instagram account as pending_verification.
+    2. Fail-closed publishing when target account is unverified/pending.
+    3. Token connection failure preserves pending status and sanitized error.
+    4. Successful token connection transitions account to ACTIVE with encrypted vault credentials.
+    5. Live publishing succeeds once account is active.
+    6. Deletion of account cleans vault index and storage safely.
+    """
+    from unittest.mock import AsyncMock
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+    from clipping.preflight.service_verifier import ServiceVerificationResult
+    from clipping.agent.publishing.adapters.base import PlatformPublishResult
+    from clipping.agent.publishing.models import SubmissionStatus
+
+    storage = ui_test_env["storage"]
+    app_repo = ui_test_env["app_repo"]
+    vault = EncryptedCredentialVault(storage_driver=storage)
+
+    # 1. Enroll al_amr_official in pending_verification status
+    meta = AccountMetadata(
+        platform=AccountPlatform.INSTAGRAM,
+        account_id="al_amr_official",
+        username="al_amr_official",
+        display_name="AL AMR Official Reels",
+        status=AccountStatus.PENDING_VERIFICATION,
+    )
+    await vault.save_account(meta, sensitive_credentials={})
+
+    # Prepare approved clip
+    job_id = "job_ig_test_01"
+    clip_id = "clip_ig_01"
+    media_key = f"clips/{clip_id}/final_1080x1920.mp4"
+    await storage.upload_bytes(b"dummy mp4 content", media_key)
+    req = ApprovalRequest(
+        approval_request_id="app_req_ig_01",
+        job_id=job_id,
+        source_video_id="src_ig",
+        clip_id=clip_id,
+        clip_index=1,
+        title="Instagram Reels Test Clip",
+        start_time=0.0,
+        end_time=25.0,
+        duration=25.0,
+        score=96.0,
+        video_storage_key=media_key,
+        status=ApprovalStatus.APPROVED,
+    )
+    await app_repo.save_request(req)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 2. Attempting to publish to pending Instagram account FAILS CLOSED
+        pub_fail = await client.post(
+            f"/api/jobs/{job_id}/clips/{clip_id}/publish?target_account_id=al_amr_official&target_platform=instagram"
+        )
+        assert pub_fail.status_code == 400
+        assert "Publishing blocked" in pub_fail.json()["detail"]
+        assert "PENDING_VERIFICATION" in pub_fail.json()["detail"]
+
+        # 3. Test connect failure with invalid token
+        mock_fail_res = ServiceVerificationResult(
+            service="instagram",
+            configured=True,
+            verified=False,
+            status_code=400,
+            message="Meta Graph API token verification failed (400): Token expired or invalid",
+            why_required="Automated Instagram Reels publishing",
+            configuration_requirement="Generate new token",
+            blocks_dry_run=False,
+            blocks_live_operation=True,
+            details={"error": "Malformed access token"},
+        )
+        monkeypatch.setattr(
+            "clipping.preflight.service_verifier.RealServiceVerifier.verify_instagram",
+            AsyncMock(return_value=mock_fail_res),
+        )
+
+        conn_fail = await client.post(
+            "/api/accounts/instagram/al_amr_official/connect",
+            json={"credentials": {"access_token": "EAAB_bad_token"}},
+        )
+        assert conn_fail.status_code == 200
+        assert conn_fail.json()["success"] is False
+        assert conn_fail.json()["verified"] is False
+        assert conn_fail.json()["status"] == "pending_verification"
+
+        # Verify vault still has it as pending
+        meta_after_fail = await vault.get_account_metadata(AccountPlatform.INSTAGRAM, "al_amr_official")
+        assert meta_after_fail.status == AccountStatus.PENDING_VERIFICATION
+
+        # 4. Test connect success with valid token
+        mock_success_res = ServiceVerificationResult(
+            service="instagram",
+            configured=True,
+            verified=True,
+            status_code=200,
+            account_identity="@al_amr_official (178414058)",
+            message="Instagram Graph API verified: Authenticated as @al_amr_official",
+            why_required="Automated Instagram Reels publishing",
+            configuration_requirement="Meta Graph API access token",
+            blocks_dry_run=False,
+            blocks_live_operation=False,
+        )
+        monkeypatch.setattr(
+            "clipping.preflight.service_verifier.RealServiceVerifier.verify_instagram",
+            AsyncMock(return_value=mock_success_res),
+        )
+
+        conn_success = await client.post(
+            "/api/accounts/instagram/al_amr_official/connect",
+            json={"credentials": {"access_token": "EAAB_real_token_secure"}},
+        )
+        assert conn_success.status_code == 200
+        assert conn_success.json()["success"] is True
+        assert conn_success.json()["verified"] is True
+        assert conn_success.json()["status"] == "active"
+
+        # Verify vault status transitioned to ACTIVE and credentials encrypted
+        meta_active = await vault.get_account_metadata(AccountPlatform.INSTAGRAM, "al_amr_official")
+        assert meta_active.status == AccountStatus.ACTIVE
+        stored_creds = await vault.get_account_credentials(AccountPlatform.INSTAGRAM, "al_amr_official")
+        assert stored_creds["access_token"] == "EAAB_real_token_secure"
+
+        # 5. Live publishing now SUCCEEDS targeting active Instagram account
+        mock_ig_publish = AsyncMock(
+            return_value=PlatformPublishResult(
+                success=True,
+                status=SubmissionStatus.PUBLISHED,
+                platform_post_id="ig_reel_998877",
+                platform_url="https://www.instagram.com/reel/ig_reel_998877",
+            )
+        )
+        monkeypatch.setattr(
+            "clipping.agent.publishing.adapters.instagram.InstagramPublishingAdapter.publish",
+            mock_ig_publish,
+        )
+
+        pub_success = await client.post(
+            f"/api/jobs/{job_id}/clips/{clip_id}/publish?target_account_id=al_amr_official&target_platform=instagram"
+        )
+        assert pub_success.status_code == 200
+        assert pub_success.json()["status"] == "success"
+        assert pub_success.json()["platform"] == "instagram"
+        assert pub_success.json()["platform_post_id"] == "ig_reel_998877"
+
+        # 6. Delete account safely
+        del_resp = await client.delete("/api/accounts/instagram/al_amr_official")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "success"
+
+        # Verify removed from vault
+        accounts_after_del = await vault.list_accounts(platform=AccountPlatform.INSTAGRAM)
+        assert len(accounts_after_del) == 0
 
 

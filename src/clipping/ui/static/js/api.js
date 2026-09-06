@@ -102,8 +102,14 @@ class AlAmrAPI {
         return this.request(`/api/jobs/${encodeURIComponent(jobId)}/live`);
     }
 
-    static async publishClip(jobId, clipId) {
-        return this.request(`/api/jobs/${encodeURIComponent(jobId)}/clips/${encodeURIComponent(clipId)}/publish`, {
+    static async publishClip(jobId, clipId, targetAccountId = null, targetPlatform = null) {
+        let url = `/api/jobs/${encodeURIComponent(jobId)}/clips/${encodeURIComponent(clipId)}/publish`;
+        const params = new URLSearchParams();
+        if (targetAccountId) params.append("target_account_id", targetAccountId);
+        if (targetPlatform) params.append("target_platform", targetPlatform);
+        const qs = params.toString();
+        if (qs) url += `?${qs}`;
+        return this.request(url, {
             method: "POST"
         });
     }
@@ -228,6 +234,22 @@ class AlAmrAPI {
         return this.request("/api/auth/youtube/authorize-url", {
             method: "POST",
             body: JSON.stringify({ redirect_uri: redirectUri })
+        });
+    }
+
+    static async connectAccount(platform, accountId, credentials = {}, verifyFirst = true) {
+        return this.request(`/api/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(accountId)}/connect`, {
+            method: "POST",
+            body: JSON.stringify({
+                credentials,
+                verify_first: verifyFirst
+            })
+        });
+    }
+
+    static async deleteAccount(platform, accountId) {
+        return this.request(`/api/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(accountId)}`, {
+            method: "DELETE"
         });
     }
 

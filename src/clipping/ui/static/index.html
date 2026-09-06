@@ -447,18 +447,43 @@
                     <label class="block font-mono text-slate-400 mb-1">Campaign Requirements / Directives (Optional):</label>
                     <textarea id="campaign-requirements-input" rows="3" placeholder="e.g. Minimum 30s, max 60s. Prioritize emotional hooks, AI discussions, animated subtitles." class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none"></textarea>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block font-mono text-slate-400 mb-1">Target Format / Platform:</label>
-                        <select id="campaign-platform-select" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
-                            <option value="youtube_shorts">YouTube Shorts (9:16)</option>
-                            <option value="tiktok">TikTok (9:16)</option>
-                            <option value="instagram_reels">Instagram Reels (9:16)</option>
-                        </select>
+                <!-- DESTINATION PLATFORM & ACCOUNT SECTION -->
+                <div class="p-3 bg-surface2/80 rounded border border-slate-700/80 space-y-2.5">
+                    <div class="text-[11px] font-mono text-slate-400 font-bold uppercase tracking-wider flex items-center justify-between">
+                        <span>DESTINATION PLATFORM & ACCOUNT</span>
+                        <span class="text-[10px] text-cyan-400 font-normal">Vault Encrypted Binding</span>
                     </div>
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Destination:</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-slate-500 transition">
+                                <input type="radio" name="campaign-destination-platform" value="youtube_shorts" checked onchange="AlAmrModals.onCampaignPlatformChange('youtube_shorts')" class="text-red-500 focus:ring-0">
+                                <span class="font-mono font-bold text-slate-200">YouTube Shorts</span>
+                            </label>
+                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-slate-500 transition">
+                                <input type="radio" name="campaign-destination-platform" value="instagram_reels" onchange="AlAmrModals.onCampaignPlatformChange('instagram_reels')" class="text-purple-500 focus:ring-0">
+                                <span class="font-mono font-bold text-slate-200">Instagram Reels</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Target Enrolled Account:</label>
+                        <select id="campaign-account-select" class="w-full bg-surface1 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-cyan-500">
+                            <!-- Populated dynamically by AlAmrModals.onCampaignPlatformChange -->
+                        </select>
+                        <div id="campaign-account-hint" class="text-[10px] font-mono text-slate-400 mt-1">
+                            Uses encrypted credentials from vault. Never silently publishes to the wrong account.
+                        </div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block font-mono text-slate-400 mb-1">CPM Rate ($/1k views):</label>
                         <input id="campaign-cpm-input" type="number" step="0.1" value="1.5" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
+                    </div>
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Budget ($ Max):</label>
+                        <input id="campaign-budget-input" type="number" step="10" value="500" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
                     </div>
                 </div>
             </div>
@@ -658,6 +683,72 @@
                 <button onclick="AlAmrModals.submitAccountStatus()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition">
                     Update Status
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONNECT META TOKEN MODAL (INSTAGRAM REELS) -->
+    <div id="modal-connect-meta-token" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-lg bg-surface1 border-purple-500/40 shadow-2xl">
+            <div class="tech-card-header border-purple-500/30">
+                <div class="tech-card-title text-purple-300 flex items-center gap-2 font-bold">
+                    <span>📷 CONNECT META GRAPH API //</span>
+                    <span id="connect-meta-display-id" class="text-white font-mono">al_amr_official</span>
+                </div>
+                <button onclick="AlAmrModals.closeConnectMetaModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            
+            <input type="hidden" id="connect-meta-platform" value="instagram">
+            <input type="hidden" id="connect-meta-account-id" value="al_amr_official">
+
+            <div class="space-y-3.5 text-xs">
+                <div class="p-3 bg-purple-950/20 rounded border border-purple-800/40">
+                    <div class="text-purple-300 font-bold mb-1 flex items-center gap-2">
+                        <span>Meta Graph API v19.0 Token Integration</span>
+                        <span class="status-pill warning text-[9px]">PENDING VERIFICATION</span>
+                    </div>
+                    <p class="text-[11px] text-slate-300 leading-relaxed">
+                        Enter your official Meta User or Page Long-Lived Access Token with <code class="text-pink-400 bg-surface3 px-1 rounded">instagram_content_publish</code> scope. Clicking <b>TEST & VERIFY CONNECTION</b> makes a live, non-destructive request to Meta servers to confirm identity before encrypting into the vault.
+                    </p>
+                </div>
+
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Target Account:</label>
+                    <div id="connect-meta-account-summary" class="p-2 rounded bg-surface2 font-mono text-slate-200 border border-slate-700">
+                        Instagram Reels: <span class="text-cyan-300 font-bold">al_amr_official</span> (AL AMR Official Reels)
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1 flex items-center justify-between">
+                        <span>Meta Graph API Access Token:</span>
+                        <span class="text-[10px] text-slate-500">Encrypted AES-128 Fernet</span>
+                    </label>
+                    <input type="password" id="connect-meta-token-input" placeholder="EAA... (Kept strictly encrypted in vault)" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-slate-200 font-mono focus:border-purple-500 outline-none">
+                </div>
+
+                <!-- LIVE TEST / CONNECT RESULT -->
+                <div id="connect-meta-ver-result" class="hidden p-3 rounded text-[11px] font-mono border"></div>
+
+                <div class="flex items-center gap-2 pt-1">
+                    <button type="button" onclick="AlAmrModals.testConnectMetaToken()" class="w-full py-2 px-3 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 font-bold border border-purple-500/50 transition flex items-center justify-center gap-2 font-mono text-xs shadow-md">
+                        <span>⚡</span>
+                        <span>TEST & VERIFY CONNECTION (META GRAPH API)</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-3 border-t border-slate-800 mt-4">
+                <span class="text-[10px] text-slate-500">Zero plain-text secrets stored</span>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="AlAmrModals.closeConnectMetaModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                        Cancel
+                    </button>
+                    <button type="button" onclick="AlAmrModals.submitConnectMetaToken()" class="px-4 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 shadow-md shadow-emerald-950">
+                        <span>✓</span>
+                        <span>SAVE & ACTIVATE IN VAULT</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

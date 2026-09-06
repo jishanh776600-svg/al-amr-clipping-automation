@@ -858,36 +858,70 @@ window.AlAmrViews = {
             }
 
             const rows = filtered.length > 0
-                ? filtered.map(a => `
-                    <tr class="border-b border-slate-800">
-                        <td class="font-mono font-bold ${a.platform === 'youtube' ? 'text-red-400' : 'text-purple-400'}">${a.platform.toUpperCase()}</td>
-                        <td class="font-mono font-bold text-white">${a.account_id}</td>
-                        <td class="font-mono text-cyan-300">${a.username}</td>
-                        <td>${a.display_name || '—'}</td>
-                        <td><span class="status-pill ${a.status === 'active' ? 'operational' : (a.status === 'pending_verification' ? 'warning' : 'emergency')}">${a.status.toUpperCase()}</span></td>
+                ? filtered.map(a => {
+                    const isYt = a.platform === 'youtube';
+                    const isIg = a.platform === 'instagram';
+                    const platLabel = isYt ? 'YouTube Shorts' : (isIg ? 'Instagram Reels' : a.platform.toUpperCase());
+                    const platColor = isYt ? 'text-red-400' : (isIg ? 'text-purple-400' : 'text-cyan-400');
+                    
+                    let statusBadge = '';
+                    if (isYt && a.status === 'active') {
+                        statusBadge = '<span class="status-pill operational font-bold text-[10px]">CONNECTED / VERIFIED / ACTIVE</span>';
+                    } else if (isIg && a.status === 'pending_verification') {
+                        statusBadge = '<span class="status-pill warning font-bold text-[10px]">PENDING VERIFICATION</span>';
+                    } else if (a.status === 'active') {
+                        statusBadge = '<span class="status-pill operational font-bold text-[10px]">ACTIVE</span>';
+                    } else {
+                        statusBadge = `<span class="status-pill emergency font-bold text-[10px]">${a.status.toUpperCase()}</span>`;
+                    }
+
+                    const lastVerifiedStr = a.last_verified_at
+                        ? new Date(a.last_verified_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        : '—';
+
+                    return `
+                    <tr class="border-b border-slate-800 hover:bg-surface2/30 transition">
                         <td>
-                            ${a.status === 'active'
-                                ? '<span class="text-emerald-400 font-mono text-xs flex items-center gap-1 font-bold"><span>✓</span><span>VERIFIED</span></span>'
-                                : (a.status === 'pending_verification'
-                                    ? '<span class="text-amber-400 font-mono text-xs flex items-center gap-1 font-bold"><span>⏳</span><span>PENDING</span></span>'
-                                    : '<span class="text-rose-400 font-mono text-xs flex items-center gap-1 font-bold"><span>⚠</span><span>RESTRICTED</span></span>'
-                                  )
-                            }
+                            <span class="font-mono font-bold ${platColor} flex items-center gap-1.5">
+                                <span>${isYt ? '▶' : (isIg ? '📷' : '●')}</span>
+                                <span>${platLabel}</span>
+                            </span>
                         </td>
-                        <td class="font-mono text-xs">${a.reuse_eligibility ? 'YES' : 'NO'}</td>
                         <td>
-                            <div class="flex items-center gap-1.5">
-                                <button onclick="AlAmrModals.verifyEnrolledAccount('${a.platform}', '${a.account_id}')" class="px-2 py-0.5 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-cyan-400 border border-slate-700 transition" title="Test Live Connection">
+                            <div class="font-mono font-bold text-white">${a.display_name || a.username}</div>
+                            <div class="font-mono text-[10px] text-slate-400">${a.account_id}</div>
+                        </td>
+                        <td class="font-mono text-cyan-300">@${a.username}</td>
+                        <td>${statusBadge}</td>
+                        <td>
+                            <div class="font-mono text-xs ${a.status === 'active' ? 'text-emerald-400' : 'text-amber-400'} font-bold flex items-center gap-1">
+                                <span>${a.status === 'active' ? '✓' : '⏳'}</span>
+                                <span>${a.status === 'active' ? 'VERIFIED' : 'PENDING'}</span>
+                            </div>
+                            <div class="text-[10px] font-mono text-slate-500 mt-0.5">Checked: ${lastVerifiedStr}</div>
+                        </td>
+                        <td>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                ${isIg && a.status !== 'active' ? `
+                                <button onclick="AlAmrModals.openConnectMetaModal('${a.account_id}', '${a.username}', '${(a.display_name || '').replace(/'/g, "\\'")}')" class="px-2.5 py-1 text-xs font-mono font-bold rounded bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 border border-purple-500/40 transition flex items-center gap-1">
+                                    <span>🔑</span><span>Connect Token</span>
+                                </button>
+                                ` : ''}
+                                <button onclick="AlAmrModals.verifyEnrolledAccount('${a.platform}', '${a.account_id}')" class="px-2 py-1 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-cyan-400 border border-slate-700 transition" title="Test Live Connection Non-Destructively">
                                     ⚡ Verify
                                 </button>
-                                <button onclick="AlAmrModals.openAccountStatusModal('${a.platform}', '${a.account_id}', '${a.status}')" class="px-2 py-0.5 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                                <button onclick="AlAmrModals.openAccountStatusModal('${a.platform}', '${a.account_id}', '${a.status}')" class="px-2 py-1 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
                                     Status
+                                </button>
+                                <button onclick="AlAmrModals.deleteAccount('${a.platform}', '${a.account_id}')" class="px-2 py-1 text-xs font-mono rounded bg-surface3 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-800 transition" title="Remove account from vault">
+                                    ✕
                                 </button>
                             </div>
                         </td>
                     </tr>
-                `).join('')
-                : `<tr><td colspan="8" class="text-center py-6 text-slate-500 font-mono text-xs">No matching accounts found in encrypted vault.</td></tr>`;
+                    `;
+                }).join('')
+                : `<tr><td colspan="6" class="text-center py-6 text-slate-500 font-mono text-xs">No matching accounts found in encrypted vault.</td></tr>`;
 
             container.innerHTML = `
                 <div class="tech-card">
@@ -911,19 +945,19 @@ window.AlAmrViews = {
                         <div>
                             <select onchange="AlAmrViews.setFilter('accounts', 'platform', this.value)" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none">
                                 <option value="all" ${filter.platform === 'all' ? 'selected' : ''}>All Platforms</option>
-                                <option value="youtube" ${filter.platform === 'youtube' ? 'selected' : ''}>YouTube</option>
+                                <option value="youtube" ${filter.platform === 'youtube' ? 'selected' : ''}>YouTube Shorts</option>
+                                <option value="instagram" ${filter.platform === 'instagram' ? 'selected' : ''}>Instagram Reels</option>
                                 <option value="tiktok" ${filter.platform === 'tiktok' ? 'selected' : ''}>TikTok</option>
-                                <option value="instagram" ${filter.platform === 'instagram' ? 'selected' : ''}>Instagram</option>
                             </select>
                         </div>
                         <div class="text-right flex items-center justify-end text-slate-400">
-                            <span>OAuth & Graph API Tokens Masked</span>
+                            <span>OAuth & Graph API Tokens Kept Strictly in Vault</span>
                         </div>
                     </div>
 
                     <div class="tech-table-container">
                         <table class="tech-table">
-                            <thead><tr><th>PLATFORM</th><th>ACCOUNT ID</th><th>USERNAME</th><th>DISPLAY NAME</th><th>STATUS</th><th>VERIFICATION</th><th>REUSE</th><th>ACTIONS</th></tr></thead>
+                            <thead><tr><th>PLATFORM</th><th>IDENTITY / ID</th><th>HANDLE</th><th>CONNECTION</th><th>VERIFICATION</th><th>ACTIONS</th></tr></thead>
                             <tbody>${rows}</tbody>
                         </table>
                     </div>
@@ -1979,6 +2013,127 @@ window.AlAmrModals = {
         }
     },
 
+    // 7c. Connect / Update Meta Token Modal
+    openConnectMetaModal(accountId, username, displayName = "") {
+        const modal = document.getElementById("modal-connect-meta-token");
+        if (!modal) return;
+        const displayId = document.getElementById("connect-meta-display-id");
+        const accountSummary = document.getElementById("connect-meta-account-summary");
+        const accountIdInput = document.getElementById("connect-meta-account-id");
+        const tokenInput = document.getElementById("connect-meta-token-input");
+        const verResult = document.getElementById("connect-meta-ver-result");
+
+        if (displayId) displayId.textContent = accountId;
+        if (accountIdInput) accountIdInput.value = accountId;
+        if (accountSummary) {
+            accountSummary.innerHTML = `Instagram Reels: <span class="text-cyan-300 font-bold">${accountId}</span> (${displayName || username || 'Reels Creator'})`;
+        }
+        if (tokenInput) tokenInput.value = "";
+        if (verResult) {
+            verResult.className = "hidden p-3 rounded text-[11px] font-mono border";
+            verResult.innerHTML = "";
+        }
+        modal.classList.remove("hidden");
+    },
+
+    closeConnectMetaModal() {
+        const modal = document.getElementById("modal-connect-meta-token");
+        if (modal) modal.classList.add("hidden");
+    },
+
+    async testConnectMetaToken() {
+        const accountId = document.getElementById("connect-meta-account-id")?.value || "al_amr_official";
+        const tokenInput = document.getElementById("connect-meta-token-input");
+        const token = tokenInput ? tokenInput.value.trim() : "";
+        const verResult = document.getElementById("connect-meta-ver-result");
+        if (!verResult) return;
+
+        if (!token) {
+            verResult.classList.remove("hidden");
+            verResult.className = "p-3 rounded text-[11px] font-mono border bg-amber-950/40 border-amber-500/50 text-amber-300";
+            verResult.innerHTML = `<div class="font-bold mb-1">⚠ Missing Access Token</div><div>Please enter your Meta Graph API Access Token above to test.</div>`;
+            return;
+        }
+
+        verResult.classList.remove("hidden");
+        verResult.className = "p-3 rounded text-[11px] font-mono border bg-slate-800/80 border-slate-600 text-slate-300 flex items-center gap-2";
+        verResult.innerHTML = `<span>⏳</span><span>Validating token with live Meta Graph API (graph.facebook.com/v19.0)...</span>`;
+
+        try {
+            const res = await AlAmrAPI.verifyAccount("instagram", accountId, { access_token: token });
+            if (res.verified) {
+                verResult.className = "p-3 rounded text-[11px] font-mono border bg-emerald-950/40 border-emerald-500/50 text-emerald-300";
+                verResult.innerHTML = `
+                    <div class="font-bold flex items-center gap-1.5 mb-1">
+                        <span>✓</span><span>LIVE META GRAPH CONNECTION VERIFIED</span>
+                    </div>
+                    <div>Identity: ${res.account_identity || accountId}</div>
+                    <div class="text-[10px] text-emerald-400/80 mt-1">${res.message || 'Status 200 OK'}</div>
+                `;
+            } else {
+                verResult.className = "p-3 rounded text-[11px] font-mono border bg-rose-950/40 border-rose-500/50 text-rose-300";
+                verResult.innerHTML = `
+                    <div class="font-bold flex items-center gap-1.5 mb-1">
+                        <span>⚠</span><span>META VERIFICATION REJECTED (HTTP ${res.status_code || 'ERROR'})</span>
+                    </div>
+                    <div>${res.message || 'Token expired or unauthorized.'}</div>
+                    ${res.details && res.details.error_response ? `<div class="text-[10px] text-rose-400/80 mt-1 break-all">Meta error: ${res.details.error_response}</div>` : ''}
+                `;
+            }
+        } catch (err) {
+            verResult.className = "p-3 rounded text-[11px] font-mono border bg-rose-950/40 border-rose-500/50 text-rose-300";
+            verResult.innerHTML = `<div class="font-bold mb-1">⚠ Verification Failed</div><div>${err.message}</div>`;
+        }
+    },
+
+    async submitConnectMetaToken() {
+        const accountId = document.getElementById("connect-meta-account-id")?.value || "al_amr_official";
+        const tokenInput = document.getElementById("connect-meta-token-input");
+        const token = tokenInput ? tokenInput.value.trim() : "";
+
+        if (!token) {
+            alert("Meta Access Token is required to connect the Instagram account.");
+            return;
+        }
+
+        try {
+            window.AlAmrShellInstance.showToast("Verifying and encrypting Meta token in vault...", "info");
+            const res = await AlAmrAPI.connectAccount("instagram", accountId, { access_token: token }, true);
+            if (res.verified) {
+                this.closeConnectMetaModal();
+                window.AlAmrShellInstance.showToast(`✓ Instagram account '${accountId}' verified & connected ACTIVE!`, "success");
+                window.AlAmrShellInstance.syncState(true);
+            } else {
+                const verResult = document.getElementById("connect-meta-ver-result");
+                if (verResult) {
+                    verResult.classList.remove("hidden");
+                    verResult.className = "p-3 rounded text-[11px] font-mono border bg-rose-950/40 border-rose-500/50 text-rose-300";
+                    verResult.innerHTML = `
+                        <div class="font-bold mb-1">⚠ Verification Failed (HTTP ${res.status_code || 'ERROR'})</div>
+                        <div>${res.message || 'Token was not accepted by Meta.'}</div>
+                    `;
+                }
+                window.AlAmrShellInstance.showToast(`Connection failed: ${res.message}`, "error");
+                window.AlAmrShellInstance.syncState(true);
+            }
+        } catch (err) {
+            alert(`Failed to connect token: ${err.message}`);
+        }
+    },
+
+    async deleteAccount(platform, accountId) {
+        if (!confirm(`Are you sure you want to remove ${platform.toUpperCase()} account '${accountId}' from the encrypted vault?`)) {
+            return;
+        }
+        try {
+            await AlAmrAPI.deleteAccount(platform, accountId);
+            window.AlAmrShellInstance.showToast(`Account '${accountId}' removed from vault`, "info");
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Failed to remove account: ${err.message}`, "error");
+        }
+    },
+
     // 8. Campaign Status Update
     openCampaignStatusModal(campaignId, currentStatus) {
         const modal = document.getElementById("modal-campaign-status");
@@ -2100,6 +2255,7 @@ window.AlAmrModals = {
     openCreateCampaignModal() {
         const modal = document.getElementById("modal-create-campaign");
         if (modal) modal.classList.remove("hidden");
+        this.onCampaignPlatformChange("youtube_shorts");
     },
 
     closeCreateCampaignModal() {
@@ -2107,18 +2263,54 @@ window.AlAmrModals = {
         if (modal) modal.classList.add("hidden");
     },
 
+    onCampaignPlatformChange(platform) {
+        const select = document.getElementById("campaign-account-select");
+        const hint = document.getElementById("campaign-account-hint");
+        if (!select) return;
+
+        const pFilter = platform === "instagram_reels" ? "instagram" : "youtube";
+        const accounts = (window.AlAmrShellInstance && window.AlAmrShellInstance.state && window.AlAmrShellInstance.state.accounts) || [];
+        const matching = accounts.filter(a => a.platform === pFilter);
+
+        if (matching.length === 0) {
+            select.innerHTML = `<option value="">-- No enrolled ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'} accounts in vault --</option>`;
+            if (hint) hint.innerHTML = `<span class="text-amber-400">⚠ No account enrolled yet for this platform. Please add one in Accounts tab first.</span>`;
+            return;
+        }
+
+        select.innerHTML = matching.map(a => {
+            const isAct = a.status === "active";
+            const badge = isAct ? "✓ VERIFIED & ACTIVE" : `⏳ ${a.status.toUpperCase()}`;
+            return `<option value="${a.account_id}">${a.display_name || a.username} (${a.account_id}) — ${badge}</option>`;
+        }).join("");
+
+        const firstActive = matching.find(a => a.status === "active");
+        if (firstActive) {
+            select.value = firstActive.account_id;
+            if (hint) hint.innerHTML = `<span class="text-emerald-400 font-bold">✓ Bound to verified account: ${firstActive.display_name || firstActive.username} (${firstActive.account_id})</span>`;
+        } else {
+            select.value = matching[0].account_id;
+            if (hint) hint.innerHTML = `<span class="text-amber-400">⚠ Account requires verification before publishing. Connect token in Accounts tab.</span>`;
+        }
+    },
+
     async submitCreateCampaign() {
         const nameInput = document.getElementById("campaign-name-input");
         const sourceInput = document.getElementById("campaign-source-input");
         const reqsInput = document.getElementById("campaign-requirements-input");
-        const platformSelect = document.getElementById("campaign-platform-select");
+        const accountSelect = document.getElementById("campaign-account-select");
         const cpmInput = document.getElementById("campaign-cpm-input");
+        const budgetInput = document.getElementById("campaign-budget-input");
+
+        const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+        const platform = (platformRadio && platformRadio.value) || "youtube_shorts";
+        const targetAccountId = (accountSelect && accountSelect.value) || null;
 
         const name = (nameInput && nameInput.value.trim()) || "";
         const source_uri = (sourceInput && sourceInput.value.trim()) || "";
         const requirements_text = (reqsInput && reqsInput.value.trim()) || "";
-        const platform = (platformSelect && platformSelect.value) || "youtube_shorts";
         const cpm_rate = (cpmInput && parseFloat(cpmInput.value)) || 1.5;
+        const payout_budget = (budgetInput && parseFloat(budgetInput.value)) || 500.0;
 
         if (!name) {
             alert("Campaign name is required.");
@@ -2135,8 +2327,9 @@ window.AlAmrModals = {
                 source_uri,
                 requirements_text,
                 target_platforms: [platform],
+                target_account_id: targetAccountId,
                 cpm_rate,
-                payout_budget: 500.0
+                payout_budget,
             });
             this.closeCreateCampaignModal();
             window.AlAmrShellInstance.showToast(`Campaign started! Job: ${res.job_id}`, "success");
@@ -2149,13 +2342,25 @@ window.AlAmrModals = {
 
     // 14. Publish Approved Clip
     async publishApprovedClip(jobId, clipId) {
-        if (!confirm(`Confirm publishing clip '${clipId}' directly to YouTube Shorts?`)) {
+        const jobs = (window.AlAmrShellInstance && window.AlAmrShellInstance.state && window.AlAmrShellInstance.state.jobs) || [];
+        const currentJob = jobs.find(j => j.job_id === jobId) || {};
+        const meta = currentJob.metadata_json || currentJob.metadata || {};
+        const targetPlatform = meta.target_platform || "youtube_shorts";
+        const targetAccountId = meta.target_account_id || null;
+
+        const destName = targetPlatform === "instagram_reels" ? "Instagram Reels" : "YouTube Shorts";
+        const accountPrompt = targetAccountId ? ` to ${destName} [Account: ${targetAccountId}]` : ` to ${destName}`;
+
+        if (!confirm(`Confirm publishing clip '${clipId}' directly${accountPrompt}?`)) {
             return;
         }
         try {
-            window.AlAmrShellInstance.showToast("Publishing to YouTube Shorts...", "info");
-            const res = await AlAmrAPI.publishClip(jobId, clipId);
+            window.AlAmrShellInstance.showToast(`Publishing to ${destName}...`, "info");
+            const res = await AlAmrAPI.publishClip(jobId, clipId, targetAccountId, targetPlatform);
             window.AlAmrShellInstance.showToast(`Successfully published! Post ID: ${res.platform_post_id}`, "success");
+            if (res.video_url) {
+                window.AlAmrShellInstance.showToast(`Live URL: ${res.video_url}`, "success");
+            }
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
             window.AlAmrShellInstance.showToast(`Publishing failed: ${err.message}`, "error");

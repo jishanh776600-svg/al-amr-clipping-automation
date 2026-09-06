@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Header, Depends, status
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -165,6 +165,11 @@ class AccountRegistrationRequest(BaseModel):
     verify_connection: bool = False
 
 
+class AccountConnectRequest(BaseModel):
+    credentials: Dict[str, Any] = Field(default_factory=dict, description="Sensitive credentials (e.g. access_token)")
+    verify_first: bool = Field(default=True, description="Whether to run live verification before saving")
+
+
 class CampaignStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="'discovered', 'active', 'paused', 'completed', 'rejected'")
     reason: Optional[str] = None
@@ -215,6 +220,7 @@ class CreateAndRunCampaignRequest(BaseModel):
     source_uri: str = Field(..., min_length=1, max_length=1024)
     requirements_text: Optional[str] = Field(default=None, max_length=10000)
     target_platforms: List[str] = Field(default=["youtube_shorts"])
+    target_account_id: Optional[str] = Field(default=None, description="Selected destination account ID from vault")
     cpm_rate: float = Field(default=1.5, ge=0.0)
     payout_budget: float = Field(default=500.0, ge=0.0)
 
@@ -817,11 +823,13 @@ async def make_clip_decision(
 async def publish_clip_api(
     job_id: str,
     clip_id: str,
+    target_account_id: Optional[str] = Query(default=None),
+    target_platform: Optional[str] = Query(default=None),
     operator: str = Depends(get_current_operator),
     ctrl_service: MasterControlService = Depends(get_control_service),
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> Dict[str, Any]:
-    """Publishes an approved clip to YouTube Shorts with fail-closed safety checks."""
+    """Publishes an approved clip to the designated destination platform & account with fail-closed safety checks."""
     state = await ctrl_service.get_state()
     if not state.can_publish():
         raise HTTPException(
@@ -849,10 +857,11 @@ async def publish_clip_api(
     else:
         local_media_path = clip_path
 
-    # 3. Resolve Credentials & Vault
+    # 3. Resolve Destination Platform & Account
     from clipping.agent.vault.vault import EncryptedCredentialVault
-    from clipping.agent.vault.models import AccountPlatform
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
     from clipping.agent.publishing.adapters.youtube import YouTubePublishingAdapter
+    from clipping.agent.publishing.adapters.instagram import InstagramPublishingAdapter
     from clipping.agent.publishing.models import (
         CampaignSubmissionRecord,
         PublishingContentMetadata,
@@ -860,30 +869,79 @@ async def publish_clip_api(
         SubmissionStatus,
     )
     from clipping.agent.publishing.repository import CampaignSubmissionRepository
+    from clipping.state.remote import RemoteStorageStateRepository
+
+    state_repo = RemoteStorageStateRepository(storage_driver=storage)
+    job = await state_repo.get_job(job_id)
+    job_metadata = job.metadata_json if job else {}
+
+    resolved_platform_str = target_platform or job_metadata.get("target_platform") or "youtube"
+    if "instagram" in resolved_platform_str.lower():
+        p_enum = AccountPlatform.INSTAGRAM
+        dest_label = "Instagram Reels"
+    else:
+        p_enum = AccountPlatform.YOUTUBE
+        dest_label = "YouTube Shorts"
+
+    resolved_acc_id = target_account_id or job_metadata.get("target_account_id")
 
     vault = EncryptedCredentialVault(storage_driver=storage)
-    accounts = await vault.list_accounts(platform=AccountPlatform.YOUTUBE)
+
+    # Resolve target account from vault
+    target_account = None
+    if resolved_acc_id:
+        target_account = await vault.get_account_metadata(p_enum, resolved_acc_id)
+        if not target_account:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Selected destination account '{resolved_acc_id}' for {dest_label} not found in vault.",
+            )
+    else:
+        # Fallback to the first active account for the platform
+        active_accounts = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
+        if active_accounts:
+            target_account = active_accounts[0]
+            resolved_acc_id = target_account.account_id
+        else:
+            all_accounts = await vault.list_accounts(platform=p_enum)
+            if all_accounts:
+                target_account = all_accounts[0]
+                resolved_acc_id = target_account.account_id
+
+    if not target_account:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No enrolled {dest_label} creator account found. Enroll and verify an account in Accounts view first.",
+        )
+
+    if target_account.status != AccountStatus.ACTIVE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Publishing blocked: Account '{target_account.display_name or target_account.account_id}' status is '{target_account.status.value.upper()}'. Account must be CONNECTED and VERIFIED before publishing live media.",
+        )
+
+    # 4. Resolve Credentials from Vault
     creds: Dict[str, Any] = {}
-    channel_id = "default_channel"
+    try:
+        vault_creds = await vault.get_credentials(p_enum, target_account.account_id)
+        if vault_creds:
+            creds.update(vault_creds)
+    except Exception as e:
+        logger.warning("Could not decrypt vault credentials", error=str(e))
 
-    if accounts:
-        target_account = accounts[0]
-        channel_id = target_account.account_id
-        try:
-            vault_creds = await vault.get_credentials(AccountPlatform.YOUTUBE, target_account.account_id)
-            if vault_creds:
-                creds.update(vault_creds)
-        except Exception as e:
-            logger.warning("Could not decrypt vault credentials", error=str(e))
-
-    # Also pull from settings / environment if missing
     settings = get_settings()
-    if not creds.get("client_id") and settings.YOUTUBE_CLIENT_ID:
-        creds["client_id"] = settings.YOUTUBE_CLIENT_ID
-    if not creds.get("client_secret") and settings.YOUTUBE_CLIENT_SECRET:
-        creds["client_secret"] = settings.YOUTUBE_CLIENT_SECRET.get_secret_value()
+    if p_enum == AccountPlatform.YOUTUBE:
+        if not creds.get("client_id") and settings.YOUTUBE_CLIENT_ID:
+            creds["client_id"] = settings.YOUTUBE_CLIENT_ID
+        if not creds.get("client_secret") and settings.YOUTUBE_CLIENT_SECRET:
+            creds["client_secret"] = settings.YOUTUBE_CLIENT_SECRET.get_secret_value()
+    elif p_enum == AccountPlatform.INSTAGRAM:
+        if not creds.get("access_token") and settings.INSTAGRAM_ACCESS_TOKEN:
+            creds["access_token"] = settings.INSTAGRAM_ACCESS_TOKEN.get_secret_value()
+        if not creds.get("instagram_account_id") and not creds.get("user_id"):
+            creds["instagram_account_id"] = target_account.account_id
 
-    # 4. Prepare submission record
+    # 5. Prepare Submission Record
     sub_repo = CampaignSubmissionRepository(storage_driver=storage)
     submission_id = f"sub_{job_id}_{clip_id}"
     campaign_id = getattr(target_req, "campaign_id", None) or "default_campaign"
@@ -892,20 +950,24 @@ async def publish_clip_api(
         submission_id=submission_id,
         campaign_id=campaign_id,
         clip_id=clip_id,
-        account_id=channel_id,
-        platform=AccountPlatform.YOUTUBE,
+        account_id=resolved_acc_id,
+        platform=p_enum,
         publishing_mode=PublishingMode.IMMEDIATE,
         current_status=SubmissionStatus.PENDING,
         idempotency_key=f"idemp_{submission_id}",
         content_metadata=PublishingContentMetadata(
             title=target_req.title or f"Clip {clip_id}",
-            description=f"{target_req.title}\n\n#shorts #viral #alamr",
-            hashtags=["shorts", "viral"],
+            description=f"{target_req.title}\n\n#shorts #reels #viral #alamr",
+            hashtags=["shorts", "reels", "viral"],
             privacy_status="public",
         ),
     )
 
-    adapter = YouTubePublishingAdapter()
+    if p_enum == AccountPlatform.INSTAGRAM:
+        adapter = InstagramPublishingAdapter()
+    else:
+        adapter = YouTubePublishingAdapter()
+
     result = await adapter.publish(
         submission=submission,
         media_path=local_media_path,
@@ -915,26 +977,28 @@ async def publish_clip_api(
     if result.success:
         submission = submission.transition_to(
             SubmissionStatus.PUBLISHED,
-            reason=f"Published to YouTube Shorts by {operator}",
+            reason=f"Published to {dest_label} ({resolved_acc_id}) by {operator}",
             platform_post_id=result.platform_post_id,
             platform_url=result.platform_url,
         )
         await sub_repo.save_submission(submission)
         return {
             "status": "success",
-            "message": "Clip published successfully to YouTube Shorts",
+            "platform": p_enum.value,
+            "account_id": resolved_acc_id,
+            "message": f"Clip published successfully to {dest_label}",
             "platform_post_id": result.platform_post_id,
             "video_url": result.platform_url,
         }
     else:
         submission = submission.transition_to(
             SubmissionStatus.FAILED,
-            reason=result.error_message or "Unknown YouTube API publishing error",
+            reason=result.error_message or f"Unknown {dest_label} publishing error",
         )
         await sub_repo.save_submission(submission)
         raise HTTPException(
             status_code=502,
-            detail=f"YouTube publishing failed: {result.error_message}",
+            detail=f"{dest_label} publishing failed: {result.error_message}",
         )
 
 
@@ -1349,12 +1413,19 @@ async def create_and_run_campaign_api(
     job_id = f"job_run_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:4]}"
     state_repo = RemoteStorageStateRepository(storage_driver=storage)
     source_id = f"src_{uuid.uuid4().hex[:8]}"
+    primary_platform = req.target_platforms[0] if req.target_platforms else "youtube_shorts"
     await state_repo.create_job(
         job_id=job_id,
         campaign_id=campaign_id,
         source_video_id=source_id,
         idempotency_key=f"idemp_{job_id}",
-        metadata={"source_uri": req.source_uri, "operator": operator, "campaign_name": req.name},
+        metadata={
+            "source_uri": req.source_uri,
+            "operator": operator,
+            "campaign_name": req.name,
+            "target_platform": primary_platform,
+            "target_account_id": req.target_account_id,
+        },
     )
 
     async def _runner():
@@ -1622,6 +1693,121 @@ async def update_account_status_api(
         "platform": platform,
         "account_id": account_id,
         "new_status": st_enum.value,
+    }
+
+
+@app.post("/api/accounts/{platform}/{account_id}/connect")
+async def connect_account_api(
+    platform: str,
+    account_id: str,
+    req: AccountConnectRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """
+    Connects or updates credentials for an enrolled account with live API verification.
+    If live verification passes:
+      - Transitions status to ACTIVE
+      - Stores encrypted credentials in Fernet-protected vault
+      - Records last_verified_at and verification message
+      - Zero raw credentials logged or exposed
+    If live verification fails:
+      - Preserves status as PENDING_VERIFICATION (or RESTRICTED)
+      - Records exact provider error details
+      - Does not fabricate success
+    """
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+    from clipping.preflight.service_verifier import RealServiceVerifier
+
+    try:
+        p_enum = AccountPlatform(platform.lower().strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    meta = await vault.get_account_metadata(p_enum, account_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Account '{account_id}' for {p_enum.value} not found in vault")
+
+    creds = dict(req.credentials or {})
+    verifier = RealServiceVerifier()
+
+    if p_enum == AccountPlatform.INSTAGRAM:
+        if not creds.get("instagram_account_id") and not creds.get("user_id"):
+            creds["instagram_account_id"] = account_id
+        res = await verifier.verify_instagram(credentials=creds)
+    elif p_enum == AccountPlatform.YOUTUBE:
+        if not creds.get("channel_id"):
+            creds["channel_id"] = account_id
+        res = await verifier.verify_youtube(credentials=creds)
+    else:
+        raise HTTPException(status_code=400, detail=f"Live verification not supported for platform: {platform}")
+
+    now = datetime.now(timezone.utc)
+    if res.verified:
+        updated_meta = meta.model_copy(update={
+            "status": AccountStatus.ACTIVE,
+            "last_verified_at": now,
+            "verification_message": res.message,
+        })
+        await vault.save_account(updated_meta, sensitive_credentials=creds)
+        logger.info("Account successfully connected and verified active", platform=p_enum.value, account_id=account_id, operator=operator)
+        return {
+            "success": True,
+            "verified": True,
+            "status": "active",
+            "account_identity": res.account_identity,
+            "message": res.message,
+            "last_verified_at": now.isoformat(),
+        }
+    else:
+        updated_meta = meta.model_copy(update={
+            "status": AccountStatus.PENDING_VERIFICATION if meta.status == AccountStatus.PENDING_VERIFICATION else AccountStatus.RESTRICTED,
+            "last_verified_at": now,
+            "verification_message": res.message,
+        })
+        await vault.save_account(updated_meta)
+        logger.warning("Account live verification rejected by provider", platform=p_enum.value, account_id=account_id, status_code=res.status_code)
+        return {
+            "success": False,
+            "verified": False,
+            "status": updated_meta.status.value,
+            "status_code": res.status_code,
+            "account_identity": res.account_identity,
+            "message": res.message,
+            "details": res.details,
+            "last_verified_at": now.isoformat(),
+        }
+
+
+@app.delete("/api/accounts/{platform}/{account_id}")
+async def delete_account_api(
+    platform: str,
+    account_id: str,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Permanently removes an account from the encrypted vault index and storage."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform
+
+    try:
+        p_enum = AccountPlatform(platform.lower().strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    deleted = await vault.delete_account(platform=p_enum, account_id=account_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Account '{account_id}' not found in vault")
+
+    logger.info("Account removed from vault", platform=platform, account_id=account_id, operator=operator)
+    return {
+        "status": "success",
+        "message": f"Account '{account_id}' successfully removed from vault",
+        "platform": platform,
+        "account_id": account_id,
     }
 
 
