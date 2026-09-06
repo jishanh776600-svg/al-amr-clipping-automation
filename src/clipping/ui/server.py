@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from clipping.approval.models import ApprovalAction, ApprovalStatus, ApprovalAuditRecord
 from clipping.approval.repository import ApprovalRepository
-from clipping.config.settings import Settings
+from clipping.config.settings import Settings, get_settings
 from clipping.control.models import SystemControlState, SystemOperatingMode
 from clipping.control.repository import ControlRepository
 from clipping.control.service import MasterControlService
@@ -1704,6 +1704,70 @@ async def exchange_youtube_oauth_api(
     except Exception as e:
         logger.error("YouTube OAuth exchange failed", error=str(e))
         raise HTTPException(status_code=400, detail=f"OAuth exchange failed: {str(e)}")
+
+
+@app.get("/api/auth/youtube/callback", response_class=HTMLResponse)
+async def youtube_oauth_callback_page(
+    code: Optional[str] = None,
+    error: Optional[str] = None,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> HTMLResponse:
+    """Handles Google OAuth browser redirect, exchanges code, and enrolls channel into vault."""
+    if error:
+        return HTMLResponse(f"<h2>Google OAuth Authorization Failed</h2><p>Error: {error}</p>", status_code=400)
+    if not code:
+        return HTMLResponse("<h2>Invalid Request</h2><p>Missing authorization code.</p>", status_code=400)
+
+    from clipping.publishing.oauth_flow import YouTubeOAuthFlow
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    settings = get_settings()
+    client_id = settings.YOUTUBE_CLIENT_ID or os.getenv("YOUTUBE_CLIENT_ID")
+    client_secret = (
+        settings.YOUTUBE_CLIENT_SECRET.get_secret_value() if settings.YOUTUBE_CLIENT_SECRET else None
+    ) or os.getenv("YOUTUBE_CLIENT_SECRET")
+
+    if not (client_id and client_secret):
+        return HTMLResponse("<h2>Configuration Error</h2><p>Google OAuth client credentials not found in server settings.</p>", status_code=500)
+
+    flow = YouTubeOAuthFlow()
+    try:
+        tokens = await flow.exchange_code_for_tokens(
+            client_id=client_id,
+            client_secret=client_secret,
+            authorization_code=code,
+            redirect_uri="http://localhost:8000/api/auth/youtube/callback",
+        )
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            return HTMLResponse(
+                "<h2>Warning: No Refresh Token Returned</h2>"
+                "<p>Google did not return a refresh token because offline consent was previously granted.</p>"
+                "<p>To force Google to issue a new refresh token, re-run with prompt=consent.</p>",
+                status_code=400,
+            )
+
+        vault = EncryptedCredentialVault(storage_driver=storage)
+        meta = await flow.complete_enrollment(
+            vault=vault,
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+            access_token=tokens.get("access_token"),
+        )
+        return HTMLResponse(
+            f"<html><body style='font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; text-align: center; padding: 60px; background-color: #0f172a; color: #f8fafc;'>"
+            f"<div style='max-width: 600px; margin: 0 auto; background-color: #1e293b; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);'>"
+            f"<h1 style='color: #22c55e; margin-bottom: 20px;'>&#10004; Channel Enrolled Successfully!</h1>"
+            f"<p style='font-size: 18px;'><strong>Channel Name:</strong> {meta.username}</p>"
+            f"<p style='font-size: 16px; color: #94a3b8;'><strong>Channel ID:</strong> <code>{meta.account_id}</code></p>"
+            f"<p style='margin-top: 25px; color: #cbd5e1;'>The creator channel has been securely enrolled in the <strong>Encrypted Credential Vault</strong> with read-only identity verification confirmed.</p>"
+            f"<p style='margin-top: 20px; font-size: 14px; color: #64748b;'>You can now safely close this browser tab and return to the terminal/console.</p>"
+            f"</div></body></html>",
+            status_code=200,
+        )
+    except Exception as e:
+        logger.error("YouTube OAuth callback handling failed", error=str(e))
+        return HTMLResponse(f"<h2>OAuth Exchange Failed</h2><p>{str(e)}</p>", status_code=400)
 
 
 if STATIC_DIR.exists():
