@@ -15,6 +15,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from clipping.approval.transport import mask_bot_token
+from clipping.config.settings import get_settings
 from clipping.logging.logger import get_logger
 
 logger = get_logger("clipping.preflight.service_verifier")
@@ -146,9 +147,27 @@ class RealServiceVerifier:
         Zero video upload is executed.
         """
         creds = credentials or {}
-        client_id = creds.get("client_id") or os.getenv("YOUTUBE_CLIENT_ID")
-        client_secret = creds.get("client_secret") or os.getenv("YOUTUBE_CLIENT_SECRET")
-        refresh_token = creds.get("refresh_token") or os.getenv("YOUTUBE_REFRESH_TOKEN")
+        settings = get_settings()
+        if "YOUTUBE_CLIENT_ID" in os.environ:
+            client_id = creds.get("client_id") or os.environ["YOUTUBE_CLIENT_ID"]
+        else:
+            client_id = creds.get("client_id") or settings.YOUTUBE_CLIENT_ID
+
+        if "YOUTUBE_CLIENT_SECRET" in os.environ:
+            client_secret = creds.get("client_secret") or os.environ["YOUTUBE_CLIENT_SECRET"]
+        else:
+            client_secret = (
+                creds.get("client_secret")
+                or (settings.YOUTUBE_CLIENT_SECRET.get_secret_value() if settings.YOUTUBE_CLIENT_SECRET else None)
+            )
+
+        if "YOUTUBE_REFRESH_TOKEN" in os.environ:
+            refresh_token = creds.get("refresh_token") or os.environ["YOUTUBE_REFRESH_TOKEN"]
+        else:
+            refresh_token = (
+                creds.get("refresh_token")
+                or (settings.YOUTUBE_REFRESH_TOKEN.get_secret_value() if settings.YOUTUBE_REFRESH_TOKEN else None)
+            )
 
         if not (client_id and client_secret and refresh_token):
             missing = []
@@ -331,8 +350,20 @@ class RealServiceVerifier:
         Queries /getMe to confirm token validity and bot username.
         Zero messages are sent.
         """
-        token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-        chat = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+        settings = get_settings()
+        if bot_token is not None:
+            token = bot_token
+        elif "TELEGRAM_BOT_TOKEN" in os.environ:
+            token = os.environ["TELEGRAM_BOT_TOKEN"]
+        else:
+            token = settings.TELEGRAM_BOT_TOKEN.get_secret_value() if settings.TELEGRAM_BOT_TOKEN else None
+
+        if chat_id is not None:
+            chat = chat_id
+        elif "TELEGRAM_CHAT_ID" in os.environ:
+            chat = os.environ["TELEGRAM_CHAT_ID"]
+        else:
+            chat = settings.TELEGRAM_CHAT_ID
 
         if not token:
             return ServiceVerificationResult(
