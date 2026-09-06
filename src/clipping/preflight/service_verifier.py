@@ -292,41 +292,57 @@ class RealServiceVerifier:
                 blocks_live_operation=True,
             )
 
-        target_endpoint = f"https://graph.facebook.com/v19.0/{account_id or 'me'}?fields=id,username&access_token={access_token}"
+        # Support both Instagram API tokens (IGAA...) and Meta Graph API tokens (EAAB...)
+        endpoints_to_try = []
+        if access_token.startswith("IG"):
+            endpoints_to_try = [
+                f"https://graph.instagram.com/me?fields=id,username,account_type&access_token={access_token}",
+                f"https://graph.facebook.com/v19.0/{account_id or 'me'}?fields=id,username&access_token={access_token}",
+            ]
+        else:
+            endpoints_to_try = [
+                f"https://graph.facebook.com/v19.0/{account_id or 'me'}?fields=id,username&access_token={access_token}",
+                f"https://graph.instagram.com/me?fields=id,username,account_type&access_token={access_token}",
+            ]
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(target_endpoint)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    username = data.get("username", "Unknown")
-                    ig_id = data.get("id", "Unknown")
-                    return ServiceVerificationResult(
-                        service="instagram",
-                        configured=True,
-                        verified=True,
-                        status_code=200,
-                        account_identity=f"@{username} ({ig_id})",
-                        message=f"Instagram Graph API verified: Authenticated as @{username} (ID: {ig_id})",
-                        why_required="Automated Instagram Reels publishing",
-                        configuration_requirement="Meta Graph API access token",
-                        blocks_dry_run=False,
-                        blocks_live_operation=False,
-                        details={"account_id": ig_id, "username": username},
-                    )
-                else:
-                    err_text = resp.text
-                    return ServiceVerificationResult(
-                        service="instagram",
-                        configured=True,
-                        verified=False,
-                        status_code=resp.status_code,
-                        message=f"Meta Graph API token verification failed ({resp.status_code}): Token expired or invalid",
-                        why_required="Automated Instagram Reels publishing",
-                        configuration_requirement="Generate a new long-lived User/Page Access Token with instagram_content_publish scope",
-                        blocks_dry_run=False,
-                        blocks_live_operation=True,
-                        details={"error_response": err_text[:200]},
-                    )
+                last_resp = None
+                for endpoint in endpoints_to_try:
+                    resp = await client.get(endpoint)
+                    last_resp = resp
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        username = data.get("username", "Unknown")
+                        ig_id = data.get("id", "Unknown")
+                        acc_type = data.get("account_type", "Instagram Profile")
+                        return ServiceVerificationResult(
+                            service="instagram",
+                            configured=True,
+                            verified=True,
+                            status_code=200,
+                            account_identity=f"@{username} ({ig_id})",
+                            message=f"Instagram API verified: Authenticated as @{username} ({acc_type})",
+                            why_required="Automated Instagram Reels publishing",
+                            configuration_requirement="Meta/Instagram access token",
+                            blocks_dry_run=False,
+                            blocks_live_operation=False,
+                            details={"account_id": ig_id, "username": username, "account_type": acc_type},
+                        )
+
+                err_text = last_resp.text if last_resp else "Unknown verification error"
+                return ServiceVerificationResult(
+                    service="instagram",
+                    configured=True,
+                    verified=False,
+                    status_code=last_resp.status_code if last_resp else 400,
+                    message=f"Instagram token verification failed ({last_resp.status_code if last_resp else 400}): Token expired or invalid",
+                    why_required="Automated Instagram Reels publishing",
+                    configuration_requirement="Generate a valid Instagram Access Token",
+                    blocks_dry_run=False,
+                    blocks_live_operation=True,
+                    details={"error_response": err_text[:200]},
+                )
         except Exception as e:
             return ServiceVerificationResult(
                 service="instagram",
