@@ -43,6 +43,15 @@ class SecurityValidator:
             return True  # If no chat restriction, allow verified authorized users in any chat
         return chat_id in self.allowed_chat_ids
 
+    def is_authorized(self, user_id: Optional[int] = None, chat_id: Optional[int] = None) -> bool:
+        """Validates if both user and/or chat are authorized."""
+        if user_id is not None and not self.is_user_authorized(user_id):
+            return False
+        if chat_id is not None and not self.is_chat_authorized(chat_id):
+            return False
+        return True
+
+
     def validate_callback_payload(self, data: str) -> TelegramCallbackPayload:
         """Parses and cryptographically/structurally validates the compact callback payload."""
         if not data or len(data) > 64:

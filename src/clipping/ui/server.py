@@ -175,6 +175,35 @@ class LaunchCampaignDiscoveryRequest(BaseModel):
     priority: str = Field(default="normal", max_length=32)
 
 
+class StartActivationSessionRequest(BaseModel):
+    service: str = Field(..., description="'youtube', 'whop', or other service")
+    account_identifier: str = Field(..., description="Channel name or handle")
+    ttl_seconds: int = Field(default=900, ge=60, le=7200)
+
+
+class CreateChallengeRequest(BaseModel):
+    ttl_seconds: int = Field(default=300, ge=60, le=1800)
+    expected_length: int = Field(default=6, ge=4, le=12)
+
+
+class SubmitOtpRequest(BaseModel):
+    otp_code: str = Field(..., min_length=4, max_length=12)
+
+
+class YouTubeAuthUrlRequest(BaseModel):
+    client_id: Optional[str] = None
+    redirect_uri: str = "http://localhost:8000/api/auth/youtube/callback"
+    state: Optional[str] = None
+
+
+class YouTubeTokenExchangeRequest(BaseModel):
+    authorization_code: str = Field(..., min_length=1)
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    redirect_uri: str = "http://localhost:8000/api/auth/youtube/callback"
+
+
+
 # --- READ ENDPOINTS ---
 
 @app.get("/api/system/status")
@@ -1530,6 +1559,151 @@ async def get_system_preflight_api(
     validator = SystemPreflightValidator(storage_driver=storage, control_repository=ctrl_repo)
     report = await validator.validate()
     return report.model_dump(mode="json")
+
+
+# --- ACTIVATION & OAUTH ENDPOINTS ---
+
+@app.post("/api/activation/sessions")
+async def start_activation_session_api(
+    req: StartActivationSessionRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.agent.activation.manager import ActivationSessionManager
+    mgr = ActivationSessionManager(storage_driver=storage)
+    session = await mgr.start_session(
+        service=req.service,
+        account_identifier=req.account_identifier,
+        ttl_seconds=req.ttl_seconds,
+    )
+    return session.to_safe_dict()
+
+
+@app.get("/api/activation/sessions/{session_id}")
+async def get_activation_session_api(
+    session_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.agent.activation.manager import ActivationSessionManager
+    mgr = ActivationSessionManager(storage_driver=storage)
+    session = await mgr.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Activation session not found")
+    return session.to_safe_dict()
+
+
+@app.post("/api/activation/sessions/{session_id}/challenge")
+async def create_activation_challenge_api(
+    session_id: str,
+    req: CreateChallengeRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.agent.activation.manager import ActivationSessionManager
+    mgr = ActivationSessionManager(storage_driver=storage)
+    try:
+        session = await mgr.create_otp_challenge(
+            session_id=session_id,
+            challenge_ttl_seconds=req.ttl_seconds,
+            expected_length=req.expected_length,
+        )
+        return session.to_safe_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/activation/sessions/{session_id}/notify-telegram")
+async def notify_activation_telegram_api(
+    session_id: str,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.agent.activation.manager import ActivationSessionManager
+    from clipping.approval.escalation_notifier import TelegramEscalationNotifier
+    mgr = ActivationSessionManager(storage_driver=storage)
+    notifier = TelegramEscalationNotifier()
+    try:
+        session = await mgr.notify_operator_telegram(session_id=session_id, notifier=notifier)
+        return session.to_safe_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/activation/sessions/{session_id}/otp")
+async def submit_activation_otp_api(
+    session_id: str,
+    req: SubmitOtpRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.agent.activation.manager import ActivationSessionManager
+    mgr = ActivationSessionManager(storage_driver=storage)
+    try:
+        session = await mgr.submit_otp(session_id=session_id, otp_code=req.otp_code)
+        return session.to_safe_dict()
+    except (ValueError, PermissionError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/auth/youtube/authorize-url")
+async def get_youtube_auth_url_api(
+    req: YouTubeAuthUrlRequest,
+    operator: str = Depends(get_current_operator),
+) -> Dict[str, Any]:
+    from clipping.publishing.oauth_flow import YouTubeOAuthFlow
+    settings = Settings()
+    client_id = req.client_id or (settings.YOUTUBE_CLIENT_ID if hasattr(settings, "YOUTUBE_CLIENT_ID") else None) or os.getenv("YOUTUBE_CLIENT_ID")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="YOUTUBE_CLIENT_ID not configured and not provided in request")
+    url = YouTubeOAuthFlow.generate_authorization_url(
+        client_id=client_id,
+        redirect_uri=req.redirect_uri,
+        state=req.state,
+    )
+    return {"authorization_url": url, "client_id": client_id}
+
+
+@app.post("/api/auth/youtube/exchange")
+async def exchange_youtube_oauth_api(
+    req: YouTubeTokenExchangeRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    from clipping.publishing.oauth_flow import YouTubeOAuthFlow
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    settings = Settings()
+    client_id = req.client_id or os.getenv("YOUTUBE_CLIENT_ID")
+    client_secret = req.client_secret or os.getenv("YOUTUBE_CLIENT_SECRET")
+    if not (client_id and client_secret):
+        raise HTTPException(status_code=400, detail="YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be configured or provided")
+
+    flow = YouTubeOAuthFlow()
+    try:
+        tokens = await flow.exchange_code_for_tokens(
+            client_id=client_id,
+            client_secret=client_secret,
+            authorization_code=req.authorization_code,
+            redirect_uri=req.redirect_uri,
+        )
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(status_code=400, detail="Google did not return a refresh_token")
+
+        vault = EncryptedCredentialVault(storage_driver=storage)
+        meta = await flow.complete_enrollment(
+            vault=vault,
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+            access_token=tokens.get("access_token"),
+        )
+        return {
+            "status": "success",
+            "account": meta.to_safe_dict(),
+        }
+    except Exception as e:
+        logger.error("YouTube OAuth exchange failed", error=str(e))
+        raise HTTPException(status_code=400, detail=f"OAuth exchange failed: {str(e)}")
 
 
 if STATIC_DIR.exists():

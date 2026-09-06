@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from clipping.approval.service import ApprovalService
 from clipping.approval.transport import TelegramTransport, HttpTelegramTransport
 from clipping.approval.repository import ApprovalRepository
@@ -31,11 +31,17 @@ class TelegramApprovalDispatcher:
         transport: TelegramTransport,
         storage_driver: StorageDriver,
         offset_storage_key: str = "telegram/update_offset.json",
+        activation_manager: Optional[Any] = None,
     ):
         self.service = approval_service
         self.transport = transport
         self.storage = storage_driver
         self.offset_key = offset_storage_key
+        if activation_manager is not None:
+            self.activation_manager = activation_manager
+        else:
+            from clipping.agent.activation.manager import ActivationSessionManager
+            self.activation_manager = ActivationSessionManager(storage_driver=self.storage)
 
     async def get_current_offset(self) -> Optional[int]:
         if not await self.storage.exists(self.offset_key):
@@ -51,8 +57,74 @@ class TelegramApprovalDispatcher:
         payload = json.dumps({"offset": offset}).encode("utf-8")
         await self.storage.upload_bytes(payload, self.offset_key, content_type="application/json")
 
+    async def _handle_otp_message(
+        self,
+        user_id: Optional[int],
+        chat_id: Optional[int],
+        text: str,
+    ) -> bool:
+        """Processes incoming Telegram text messages for activation OTP verification."""
+        if not self.activation_manager:
+            return False
+
+        clean_text = text.strip()
+        parts = clean_text.split()
+        if not parts:
+            return False
+
+        target_session_id = None
+        otp_code = None
+
+        if parts[0].lower() == "/otp":
+            if len(parts) >= 3:
+                target_session_id = parts[1]
+                otp_code = parts[2]
+            elif len(parts) == 2:
+                otp_code = parts[1]
+        elif clean_text.isdigit() and 4 <= len(clean_text) <= 10:
+            otp_code = clean_text
+
+        if not otp_code:
+            return False
+
+        # If session ID not explicitly passed, find the active waiting session
+        if not target_session_id:
+            waiting = await self.activation_manager.find_waiting_session()
+            if waiting:
+                target_session_id = waiting.session_id
+
+        if not target_session_id:
+            if chat_id:
+                await self.transport.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ No active activation challenge awaiting OTP. Specify session: `/otp <session_id> <code>`",
+                )
+            return False
+
+        try:
+            session = await self.activation_manager.submit_otp(
+                session_id=target_session_id,
+                otp_code=otp_code,
+                sender_user_id=user_id,
+                sender_chat_id=chat_id,
+            )
+            if chat_id:
+                await self.transport.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Verification code accepted for `{session.service}` (Session `{session.session_id}`). Authentication proceeding.",
+                )
+            return True
+        except Exception as e:
+            logger.warning("Operator OTP submission rejected", error=str(e), session_id=target_session_id)
+            if chat_id:
+                await self.transport.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Verification code rejected: {str(e)}",
+                )
+            return False
+
     async def poll_and_process_once(self, limit: int = 100) -> int:
-        """Polls up to limit updates, processes any callback queries, and checkpoints offset."""
+        """Polls up to limit updates, processes any callback queries or operator OTP messages, and checkpoints offset."""
         current_offset = await self.get_current_offset()
         updates = await self.transport.get_updates(offset=current_offset, limit=limit, timeout=5)
         if not updates:
@@ -73,12 +145,22 @@ class TelegramApprovalDispatcher:
                 result = await self.service.handle_callback_query(cb)
                 logger.info("Processed callback query", result=result)
                 processed_callbacks += 1
+            elif "message" in update:
+                msg = update["message"]
+                text = msg.get("text", "")
+                user_id = msg.get("from", {}).get("id")
+                chat_id = msg.get("chat", {}).get("id")
+                if text:
+                    handled = await self._handle_otp_message(user_id=user_id, chat_id=chat_id, text=text)
+                    if handled:
+                        processed_callbacks += 1
 
         if highest_update_id > 0:
             # Checkpoint next offset (highest_update_id + 1)
             await self.save_offset(highest_update_id + 1)
 
         return processed_callbacks
+
 
 
 async def run_dispatcher_cli(limit: int = 50) -> int:
