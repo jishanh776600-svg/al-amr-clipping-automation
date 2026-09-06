@@ -1,5 +1,6 @@
 """Source reference abstraction for video ingestion."""
 
+import os
 import re
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -11,6 +12,7 @@ class SourceType(str, Enum):
     YOUTUBE = "youtube"
     DIRECT_URL = "direct_url"
     GDRIVE = "gdrive"
+    LOCAL_FILE = "local_file"
     CUSTOM = "custom"
 
 
@@ -37,6 +39,11 @@ class SourceReference(BaseModel):
         uri_clean = uri.strip()
         if not uri_clean:
             raise InvalidSourceError("Empty URI provided")
+
+        # Local file detection
+        clean_path = uri_clean.replace("file://", "").strip()
+        if os.path.exists(clean_path) or uri_clean.startswith("file://") or re.match(r"^[a-zA-Z]:[\\/]", clean_path):
+            return cls(source_type=SourceType.LOCAL_FILE, uri=clean_path)
 
         # YouTube detection
         youtube_regex = r"(https?://)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)/(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})"

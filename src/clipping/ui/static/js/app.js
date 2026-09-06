@@ -75,6 +75,18 @@ window.AlAmrPlayer = {
         this.duration = clip.duration || 30.0;
         this.currentTime = 0.0;
         this.pause();
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo) {
+            if (clip.media_url) {
+                realVideo.src = clip.media_url;
+                realVideo.classList.remove("hidden");
+                realVideo.currentTime = 0;
+                realVideo.load();
+            } else {
+                realVideo.src = "";
+                realVideo.classList.add("hidden");
+            }
+        }
         this.updateUI();
         if (window.AlAmrShellInstance) {
             window.AlAmrShellInstance.showToast(`Selected ${clip.title} for review`, "info");
@@ -95,11 +107,21 @@ window.AlAmrPlayer = {
         const btn = document.getElementById("player-play-btn");
         if (btn) btn.innerHTML = "<span>⏸</span><span>PAUSE</span>";
 
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo && realVideo.src) {
+            realVideo.play().catch(() => {});
+        }
+
         const tickRate = 50; // 50ms tick
         this.timerId = setInterval(() => {
-            this.currentTime += (tickRate / 1000) * this.playbackRate;
-            if (this.currentTime >= this.duration) {
-                this.currentTime = 0; // loop playback
+            if (realVideo && realVideo.src && !realVideo.paused) {
+                this.currentTime = realVideo.currentTime;
+                if (realVideo.duration) this.duration = realVideo.duration;
+            } else {
+                this.currentTime += (tickRate / 1000) * this.playbackRate;
+                if (this.currentTime >= this.duration) {
+                    this.currentTime = 0; // loop playback
+                }
             }
             this.updateUI(false);
         }, tickRate);
@@ -112,10 +134,19 @@ window.AlAmrPlayer = {
         this.timerId = null;
         const btn = document.getElementById("player-play-btn");
         if (btn) btn.innerHTML = "<span>▶</span><span>PLAY</span>";
+
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo && realVideo.src) {
+            realVideo.pause();
+        }
     },
 
     seek(newTime) {
         this.currentTime = Math.max(0, Math.min(this.duration, parseFloat(newTime)));
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo && realVideo.src) {
+            realVideo.currentTime = this.currentTime;
+        }
         this.updateUI(false);
     },
 
@@ -125,6 +156,10 @@ window.AlAmrPlayer = {
 
     setSpeed(speed) {
         this.playbackRate = parseFloat(speed);
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo && realVideo.src) {
+            realVideo.playbackRate = this.playbackRate;
+        }
         document.querySelectorAll(".speed-btn").forEach(btn => {
             if (btn.getAttribute("data-speed") === speed.toString()) {
                 btn.classList.add("text-cyan-400", "border-cyan-500/50");
@@ -138,6 +173,10 @@ window.AlAmrPlayer = {
 
     toggleMute() {
         this.isMuted = !this.isMuted;
+        const realVideo = document.getElementById("cinema-real-video");
+        if (realVideo && realVideo.src) {
+            realVideo.muted = this.isMuted;
+        }
         const btn = document.getElementById("player-mute-btn");
         if (btn) {
             btn.innerHTML = this.isMuted ? "🔇 MUTED" : "🔊 AUDIO";
@@ -233,6 +272,11 @@ window.AlAmrViews = {
         if (typeof this[domain] === "function") {
             this[domain](window.AlAmrShellInstance ? window.AlAmrShellInstance.lastState : null);
         }
+    },
+
+    switchJob(jobId) {
+        window.AlAmrPlayer.activeJobId = jobId;
+        this.clipping();
     },
 
     // 1. MISSION OVERVIEW CONTROLLER
@@ -425,9 +469,114 @@ window.AlAmrViews = {
         const container = document.getElementById("view-clipping");
         if (!container) return;
 
+        let jobs = [];
+        try {
+            jobs = await AlAmrAPI.listJobs(15);
+        } catch (_) {}
+
+        if (jobs && jobs.length > 0) {
+            if (!AlAmrPlayer.activeJobId || !jobs.some(j => j.job_id === AlAmrPlayer.activeJobId)) {
+                AlAmrPlayer.activeJobId = jobs[0].job_id;
+            }
+        }
+
+        let liveData = null;
+        if (AlAmrPlayer.activeJobId) {
+            try {
+                liveData = await AlAmrAPI.getJobLive(AlAmrPlayer.activeJobId);
+                if (liveData && liveData.clips && liveData.clips.length > 0) {
+                    AlAmrPlayer.clips = liveData.clips.map(c => ({
+                        clip_id: c.clip_id,
+                        title: c.title || `Clip ${c.clip_id}`,
+                        start_time: c.start_time || 0.0,
+                        end_time: c.end_time || c.duration || 30.0,
+                        duration: c.duration || 30.0,
+                        score: c.score || 90.0,
+                        hook: c.hook_sentence || "High-retention viral hook.",
+                        speaker: "SPEAKER 01 (CONF 95%)",
+                        qa_status: c.qa_status || "PASS",
+                        approval_status: c.approval_status || "awaiting_approval",
+                        media_url: c.media_url,
+                        can_publish: c.can_publish,
+                        score_breakdown: c.score_breakdown,
+                    }));
+                }
+            } catch (_) {}
+        }
+
         const clip = AlAmrPlayer.getActiveClip();
 
+        const canonicalStages = [
+            { id: "01_INGESTION", label: "01 INGEST" },
+            { id: "02_TRANSCRIPTION", label: "02 TRANSCRIBE" },
+            { id: "03_UNDERSTANDING", label: "03 UNDERSTAND" },
+            { id: "04_DISCOVERY", label: "04 DISCOVERY" },
+            { id: "05_REFRAME", label: "05 REFRAME" },
+            { id: "06_RENDER", label: "06 RENDER" },
+            { id: "07_QA", label: "07 QA" },
+            { id: "08_APPROVAL", label: "08 APPROVAL" },
+            { id: "09_PUBLISH", label: "09 PUBLISH" },
+        ];
+
+        const currentStage = liveData ? liveData.current_stage : "08_APPROVAL";
+        const progressPct = liveData ? liveData.progress_percent : 100;
+        const stageIdx = canonicalStages.findIndex(s => s.id === currentStage);
+
+        const trackerPills = canonicalStages.map((s, idx) => {
+            const isDone = stageIdx > idx || (liveData && liveData.current_state === "completed");
+            const isCurrent = stageIdx === idx && (!liveData || liveData.current_state !== "completed");
+            let style = "bg-surface2 text-slate-500 border-slate-800";
+            if (isDone) style = "bg-emerald-950/60 text-emerald-300 border-emerald-600/40";
+            else if (isCurrent) style = "bg-cyan-950/80 text-cyan-300 border-cyan-500 font-bold animate-pulse";
+            return `
+                <div class="flex-1 min-w-[85px] py-1.5 px-2 rounded-lg border text-center text-[10px] font-mono ${style}">
+                    <div>${isDone ? '✓ ' : ''}${s.label}</div>
+                </div>
+            `;
+        }).join('');
+
         container.innerHTML = `
+            <!-- PIPELINE PROGRESS TRACKER -->
+            <div class="tech-card mb-4 border-cyan-500/30">
+                <div class="tech-card-header py-2.5">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs font-mono font-bold text-cyan-400">PIPELINE MONITOR //</span>
+                        <span class="text-xs font-mono text-white font-semibold">${AlAmrPlayer.activeJobId || 'NO ACTIVE JOB'}</span>
+                        ${liveData ? `<span class="status-pill ${liveData.current_state === 'failed' ? 'offline' : 'operational'} text-[10px]">${liveData.current_state.toUpperCase()}</span>` : ''}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="AlAmrModals.openCreateCampaignModal()" class="px-2.5 py-1 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 shadow-md shadow-emerald-950">
+                            <span>🎬</span><span>+ NEW CAMPAIGN</span>
+                        </button>
+                        ${jobs && jobs.length > 0 ? `
+                            <select onchange="AlAmrViews.switchJob(this.value)" class="bg-surface2 border border-slate-700 text-xs font-mono text-slate-200 rounded px-2 py-1 outline-none">
+                                ${jobs.map(j => `
+                                    <option value="${j.job_id}" ${j.job_id === AlAmrPlayer.activeJobId ? 'selected' : ''}>
+                                        JOB: ${j.job_id} (${j.current_state})
+                                    </option>
+                                `).join('')}
+                            </select>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="px-4 pt-2 pb-1">
+                    <div class="flex justify-between items-center text-[11px] font-mono text-slate-400 mb-1">
+                        <span>STAGE: <strong class="text-cyan-300">${currentStage}</strong></span>
+                        <span>PROGRESS: <strong class="text-emerald-400">${progressPct}%</strong></span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                        <div class="bg-gradient-to-r from-cyan-500 to-emerald-400 h-full transition-all duration-500" style="width: ${progressPct}%;"></div>
+                    </div>
+                </div>
+
+                <!-- Stage Pills Grid -->
+                <div class="p-3 pt-2 flex flex-wrap gap-1.5 overflow-x-auto">
+                    ${trackerPills}
+                </div>
+            </div>
+
             <div class="tech-card mb-4">
                 <div class="tech-card-header">
                     <div class="tech-card-title flex items-center gap-2">
@@ -452,6 +601,9 @@ window.AlAmrViews = {
                         <!-- 9:16 VERTICAL CINEMA VIEWPORT -->
                         <div class="cinema-viewport relative aspect-shorts w-full max-w-[320px] max-h-[560px] rounded-2xl bg-surface2 border border-slate-700/60 overflow-hidden flex flex-col justify-between p-4 shadow-2xl">
                             
+                            <!-- Real video player element -->
+                            <video id="cinema-real-video" src="${clip.media_url || ''}" class="absolute inset-0 w-full h-full object-cover z-0 ${clip.media_url ? '' : 'hidden'}" playsinline preload="auto"></video>
+
                             <!-- TOP OVERLAYS -->
                             <div class="flex items-center justify-between z-20">
                                 <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-black/70 backdrop-blur border border-white/10 text-[10px] font-mono text-slate-200">
@@ -474,12 +626,12 @@ window.AlAmrViews = {
                             </div>
 
                             <!-- DYNAMIC SPEAKER TRACKING BOUNDING BOX -->
-                            <div id="face-box" class="absolute left-[24%] top-[22%] w-[52%] h-[38%] border-2 border-cyan-400/80 rounded-xl pointer-events-none shadow-[0_0_15px_rgba(56,189,248,0.3)] transition-all duration-300 flex items-start justify-end p-1 z-10" style="display: ${AlAmrPlayer.showFaceBox ? 'flex' : 'none'};">
+                            <div id="face-box" class="absolute left-[24%] top-[22%] w-[52%] h-[38%] border-2 border-cyan-400/80 rounded-xl pointer-events-none shadow-[0_0_15px_rgba(56,189,248,0.3)] transition-all duration-300 flex items-start justify-end p-1 z-10" style="display: ${AlAmrPlayer.showFaceBox && !clip.media_url ? 'flex' : 'none'};">
                                 <span class="bg-cyan-500 text-black text-[9px] font-mono font-bold px-1 rounded">FACETRACK</span>
                             </div>
 
                             <!-- KARAOKE SUBTITLE BOX -->
-                            <div class="my-auto z-20 text-center px-2">
+                            <div class="my-auto z-20 text-center px-2" style="display: ${clip.media_url ? 'none' : 'block'};">
                                 <div id="subtitle-preview" class="inline-block px-3 py-1.5 rounded-lg bg-black/80 backdrop-blur border border-white/10 text-white font-extrabold text-sm leading-tight uppercase tracking-tight shadow-xl" style="display: ${AlAmrPlayer.showKaraoke ? 'inline-block' : 'none'};">
                                     <span class="text-cyanAccent underline decoration-cyan-400 underline-offset-4 font-black">AUTONOMOUS</span> MEDIA WORKFLOWS
                                 </div>
@@ -500,10 +652,8 @@ window.AlAmrViews = {
 
                         <!-- TIMELINE SCRUBBER & PLAYBACK CONTROLS -->
                         <div class="w-full max-w-[340px] mt-4 space-y-3">
-                            <!-- Interactive Slider Scrubber -->
                             <input id="timeline-slider" type="range" min="0" max="${clip.duration}" step="0.1" value="${AlAmrPlayer.currentTime}" oninput="AlAmrPlayer.seek(this.value)" class="w-full accent-cyan-400 cursor-pointer">
 
-                            <!-- Transport Controls -->
                             <div class="flex items-center justify-between gap-1 text-xs font-mono">
                                 <button onclick="AlAmrPlayer.jump(-5)" class="px-2 py-1 rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300" title="Jump -5s">-5s</button>
                                 
@@ -519,7 +669,6 @@ window.AlAmrViews = {
                                 </button>
                             </div>
 
-                            <!-- Speed & Overlays Toggle Bar -->
                             <div class="flex items-center justify-between pt-2 border-t border-slate-800 text-[11px] font-mono">
                                 <div class="flex items-center gap-1">
                                     <span class="text-slate-500">SPEED:</span>
@@ -566,34 +715,30 @@ window.AlAmrViews = {
                             <div class="p-3 rounded-lg bg-surface2 border border-slate-800 mb-4">
                                 <div class="text-[11px] font-mono text-slate-400 uppercase mb-2">Deterministic Scoring Rationale</div>
                                 <div class="grid grid-cols-2 gap-2 text-xs font-mono">
-                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Hook Strength:</span><span class="text-cyan-400 font-bold">96.0</span></div>
-                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Pacing / Cadence:</span><span class="text-cyan-400 font-bold">93.5</span></div>
-                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Curiosity Gap:</span><span class="text-cyan-400 font-bold">95.0</span></div>
-                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>QA Validation:</span><span class="text-emerald-400 font-bold">PASSED</span></div>
+                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Hook Strength:</span><span class="text-cyan-400 font-bold">${clip.score_breakdown ? clip.score_breakdown.hook : '96.0'}</span></div>
+                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Pacing / Cadence:</span><span class="text-cyan-400 font-bold">${clip.score_breakdown ? clip.score_breakdown.story : '93.5'}</span></div>
+                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>Curiosity Gap:</span><span class="text-cyan-400 font-bold">${clip.score_breakdown ? clip.score_breakdown.curiosity : '95.0'}</span></div>
+                                    <div class="flex justify-between p-1 rounded bg-surface3/50"><span>QA Validation:</span><span class="text-emerald-400 font-bold">${clip.qa_status}</span></div>
                                 </div>
                             </div>
 
-                            <!-- Operator Decision Form -->
-                            <div class="p-3 rounded-lg bg-surface2 border border-slate-800 mb-4 space-y-2.5">
-                                <div class="text-[11px] font-mono text-slate-400 uppercase">Human-in-the-Loop Decision</div>
-                                <div>
-                                    <label class="block text-[10px] font-mono text-slate-400 mb-0.5">Reviewer Identity:</label>
-                                    <input id="clip-reviewer-input" type="text" value="Console Operator" class="w-full bg-surface3 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 font-mono outline-none">
-                                </div>
-                                <div>
-                                    <label class="block text-[10px] font-mono text-slate-400 mb-0.5">Reviewer Notes (Optional):</label>
-                                    <textarea id="clip-notes-input" rows="2" placeholder="Approved for YouTube Shorts distribution..." class="w-full bg-surface3 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 font-mono outline-none"></textarea>
-                                </div>
+                            <!-- Approval Status Display -->
+                            <div class="p-3 rounded-lg bg-surface2 border border-slate-800 mb-4 flex items-center justify-between">
+                                <div class="text-xs font-mono">APPROVAL STATUS:</div>
+                                <span class="status-pill ${clip.approval_status === 'approved' ? 'operational' : (clip.approval_status === 'rejected' ? 'offline' : 'neutral')}">${(clip.approval_status || 'Awaiting Review').toUpperCase()}</span>
                             </div>
                         </div>
 
                         <!-- Action Buttons -->
-                        <div class="flex items-center gap-3 pt-3 border-t border-slate-800">
-                            <button onclick="AlAmrModals.submitClipDecision('approve')" class="flex-1 py-2.5 px-4 rounded bg-emerald-600 hover:bg-emerald-500 font-mono font-bold text-xs text-white transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-950">
-                                <span>✓</span> APPROVE FOR PUBLISHING
+                        <div class="flex items-center gap-2.5 pt-3 border-t border-slate-800">
+                            <button onclick="AlAmrModals.submitClipDecision('approve')" class="flex-1 py-2.5 px-3 rounded bg-emerald-600 hover:bg-emerald-500 font-mono font-bold text-xs text-white transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950">
+                                <span>✓</span> APPROVE
                             </button>
-                            <button onclick="AlAmrModals.submitClipDecision('reject')" class="flex-1 py-2.5 px-4 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 font-mono font-bold text-xs text-rose-300 transition flex items-center justify-center gap-2">
-                                <span>✕</span> REJECT CLIP
+                            <button onclick="AlAmrModals.submitClipDecision('reject')" class="py-2.5 px-3 rounded bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 font-mono font-bold text-xs text-rose-300 transition flex items-center justify-center gap-1.5">
+                                <span>✕</span> REJECT
+                            </button>
+                            <button onclick="AlAmrModals.publishApprovedClip('${AlAmrPlayer.activeJobId}', '${clip.clip_id}')" class="flex-1 py-2.5 px-3 rounded ${clip.approval_status === 'approved' ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' : 'bg-slate-800 text-slate-500 cursor-not-allowed'} font-mono font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-red-950" ${clip.approval_status === 'approved' ? '' : 'disabled'}>
+                                <span>▶</span> PUBLISH SHORTS
                             </button>
                         </div>
                     </div>
@@ -648,9 +793,14 @@ window.AlAmrViews = {
                 <div class="tech-card">
                     <div class="tech-card-header">
                         <div class="tech-card-title">DISCOVERED & ACTIVE CAMPAIGNS (${filtered.length}/${campaigns.length})</div>
-                        <button onclick="AlAmrModals.openLaunchDiscoveryModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5">
-                            <span>🚀</span><span>LAUNCH DISCOVERY</span>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button onclick="AlAmrModals.openCreateCampaignModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 shadow-md shadow-emerald-950">
+                                <span>🎬</span><span>+ START CAMPAIGN</span>
+                            </button>
+                            <button onclick="AlAmrModals.openLaunchDiscoveryModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5">
+                                <span>🚀</span><span>LAUNCH DISCOVERY</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Filter / Search Toolbar -->
@@ -1719,6 +1869,72 @@ window.AlAmrModals = {
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
             window.AlAmrShellInstance.showToast(`Decision recorded: ${action}`, "info");
+        }
+    },
+
+    // 13. Create & Run Campaign Modal
+    openCreateCampaignModal() {
+        const modal = document.getElementById("modal-create-campaign");
+        if (modal) modal.classList.remove("hidden");
+    },
+
+    closeCreateCampaignModal() {
+        const modal = document.getElementById("modal-create-campaign");
+        if (modal) modal.classList.add("hidden");
+    },
+
+    async submitCreateCampaign() {
+        const nameInput = document.getElementById("campaign-name-input");
+        const sourceInput = document.getElementById("campaign-source-input");
+        const reqsInput = document.getElementById("campaign-requirements-input");
+        const platformSelect = document.getElementById("campaign-platform-select");
+        const cpmInput = document.getElementById("campaign-cpm-input");
+
+        const name = (nameInput && nameInput.value.trim()) || "";
+        const source_uri = (sourceInput && sourceInput.value.trim()) || "";
+        const requirements_text = (reqsInput && reqsInput.value.trim()) || "";
+        const platform = (platformSelect && platformSelect.value) || "youtube_shorts";
+        const cpm_rate = (cpmInput && parseFloat(cpmInput.value)) || 1.5;
+
+        if (!name) {
+            alert("Campaign name is required.");
+            return;
+        }
+        if (!source_uri) {
+            alert("Source video URI is required (YouTube URL or local file path).");
+            return;
+        }
+
+        try {
+            const res = await AlAmrAPI.createAndRunCampaign({
+                name,
+                source_uri,
+                requirements_text,
+                target_platforms: [platform],
+                cpm_rate,
+                payout_budget: 500.0
+            });
+            this.closeCreateCampaignModal();
+            window.AlAmrShellInstance.showToast(`Campaign started! Job: ${res.job_id}`, "success");
+            AlAmrPlayer.activeJobId = res.job_id;
+            window.AlAmrShellInstance.navigateTo("clipping");
+        } catch (err) {
+            alert(`Failed to start campaign: ${err.message}`);
+        }
+    },
+
+    // 14. Publish Approved Clip
+    async publishApprovedClip(jobId, clipId) {
+        if (!confirm(`Confirm publishing clip '${clipId}' directly to YouTube Shorts?`)) {
+            return;
+        }
+        try {
+            window.AlAmrShellInstance.showToast("Publishing to YouTube Shorts...", "info");
+            const res = await AlAmrAPI.publishClip(jobId, clipId);
+            window.AlAmrShellInstance.showToast(`Successfully published! Post ID: ${res.platform_post_id}`, "success");
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Publishing failed: ${err.message}`, "error");
         }
     }
 };

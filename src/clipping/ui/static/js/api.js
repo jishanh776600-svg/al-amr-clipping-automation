@@ -98,6 +98,23 @@ class AlAmrAPI {
         });
     }
 
+    static async getJobLive(jobId) {
+        return this.request(`/api/jobs/${encodeURIComponent(jobId)}/live`);
+    }
+
+    static async publishClip(jobId, clipId) {
+        return this.request(`/api/jobs/${encodeURIComponent(jobId)}/clips/${encodeURIComponent(clipId)}/publish`, {
+            method: "POST"
+        });
+    }
+
+    static async createAndRunCampaign(payload) {
+        return this.request("/api/campaigns/create-and-run", {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+    }
+
     // 5. Agent & Task Queue
     static async getAgentStatus() {
         return this.request("/api/agent/status");

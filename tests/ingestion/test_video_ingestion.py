@@ -154,3 +154,27 @@ async def test_ingestion_network_failure(temp_vault_dir):
             storage_driver=storage,
             source_video_id="VID_FAIL_001",
         )
+
+
+@pytest.mark.asyncio
+async def test_local_file_ingestion(temp_vault_dir, tmp_path):
+    storage = LocalStorageDriver(root_dir=temp_vault_dir)
+    ingestor = RemoteVideoIngestor()
+
+    dummy_video = tmp_path / "test_sample.mp4"
+    dummy_video.write_bytes(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + b"\x00" * 1024)
+
+    source_ref = SourceReference.from_uri(str(dummy_video))
+    assert source_ref.source_type == SourceType.LOCAL_FILE
+
+    metadata = await ingestor.ingest(
+        source_ref=source_ref,
+        storage_driver=storage,
+        source_video_id="VID_LOCAL_001",
+    )
+
+    assert metadata.video_id == "VID_LOCAL_001"
+    assert metadata.source_url == f"file://{str(dummy_video)}"
+    assert await storage.exists("sources/VID_LOCAL_001/master.mp4") is True
+    assert await storage.exists("sources/VID_LOCAL_001/metadata.json") is True
+

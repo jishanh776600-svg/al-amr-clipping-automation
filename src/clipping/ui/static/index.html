@@ -422,6 +422,57 @@
         </div>
     </div>
 
+    <!-- CREATE & RUN CAMPAIGN MODAL -->
+    <div id="modal-create-campaign" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+        <div class="tech-card w-full max-w-xl bg-surface1 border-emerald-500/40 shadow-2xl">
+            <div class="tech-card-header border-emerald-500/30">
+                <div class="tech-card-title text-emerald-400 flex items-center gap-2 font-bold">
+                    <span>🎬 START AUTONOMOUS CLIPPING CAMPAIGN</span>
+                </div>
+                <button onclick="AlAmrModals.closeCreateCampaignModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <p class="text-xs text-slate-300 mb-4">
+                Launch end-to-end autonomous media clipping. Ingests source video (YouTube URL or local file path), generates word-timestamped transcription, selects high-scoring viral clips, reframes into 9:16 with face tracking, generates kinetic subtitles, renders 1080x1920 MP4, and submits for human approval.
+            </p>
+            <div class="space-y-3.5 text-xs">
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Campaign Name:</label>
+                    <input id="campaign-name-input" type="text" placeholder="e.g. Lex Fridman Ep 412 - Autonomous AI" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Source Video URI (YouTube URL, direct URL, or local file):</label>
+                    <input id="campaign-source-input" type="text" placeholder="https://www.youtube.com/watch?v=... or C:\videos\source.mp4" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
+                </div>
+                <div>
+                    <label class="block font-mono text-slate-400 mb-1">Campaign Requirements / Directives (Optional):</label>
+                    <textarea id="campaign-requirements-input" rows="3" placeholder="e.g. Minimum 30s, max 60s. Prioritize emotional hooks, AI discussions, animated subtitles." class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">Target Format / Platform:</label>
+                        <select id="campaign-platform-select" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
+                            <option value="youtube_shorts">YouTube Shorts (9:16)</option>
+                            <option value="tiktok">TikTok (9:16)</option>
+                            <option value="instagram_reels">Instagram Reels (9:16)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-mono text-slate-400 mb-1">CPM Rate ($/1k views):</label>
+                        <input id="campaign-cpm-input" type="number" step="0.1" value="1.5" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center justify-end gap-2 mt-6">
+                <button onclick="AlAmrModals.closeCreateCampaignModal()" class="px-3.5 py-2 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                    Cancel
+                </button>
+                <button onclick="AlAmrModals.submitCreateCampaign()" class="px-4 py-2 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-950">
+                    <span>🚀 START CAMPAIGN</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- TASK DETAIL & AUDIT MODAL -->
     <div id="modal-task-detail" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
         <div class="tech-card w-full max-w-2xl bg-surface1 border-slate-700 max-h-[90vh] flex flex-col">

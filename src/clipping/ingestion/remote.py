@@ -57,6 +57,15 @@ class RemoteVideoIngestor(VideoIngestor):
                 audio_key=audio_key,
                 meta_key=meta_key,
             )
+        elif source_ref.source_type == SourceType.LOCAL_FILE:
+            return await self._ingest_local_file(
+                source_ref=source_ref,
+                storage_driver=storage_driver,
+                source_video_id=source_video_id,
+                master_key=master_key,
+                audio_key=audio_key,
+                meta_key=meta_key,
+            )
         elif source_ref.source_type == SourceType.GDRIVE:
             return await self._ingest_gdrive(
                 source_ref=source_ref,
@@ -70,6 +79,30 @@ class RemoteVideoIngestor(VideoIngestor):
             raise UnsupportedMediaError(f"Unsupported source type: {source_ref.source_type}")
 
     async def extract_metadata(self, source_ref: SourceReference) -> SourceVideoMetadata:
+        if source_ref.source_type == SourceType.LOCAL_FILE:
+            import cv2
+            local_path = source_ref.uri
+            width, height, fps, duration = 1920, 1080, 30.0, 60.0
+            cap = cv2.VideoCapture(local_path)
+            if cap.isOpened():
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1920)
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1080)
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+                fc = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                if fc and fps > 0:
+                    duration = float(fc / fps)
+                cap.release()
+            return SourceVideoMetadata(
+                video_id=Path(local_path).stem,
+                title=source_ref.title_hint or Path(local_path).stem,
+                duration_seconds=round(duration, 3),
+                width=width,
+                height=height,
+                fps=fps,
+                source_url=f"file://{local_path}",
+                master_video_storage_key="",
+                audio_storage_key="",
+            )
         if source_ref.source_type in [SourceType.YOUTUBE, SourceType.DIRECT_URL]:
             info = self._get_info_dict(source_ref.uri, download=False)
             return SourceVideoMetadata(
@@ -199,4 +232,78 @@ class RemoteVideoIngestor(VideoIngestor):
             content_type="application/json",
         )
 
+        return metadata
+
+    async def _ingest_local_file(
+        self,
+        source_ref: SourceReference,
+        storage_driver: StorageDriver,
+        source_video_id: str,
+        master_key: str,
+        audio_key: str,
+        meta_key: str,
+    ) -> SourceVideoMetadata:
+        local_path = source_ref.uri
+        if not os.path.isfile(local_path):
+            raise InvalidSourceError(f"Local video file not found at: {local_path}")
+
+        # 1. Upload master video
+        logger.info("Uploading local video to storage vault", master_key=master_key)
+        await storage_driver.upload(
+            local_path=local_path,
+            storage_key=master_key,
+            content_type="video/mp4",
+        )
+
+        # 2. Extract dimensions and duration using OpenCV
+        width = 1920
+        height = 1080
+        duration = 60.0
+        fps = 30.0
+        try:
+            import cv2
+            cap = cv2.VideoCapture(local_path)
+            if cap.isOpened():
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1920)
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1080)
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+                frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                if frame_count and fps > 0:
+                    duration = float(frame_count / fps)
+                cap.release()
+        except Exception as e:
+            logger.warning("OpenCV inspection fallback", error=str(e))
+
+        # 3. Extract 16kHz mono audio WAV if possible
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wav_path = os.path.join(tmp_dir, "audio.wav")
+            try:
+                import subprocess
+                from imageio_ffmpeg import get_ffmpeg_exe
+                ffmpeg_bin = get_ffmpeg_exe()
+                cmd = [ffmpeg_bin, "-y", "-i", local_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", wav_path]
+                res = subprocess.run(cmd, capture_output=True, timeout=60)
+                if res.returncode == 0 and os.path.isfile(wav_path) and os.path.getsize(wav_path) > 0:
+                    await storage_driver.upload(wav_path, audio_key, content_type="audio/wav")
+            except Exception as e:
+                logger.warning("Local audio extraction fallback", error=str(e))
+
+        metadata = SourceVideoMetadata(
+            video_id=source_video_id,
+            title=source_ref.title_hint or Path(local_path).stem,
+            duration_seconds=round(duration, 3),
+            width=width,
+            height=height,
+            fps=fps,
+            source_url=f"file://{local_path}",
+            master_video_storage_key=master_key,
+            audio_storage_key=audio_key,
+        )
+
+        meta_json = metadata.model_dump_json(indent=2).encode("utf-8")
+        await storage_driver.upload_bytes(
+            data=meta_json,
+            storage_key=meta_key,
+            content_type="application/json",
+        )
         return metadata
