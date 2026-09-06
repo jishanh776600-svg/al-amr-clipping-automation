@@ -1,8 +1,14 @@
-﻿"""Production Orchestrator CLI Entrypoint for AL AMR CLIPPING.
+"""Production Orchestrator CLI Entrypoint for AL AMR CLIPPING.
 
 Provides durable invocation, preflight verification, single-cycle execution,
 dry-run safety protection, and continuous autonomous loop scheduling with
 graceful signal handling.
+
+Supports the 4 Canonical Activation Modes:
+- MODE A: PREFLIGHT       (--mode preflight / --preflight)
+- MODE B: DRY RUN         (--mode dry-run / --dry-run)
+- MODE C: SINGLE LIVE     (--mode single-live / --once)
+- MODE D: CONTINUOUS      (--mode continuous / --continuous)
 """
 
 import argparse
@@ -25,40 +31,61 @@ logger = get_logger("clipping.cli.orchestrator")
 
 
 async def run_orchestrator(args: argparse.Namespace) -> int:
-    """Executes preflight and coordinates single-cycle or continuous autonomous loop."""
+    """Executes preflight and coordinates activation modes."""
     storage_driver = StorageFactory.create()
     control_repo = ControlRepository(storage_driver)
 
-    # 1. Preflight Validation
-    if args.preflight or not args.skip_preflight:
+    # 1. Resolve Execution Mode
+    mode = args.mode
+    if args.preflight:
+        mode = "preflight"
+    elif args.dry_run:
+        mode = "dry-run"
+    elif args.continuous:
+        mode = "continuous"
+    elif args.once:
+        mode = "single-live"
+    elif not mode:
+        mode = "single-live"
+
+    logger.info("Initializing AL AMR CLIPPING Orchestrator", active_mode=mode)
+
+    # 2. Preflight Validation
+    if mode == "preflight" or not args.skip_preflight:
         logger.info("Executing system preflight verification before engine activation...")
         validator = SystemPreflightValidator(storage_driver=storage_driver, control_repository=control_repo)
         report = await validator.validate()
 
-        if not report.ready:
-            logger.error("Preflight check failed; aborting orchestrator startup", summary=report.summary)
-            if args.preflight:
+        if mode == "preflight":
+            if args.json:
                 print(report.model_dump_json(indent=2))
+            else:
+                from clipping.cli.preflight import run_preflight
+                await run_preflight(args)
+            return 0 if report.ready else 1
+
+        if not report.ready:
+            logger.error(
+                "Mandatory preflight check failed; aborting orchestrator startup",
+                summary=report.summary,
+            )
+            print(f"\n[!] CANNOT ACTIVATE ORCHESTRATOR: {report.summary}")
+            print("    Run 'python -m clipping.cli.preflight' to view missing prerequisites.\n")
             return 1
         elif report.status == OverallPreflightStatus.READY_WITH_WARNINGS:
             logger.warning("Preflight passed with non-fatal warnings", summary=report.summary)
         else:
             logger.info("Preflight verification passed cleanly")
 
-        if args.preflight:
-            print(report.model_dump_json(indent=2))
-            return 0
+    # 3. Dry-Run Safety Enforcement
+    is_dry_run = (mode == "dry-run")
+    if is_dry_run:
+        logger.warning(
+            "MODE B (DRY-RUN) ACTIVE: Live publishing strictly prohibited; "
+            "all clip productions will stage in storage without external platform deployment."
+        )
 
-    # 2. Dry-run safety enforcement
-    if args.dry_run:
-        logger.warning("SAFE MODE (DRY-RUN) ACTIVE: Publishing lock enforced; no external uploads will be executed")
-        # Ensure durable state has publishing locked if dry run requested
-        state = await control_repo.get_state()
-        if not state.publishing_locked:
-            state.publishing_locked = True
-            await control_repo.save_state(state)
-
-    # 3. Initialize Autonomous Orchestration Engine
+    # 4. Initialize Autonomous Orchestration Engine
     escalation_notifier = TelegramEscalationNotifier()
     task_repo = AgentTaskRepository(storage_driver=storage_driver, escalation_notifier=escalation_notifier)
     vault = EncryptedCredentialVault(storage_driver=storage_driver)
@@ -66,7 +93,7 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
     engine = AutonomousOrchestrationEngine(
         storage_driver=storage_driver,
         control_repository=control_repo,
-        campaign_repository=None,  # Defaults to repo on storage_driver
+        campaign_repository=None,
         task_repository=task_repo,
         credential_vault=vault,
     )
@@ -82,21 +109,26 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
         try:
             loop.add_signal_handler(sig, handle_signal)
         except (NotImplementedError, RuntimeError):
-            # Windows signal handler fallback
             pass
 
-    # 4. Execution Mode: Single Cycle
-    if args.once or not args.continuous:
-        logger.info("Running single autonomous orchestration cycle", source=args.source)
+    # 5. Execution Mode: Single Cycle (Dry-Run or Single Live)
+    if mode in ("dry-run", "single-live"):
+        logger.info(
+            f"Executing {'Mode B (Dry-Run)' if is_dry_run else 'Mode C (Single Live Campaign)'}",
+            source=args.source,
+            target_campaign=args.target_campaign,
+        )
         try:
             summary = await engine.run_orchestration_cycle(
                 source_name=args.source,
                 max_campaigns_to_process=args.max_campaigns,
                 target_campaign_id=args.target_campaign,
+                dry_run=is_dry_run,
             )
             logger.info(
                 "Autonomous cycle completed",
                 cycle_id=summary.cycle_id,
+                mode=mode,
                 discovered=summary.campaigns_discovered,
                 selected=summary.campaigns_selected,
                 produced=summary.clips_produced,
@@ -108,9 +140,9 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
             logger.error("Autonomous orchestration cycle failed", error=str(e))
             return 1
 
-    # 5. Execution Mode: Continuous Loop
+    # 6. Execution Mode: Mode D — Continuous Autonomous Loop
     logger.info(
-        "Starting continuous autonomous orchestration loop",
+        "Starting MODE D (Continuous Autonomous Loop)",
         interval_seconds=args.interval,
         source=args.source,
         max_campaigns=args.max_campaigns,
@@ -125,6 +157,7 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
                 source_name=args.source,
                 max_campaigns_to_process=args.max_campaigns,
                 target_campaign_id=args.target_campaign,
+                dry_run=is_dry_run,
             )
             logger.info(
                 "Completed scheduled orchestration cycle",
@@ -152,15 +185,23 @@ async def run_orchestrator(args: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AL AMR CLIPPING Autonomous Orchestration Engine")
-    parser.add_argument("--preflight", action="store_true", help="Run preflight validation and exit")
+    parser.add_argument(
+        "--mode",
+        choices=["preflight", "dry-run", "single-live", "continuous"],
+        default=None,
+        help="Activation mode: preflight (Mode A), dry-run (Mode B), single-live (Mode C), or continuous (Mode D)",
+    )
+    parser.add_argument("--preflight", action="store_true", help="Mode A: Run preflight validation and exit")
+    parser.add_argument("--dry-run", action="store_true", help="Mode B: Safe discovery/production without live uploads")
+    parser.add_argument("--once", action="store_true", help="Mode C: Execute single live campaign and exit")
+    parser.add_argument("--continuous", action="store_true", help="Mode D: Run continuous autonomous loop")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip preflight checks (not recommended)")
-    parser.add_argument("--once", action="store_true", help="Execute a single cycle and exit (default)")
-    parser.add_argument("--continuous", action="store_true", help="Run continuous loop with interval sleep")
     parser.add_argument("--interval", type=int, default=300, help="Interval in seconds between cycles in continuous mode (default: 300)")
-    parser.add_argument("--dry-run", action="store_true", help="Enforce publishing lock (safe mode - no uploads)")
     parser.add_argument("--target-campaign", type=str, default=None, help="Target a specific campaign ID")
     parser.add_argument("--source", type=str, default="whop", help="Campaign discovery source (default: whop)")
     parser.add_argument("--max-campaigns", type=int, default=5, help="Max campaigns to evaluate per cycle (default: 5)")
+    parser.add_argument("--json", action="store_true", help="Output report in raw JSON format (preflight mode)")
+    parser.add_argument("--strict", action="store_true", help="Fail with non-zero exit code on any warning (preflight mode)")
     args = parser.parse_args()
 
     try:

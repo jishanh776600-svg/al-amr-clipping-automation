@@ -144,6 +144,16 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
                 error_message="Instagram credentials missing: requires Graph API access_token and instagram_account_id, or an active browser session.",
                 failure_classification="missing_credentials",
                 is_retryable=False,
+                escalation_required=True,
+                escalation_context=EscalationContext(
+                    what_happened="Instagram publishing failed: Missing credentials",
+                    why_it_happened="Neither account-specific Graph API tokens in EncryptedCredentialVault nor INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_ACCOUNT_ID environment variables were provided.",
+                    decision_required="Operator must provide valid Instagram Graph API token or active browser session.",
+                    available_options=["configure_vault_account", "set_environment_credentials", "skip_campaign"],
+                    reason=EscalationReason.POLICY_VIOLATION,
+                    severity=EscalationSeverity.HIGH,
+                    metadata={"submission_id": submission.submission_id, "platform": "instagram"},
+                ),
             )
 
         logger.info("Executing Instagram publish via CloudBrowserEngine", submission_id=submission.submission_id)

@@ -116,6 +116,14 @@ class EncryptedCredentialVault:
         record = EncryptedSecretRecord.model_validate_json(data.decode("utf-8"))
         return self._decrypt(record.ciphertext)
 
+    async def get_sensitive_secret(
+        self,
+        platform: AccountPlatform | str,
+        account_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Convenience alias for get_account_credentials."""
+        return await self.get_account_credentials(platform, account_id)
+
     async def list_accounts(
         self,
         platform: Optional[AccountPlatform | str] = None,

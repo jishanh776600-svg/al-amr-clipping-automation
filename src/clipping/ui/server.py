@@ -147,6 +147,17 @@ class AccountStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="'active', 'suspended', 'rate_limited', 'cooldown'")
 
 
+class AccountRegistrationRequest(BaseModel):
+    platform: str = Field(..., description="'youtube' or 'instagram'")
+    account_id: str = Field(..., min_length=1, max_length=128)
+    username: str = Field(..., min_length=1, max_length=128)
+    display_name: Optional[str] = None
+    campaign_association: Optional[str] = None
+    reuse_eligibility: bool = True
+    tags: List[str] = Field(default_factory=list)
+    credentials: Optional[Dict[str, Any]] = None  # Sensitive secrets encrypted into vault
+
+
 class CampaignStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="'discovered', 'active', 'paused', 'completed', 'rejected'")
     reason: Optional[str] = None
@@ -1003,6 +1014,42 @@ async def get_account_detail_api(
     if not meta:
         raise HTTPException(status_code=404, detail="Account not found")
     return meta.to_safe_dict()
+
+
+@app.post("/api/accounts")
+async def register_account_api(
+    req: AccountRegistrationRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Registers and stores creator account with encrypted credentials in the vault."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+
+    try:
+        p_enum = AccountPlatform(req.platform.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {req.platform}")
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    meta = AccountMetadata(
+        platform=p_enum,
+        account_id=req.account_id,
+        username=req.username,
+        display_name=req.display_name or req.username,
+        campaign_association=req.campaign_association,
+        status=AccountStatus.ACTIVE,
+        reuse_eligibility=req.reuse_eligibility,
+        tags=req.tags,
+    )
+    await vault.save_account(meta, sensitive_credentials=req.credentials)
+
+    logger.info("Operator registered account in vault", platform=req.platform, account_id=req.account_id, operator=operator)
+    return {
+        "status": "success",
+        "account": meta.to_safe_dict(),
+        "credentials_encrypted": bool(req.credentials),
+    }
 
 
 @app.post("/api/accounts/{platform}/{account_id}/status")

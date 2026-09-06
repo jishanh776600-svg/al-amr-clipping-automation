@@ -1,6 +1,7 @@
-﻿"""AL AMR CLIPPING System Preflight Verification Package."""
+"""AL AMR CLIPPING System Preflight Verification Package."""
 
 from clipping.preflight.validator import (
+    ActivationReadinessMatrix,
     OverallPreflightStatus,
     PreflightCategory,
     PreflightCheck,
@@ -10,6 +11,7 @@ from clipping.preflight.validator import (
 )
 
 __all__ = [
+    "ActivationReadinessMatrix",
     "OverallPreflightStatus",
     "PreflightCategory",
     "PreflightCheck",

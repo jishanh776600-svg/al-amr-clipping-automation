@@ -46,8 +46,8 @@ async def run_publisher(job_id: Optional[str] = None, run_scheduler: bool = Fals
         token_mgr = OAuthTokenManager(credentials=creds)
         client = HttpYouTubeClient(token_manager=token_mgr)
     else:
-        logger.warning("No YouTube OAuth credentials configured. Using mock client for smoke validation.")
-        client = MockYouTubeClient(expected_channel_id=settings.YOUTUBE_CHANNEL_ID or "UC_MOCK_CHANNEL")
+        logger.error("No YouTube OAuth credentials configured. Exiting to prevent unauthenticated publishing.")
+        return 1
 
     service = PublishingService(
         repository=pub_repo,

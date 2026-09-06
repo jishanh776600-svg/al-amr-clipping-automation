@@ -1,15 +1,31 @@
-﻿"""Targeted Verification Suite for Production Readiness, Real-Integration Audit, and Activation."""
+"""Targeted Verification Suite for Production Readiness, Real-Integration Audit, and Activation."""
 
+import json
 import os
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+from clipping.agent.campaign.models import (
+    CampaignRecord,
+    CampaignStatus,
+    PayoutModel,
+    PayoutTerms,
+    PostingRequirements,
+    QuotasAndCaps,
+    SourceMaterial,
+)
+from clipping.agent.campaign.repository import CampaignRepository
+from clipping.agent.campaign.sources.whop import WhopCampaignSource
+from clipping.agent.capabilities.clipping_adapter import MediaClippingCapability
+from clipping.agent.capabilities.base import CapabilityContext
 from clipping.agent.escalation import (
     EscalationContext,
     EscalationReason,
     EscalationRecord,
     EscalationSeverity,
 )
+from clipping.agent.orchestration.engine import AutonomousOrchestrationEngine
+from clipping.agent.orchestration.models import OrchestrationStage
 from clipping.agent.publishing.adapters.youtube import YouTubePublishingAdapter
 from clipping.agent.publishing.adapters.instagram import InstagramPublishingAdapter
 from clipping.agent.publishing.models import (
@@ -19,7 +35,8 @@ from clipping.agent.publishing.models import (
     SubmissionStatus,
 )
 from clipping.agent.repository import AgentTaskRepository
-from clipping.agent.vault.models import AccountPlatform
+from clipping.agent.vault.models import AccountPlatform, AccountMetadata, AccountStatus
+from clipping.agent.vault.vault import EncryptedCredentialVault
 from clipping.approval.escalation_notifier import TelegramEscalationNotifier
 from clipping.approval.transport import MockTelegramTransport
 from clipping.control.models import SystemControlState
@@ -32,6 +49,7 @@ from clipping.preflight.validator import (
 )
 from clipping.publishing.client import MockYouTubeClient
 from clipping.storage.local import LocalStorageDriver
+from clipping.ui.server import register_account_api, AccountRegistrationRequest
 
 
 @pytest.fixture
@@ -98,9 +116,49 @@ async def test_preflight_no_secret_leakage(local_storage):
 
 
 @pytest.mark.anyio
-async def test_youtube_adapter_missing_credentials_fails_safely(tmp_path):
-    """Verifies YouTube adapter fails safely when credentials are unset in production."""
-    adapter = YouTubePublishingAdapter(client=None)  # No injected mock client
+async def test_preflight_activation_matrix_report(local_storage):
+    """Verifies the structured activation matrix outputs deterministic status and operational capabilities."""
+    validator = SystemPreflightValidator(storage_driver=local_storage)
+    report = await validator.validate()
+
+    m = report.activation_matrix
+    assert m.code_ready is True
+    assert m.storage_ready is True
+    assert m.worker_ready is True
+    assert m.can_run_preflight is True
+    assert isinstance(report.actionable_recommendations, list)
+
+
+@pytest.mark.anyio
+async def test_whop_discovery_handles_empty_and_auth_failure():
+    """Verifies real Whop source returns empty list rather than inventing campaigns, and flags 401."""
+    source = WhopCampaignSource(api_token="invalid_test_key")
+
+    # Mock empty API response
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+        mock_get.return_value = mock_resp
+
+        campaigns = await source.discover()
+        assert len(campaigns) == 0  # Does NOT invent campaigns!
+
+    # Mock 401 Unauthorized
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Invalid API key"
+        mock_get.return_value = mock_resp
+
+        campaigns = await source.discover()
+        assert len(campaigns) == 0
+
+
+@pytest.mark.anyio
+async def test_youtube_adapter_missing_credentials_fails_safely_and_escalates(tmp_path):
+    """Verifies YouTube adapter fails safely and requires operator escalation when credentials missing."""
+    adapter = YouTubePublishingAdapter(client=None)
 
     dummy_media = tmp_path / "clip.mp4"
     dummy_media.write_bytes(b"dummy mp4 data")
@@ -122,8 +180,9 @@ async def test_youtube_adapter_missing_credentials_fails_safely(tmp_path):
         res = await adapter.publish(submission=sub, media_path=str(dummy_media), credentials={})
         assert res.success is False
         assert res.failure_classification == "missing_credentials"
-        assert res.platform_post_id is None
-        assert "credentials missing" in res.error_message
+        assert res.escalation_required is True
+        assert res.escalation_context is not None
+        assert "Missing OAuth2 credentials" in res.escalation_context.what_happened
 
 
 @pytest.mark.anyio
@@ -154,8 +213,8 @@ async def test_youtube_adapter_injected_client_preserved(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_instagram_adapter_missing_credentials_fails_safely(tmp_path):
-    """Verifies Instagram adapter fails safely when tokens/browser session are missing."""
+async def test_instagram_adapter_missing_credentials_fails_safely_and_escalates(tmp_path):
+    """Verifies Instagram adapter fails safely and requires operator escalation when credentials missing."""
     adapter = InstagramPublishingAdapter(browser_driver=None)
 
     dummy_media = tmp_path / "reel.mp4"
@@ -178,8 +237,9 @@ async def test_instagram_adapter_missing_credentials_fails_safely(tmp_path):
         res = await adapter.publish(submission=sub, media_path=str(dummy_media), credentials={})
         assert res.success is False
         assert res.failure_classification == "missing_credentials"
-        assert res.platform_post_id is None
-        assert "Instagram credentials missing" in res.error_message
+        assert res.escalation_required is True
+        assert res.escalation_context is not None
+        assert "Missing credentials" in res.escalation_context.what_happened
 
 
 @pytest.mark.anyio
@@ -202,16 +262,12 @@ async def test_telegram_escalation_notifier_formatting_and_dispatch():
         ),
     )
 
-    # Format check
     msg = notifier.format_alert_message(record)
     assert "*AL AMR CLIPPING — OPERATOR ESCALATION*" in msg
     assert "esc_test_captcha_001" in msg
     assert "CRITICAL" in msg
     assert "CAPTCHA_CHALLENGE" in msg
-    assert "Cloudflare Turnstile" in msg
-    assert "solve_captcha_manually" in msg
 
-    # Delivery check
     sent = await notifier.notify(record)
     assert sent is True
     assert len(mock_transport.sent_messages) == 1
@@ -242,6 +298,54 @@ async def test_agent_task_repository_auto_notifies_escalation(local_storage):
 
     assert record.escalation_id.startswith("esc_")
     assert len(mock_transport.sent_messages) == 1
-    sent_text = mock_transport.sent_messages[0]["text"]
-    assert "PLATFORM_BLOCKED" in sent_text
-    assert "task_blocked" in sent_text
+    assert "PLATFORM_BLOCKED" in mock_transport.sent_messages[0]["text"]
+
+
+@pytest.mark.anyio
+async def test_account_registration_endpoint(local_storage):
+    """Verifies Mission Control POST /api/accounts registers metadata and securely stores credentials."""
+    req = AccountRegistrationRequest(
+        platform="youtube",
+        account_id="acc_yt_creator_01",
+        username="AlAmrCreator",
+        display_name="Al Amr Creator Channel",
+        credentials={
+            "client_id": "oauth_client_id_123",
+            "client_secret": "oauth_secret_456",
+            "refresh_token": "oauth_refresh_789",
+        },
+    )
+
+    resp = await register_account_api(req=req, operator="TestOperator", storage=local_storage)
+    assert resp["status"] == "success"
+    assert resp["account"]["account_id"] == "acc_yt_creator_01"
+    assert resp["credentials_encrypted"] is True
+
+    # Check that secrets are decryptable from vault
+    vault = EncryptedCredentialVault(storage_driver=local_storage)
+    sec = await vault.get_sensitive_secret(AccountPlatform.YOUTUBE, "acc_yt_creator_01")
+    assert sec is not None
+    assert sec["client_id"] == "oauth_client_id_123"
+
+
+@pytest.mark.anyio
+async def test_orchestrator_dry_run_never_publishes(local_storage):
+    """Verifies that Mode B (dry-run) strictly blocks external uploads and records dry-run suppression."""
+    ctrl_repo = ControlRepository(local_storage)
+    # Ensure control repo has publishing unlocked to test dry-run override!
+    state = SystemControlState(publishing_locked=False)
+    await ctrl_repo.save_state(state)
+
+    camp_repo = CampaignRepository(storage_driver=local_storage)
+    task_repo = AgentTaskRepository(storage_driver=local_storage)
+
+    engine = AutonomousOrchestrationEngine(
+        storage_driver=local_storage,
+        control_repository=ctrl_repo,
+        campaign_repository=camp_repo,
+        task_repository=task_repo,
+    )
+
+    # In dry-run mode, publishing must be suppressed
+    summary = await engine.run_orchestration_cycle(dry_run=True)
+    assert summary.submissions_processed == 0

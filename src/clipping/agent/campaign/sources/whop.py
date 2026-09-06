@@ -86,11 +86,15 @@ class WhopCampaignSource(CampaignSource):
                 if resp.status_code == 200:
                     data = resp.json()
                     items = data.get("data", data.get("campaigns", []))
-                    if isinstance(items, list) and items:
+                    if isinstance(items, list):
                         logger.info("Successfully fetched campaigns from Whop API", count=len(items))
                         return [self._normalize_whop_campaign(i) for i in items[:limit]]
-                elif resp.status_code in (401, 403, 404):
-                    logger.info(f"Whop HTTP endpoint returned {resp.status_code}, falling back to browser exploration")
+                elif resp.status_code in (401, 403):
+                    logger.warning("Whop API authentication failed or forbidden", status_code=resp.status_code)
+                    if self._api_token:
+                        return []
+                elif resp.status_code == 404:
+                    logger.info("Whop campaigns endpoint returned 404, falling back to browser exploration")
         except Exception as e:
             logger.info("Direct Whop HTTP endpoint unavailable, falling back to browser exploration", error=str(e))
 

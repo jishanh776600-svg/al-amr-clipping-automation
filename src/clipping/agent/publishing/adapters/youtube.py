@@ -18,6 +18,7 @@ from clipping.agent.publishing.models import (
     PublishingMode,
     SubmissionStatus,
 )
+from clipping.agent.escalation import EscalationContext, EscalationReason, EscalationSeverity
 from clipping.agent.vault.models import AccountPlatform
 from clipping.logging.logger import get_logger
 from clipping.publishing.client import (
@@ -114,6 +115,16 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
                 error_message="YouTube OAuth2 credentials missing: client_id, client_secret, and refresh_token are required.",
                 failure_classification="missing_credentials",
                 is_retryable=False,
+                escalation_required=True,
+                escalation_context=EscalationContext(
+                    what_happened="YouTube publishing failed: Missing OAuth2 credentials",
+                    why_it_happened="Neither account-specific secrets in EncryptedCredentialVault nor YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET / YOUTUBE_REFRESH_TOKEN environment variables were provided.",
+                    decision_required="Operator must provide valid Google OAuth2 credentials or configure account in vault.",
+                    available_options=["configure_vault_account", "set_environment_credentials", "skip_campaign"],
+                    reason=EscalationReason.POLICY_VIOLATION,
+                    severity=EscalationSeverity.HIGH,
+                    metadata={"submission_id": submission.submission_id, "platform": "youtube"},
+                ),
             )
 
         try:

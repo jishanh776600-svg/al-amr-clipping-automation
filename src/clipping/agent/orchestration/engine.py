@@ -103,7 +103,29 @@ class AutonomousOrchestrationEngine:
             queue=queue,
             task_repository=self.task_repo,
         )
-        self.worker = worker
+        if worker is not None:
+            self.worker = worker
+        else:
+            try:
+                from clipping.agent.capabilities.clipping_adapter import MediaClippingCapability
+                from clipping.agent.capabilities.registry import CapabilityRegistry
+                from clipping.agent.cloud.worker import CloudAgentWorker
+
+                cap_reg = CapabilityRegistry()
+                cap_reg.register(MediaClippingCapability())
+                self.worker = CloudAgentWorker(
+                    worker_id=f"orchestrator_worker_{os.getpid()}",
+                    capabilities=cap_reg,
+                    storage_driver=self.storage,
+                    task_repository=self.task_repo,
+                    queue=queue,
+                    policy_engine=self.policy,
+                    control_repository=self.control_repo,
+                )
+            except Exception as w_err:
+                logger.warning("Could not instantiate integrated worker", error=str(w_err))
+                self.worker = None
+
         self.telemetry = telemetry_engine
         self.events = event_system
 
@@ -126,6 +148,7 @@ class AutonomousOrchestrationEngine:
         source_name: Optional[str] = "whop",
         max_campaigns_to_process: int = 5,
         target_campaign_id: Optional[str] = None,
+        dry_run: bool = False,
     ) -> OrchestrationCycleSummary:
         """
         Executes a single end-to-end autonomous orchestration cycle:
@@ -435,9 +458,10 @@ class AutonomousOrchestrationEngine:
                     OrchestrationStage.QA_VERIFIED,
                     OrchestrationStage.SUBMISSION_PENDING,
                 ):
-                    if await self.control_repo.is_publishing_locked():
-                        logger.warning("Publishing locked by Master Control; deferring submission", campaign_id=cid)
-                        record = record.model_copy(update={"blocking_reason": "Publishing Locked by Master Control"})
+                    if dry_run or await self.control_repo.is_publishing_locked():
+                        reason = "Dry-run mode active; live publishing suppressed" if dry_run else "Publishing Locked by Master Control"
+                        logger.warning(reason, campaign_id=cid)
+                        record = record.model_copy(update={"blocking_reason": reason})
                         await self.orchestration_repo.save_record(record)
                         continue
 

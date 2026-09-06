@@ -346,3 +346,7 @@ class CloudTaskQueue:
         except Exception as e:
             logger.error("Failed to list pending queue items", error=str(e))
         return results
+
+    async def get_queue_stats(self) -> Dict[str, int]:
+        """Convenience alias for get_queue_depth."""
+        return await self.get_queue_depth()
