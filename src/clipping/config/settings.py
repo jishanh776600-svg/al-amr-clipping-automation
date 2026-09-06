@@ -65,6 +65,8 @@ class Settings(BaseSettings):
                         ids.add(int(item_str))
                     except ValueError:
                         pass
+        elif self.TELEGRAM_CHAT_ID is not None and self.TELEGRAM_CHAT_ID > 0:
+            ids.add(self.TELEGRAM_CHAT_ID)
         return ids
 
     def get_allowed_telegram_chat_ids(self) -> set[int]:

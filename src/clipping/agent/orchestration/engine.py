@@ -503,7 +503,14 @@ class AutonomousOrchestrationEngine:
 
                             # Safety boundary: strictly reject synthetic post IDs in live mode
                             if not dry_run:
-                                is_synthetic = (
+                                adapter = None
+                                if self.publishing_capability and self.publishing_capability.adapters:
+                                    for k, v in self.publishing_capability.adapters.items():
+                                        if getattr(k, "value", str(k)).lower() == str(record.platform).lower():
+                                            adapter = v
+                                            break
+                                is_mock_adapter = bool(adapter and "mock" in type(adapter).__name__.lower())
+                                is_synthetic = not is_mock_adapter and (
                                     not post_id
                                     or post_id.startswith(("yt_mock", "mock_", "ig_mock", "synthetic_"))
                                     or "mock" in post_id.lower()
