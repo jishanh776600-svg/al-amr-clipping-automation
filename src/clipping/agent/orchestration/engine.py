@@ -82,7 +82,7 @@ class AutonomousOrchestrationEngine:
     ):
         self.storage = storage_driver
         self.control_repo = control_repository
-        self.campaign_repo = campaign_repository
+        self.campaign_repo = campaign_repository or CampaignRepository(storage_driver)
         self.task_repo = task_repository
         self.orchestration_repo = orchestration_repository or OrchestrationRepository(storage_driver)
         self.submission_repo = submission_repository or CampaignSubmissionRepository(storage_driver)

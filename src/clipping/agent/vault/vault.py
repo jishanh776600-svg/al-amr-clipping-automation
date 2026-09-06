@@ -38,6 +38,7 @@ class EncryptedCredentialVault:
     def _init_fernet(cls, master_key: Optional[str] = None) -> Fernet:
         secret_source = (
             master_key
+            or os.environ.get("AL_AMR_MASTER_KEY")
             or os.environ.get("ENCRYPTION_MASTER_KEY")
             or os.environ.get("VAULT_MASTER_KEY")
             or os.environ.get("OPERATOR_TOKEN")

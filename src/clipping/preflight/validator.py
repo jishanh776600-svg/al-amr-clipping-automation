@@ -350,8 +350,10 @@ class SystemPreflightValidator:
         checks = []
 
         has_env_key = bool(
-            os.getenv("ENCRYPTION_MASTER_KEY")
+            os.getenv("AL_AMR_MASTER_KEY")
+            or os.getenv("ENCRYPTION_MASTER_KEY")
             or os.getenv("VAULT_MASTER_KEY")
+            or (self.settings.AL_AMR_MASTER_KEY and self.settings.AL_AMR_MASTER_KEY.get_secret_value())
             or (self.settings.ENCRYPTION_MASTER_KEY and self.settings.ENCRYPTION_MASTER_KEY.get_secret_value())
         )
 
@@ -362,9 +364,9 @@ class SystemPreflightValidator:
                     category=PreflightCategory.VAULT,
                     is_mandatory=False,
                     status=PreflightStatus.PASS,
-                    message="Production encryption master key configured in environment",
+                    message="Production encryption master key configured in environment (AL_AMR_MASTER_KEY)",
                     why_required="Zero-leakage PBKDF2/Fernet encryption/decryption of stored platform credentials and session tokens",
-                    configuration_requirement="Set ENCRYPTION_MASTER_KEY in environment or .env",
+                    configuration_requirement="Set AL_AMR_MASTER_KEY in environment or .env",
                     blocks_dry_run=False,
                     blocks_live_publishing=False,
                     details={"configured": True},
@@ -377,9 +379,9 @@ class SystemPreflightValidator:
                     category=PreflightCategory.VAULT,
                     is_mandatory=False,
                     status=PreflightStatus.WARN,
-                    message="ENCRYPTION_MASTER_KEY not set; using local fallback key (unsuitable for multi-runner production security)",
+                    message="AL_AMR_MASTER_KEY not set; using local fallback key (unsuitable for multi-runner production security)",
                     why_required="Zero-leakage PBKDF2/Fernet encryption/decryption of stored platform credentials and session tokens",
-                    configuration_requirement="Set ENCRYPTION_MASTER_KEY to a secure 32-byte urlsafe base64 string in production",
+                    configuration_requirement="Set AL_AMR_MASTER_KEY to a secure 32-character string in environment or .env",
                     blocks_dry_run=False,
                     blocks_live_publishing=False,
                     details={"configured": False},
@@ -652,14 +654,30 @@ class SystemPreflightValidator:
             )
         )
 
+        # Inspect vault for enrolled creator account credentials
+        yt_creds = None
+        ig_creds = None
+        try:
+            from clipping.agent.vault.vault import EncryptedCredentialVault
+            from clipping.agent.vault.models import AccountPlatform, AccountStatus
+            vault = EncryptedCredentialVault(storage_driver=self.storage)
+            accounts = await vault.list_accounts(status=AccountStatus.ACTIVE)
+            for acc in accounts:
+                if (acc.platform == AccountPlatform.YOUTUBE or acc.platform == "youtube") and not yt_creds:
+                    yt_creds = await vault.get_account_credentials(acc.platform, acc.account_id)
+                elif (acc.platform == AccountPlatform.INSTAGRAM or acc.platform == "instagram") and not ig_creds:
+                    ig_creds = await vault.get_account_credentials(acc.platform, acc.account_id)
+        except Exception:
+            pass
+
         # 2. YouTube
-        yt_res = await verifier.verify_youtube()
+        yt_res = await verifier.verify_youtube(credentials=yt_creds)
         checks.append(
             PreflightCheck(
                 name="youtube_publishing_integration",
                 category=PreflightCategory.PLATFORM_INTEGRATION,
                 is_mandatory=False,
-                status=PreflightStatus.PASS if yt_res.verified else PreflightStatus.WARN,
+                status=PreflightStatus.PASS if yt_res.verified else (PreflightStatus.WARN if not yt_res.configured else PreflightStatus.FAIL),
                 message=yt_res.message,
                 why_required=yt_res.why_required,
                 configuration_requirement=yt_res.configuration_requirement,
@@ -670,13 +688,13 @@ class SystemPreflightValidator:
         )
 
         # 3. Instagram
-        ig_res = await verifier.verify_instagram()
+        ig_res = await verifier.verify_instagram(credentials=ig_creds)
         checks.append(
             PreflightCheck(
                 name="instagram_publishing_integration",
                 category=PreflightCategory.PLATFORM_INTEGRATION,
                 is_mandatory=False,
-                status=PreflightStatus.PASS if ig_res.verified else PreflightStatus.WARN,
+                status=PreflightStatus.PASS if ig_res.verified else (PreflightStatus.WARN if not ig_res.configured else PreflightStatus.FAIL),
                 message=ig_res.message,
                 why_required=ig_res.why_required,
                 configuration_requirement=ig_res.configuration_requirement,
@@ -693,7 +711,7 @@ class SystemPreflightValidator:
                 name="telegram_escalation_notifier",
                 category=PreflightCategory.PLATFORM_INTEGRATION,
                 is_mandatory=False,
-                status=PreflightStatus.PASS if tg_res.verified else PreflightStatus.WARN,
+                status=PreflightStatus.PASS if tg_res.verified else (PreflightStatus.WARN if not tg_res.configured else PreflightStatus.FAIL),
                 message=tg_res.message,
                 why_required=tg_res.why_required,
                 configuration_requirement=tg_res.configuration_requirement,

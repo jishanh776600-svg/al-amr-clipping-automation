@@ -23,8 +23,16 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     OPERATOR_TOKEN: Optional[SecretStr] = None  # Master Control secret token for mutating endpoints
     GITHUB_PAT: Optional[SecretStr] = None       # GitHub PAT for workflow dispatch
-    GITHUB_REPO: Optional[str] = None            # e.g. "org/clipping-automation"
-    ENCRYPTION_MASTER_KEY: Optional[SecretStr] = None  # Vault AES-GCM master encryption key
+    AL_AMR_MASTER_KEY: Optional[SecretStr] = None       # Primary Vault master encryption key
+    ENCRYPTION_MASTER_KEY: Optional[SecretStr] = None   # Compatible fallback master encryption key
+
+    def get_master_key(self) -> Optional[str]:
+        """Resolves the master key from AL_AMR_MASTER_KEY or ENCRYPTION_MASTER_KEY."""
+        if self.AL_AMR_MASTER_KEY:
+            return self.AL_AMR_MASTER_KEY.get_secret_value()
+        if self.ENCRYPTION_MASTER_KEY:
+            return self.ENCRYPTION_MASTER_KEY.get_secret_value()
+        return None
 
     # 1B. WHOP CAMPAIGN SOURCE SETTINGS
     WHOP_API_KEY: Optional[SecretStr] = None
@@ -131,3 +139,9 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         _settings_instance = Settings()
     return _settings_instance
+
+
+def get_master_key() -> Optional[str]:
+    """Resolves master encryption key from Settings or environment."""
+    return Settings().get_master_key()
+

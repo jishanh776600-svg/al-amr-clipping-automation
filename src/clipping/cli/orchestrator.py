@@ -18,6 +18,7 @@ import signal
 import sys
 from typing import Optional
 
+from clipping.agent.campaign.repository import CampaignRepository
 from clipping.agent.orchestration.engine import AutonomousOrchestrationEngine
 from clipping.agent.repository import AgentTaskRepository
 from clipping.agent.vault.vault import EncryptedCredentialVault
@@ -112,12 +113,13 @@ async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[St
     # 4. Initialize Autonomous Orchestration Engine
     escalation_notifier = TelegramEscalationNotifier()
     task_repo = AgentTaskRepository(storage_driver=storage_driver, escalation_notifier=escalation_notifier)
+    camp_repo = CampaignRepository(storage_driver=storage_driver)
     vault = EncryptedCredentialVault(storage_driver=storage_driver)
 
     engine = AutonomousOrchestrationEngine(
         storage_driver=storage_driver,
         control_repository=control_repo,
-        campaign_repository=None,
+        campaign_repository=camp_repo,
         task_repository=task_repo,
         credential_vault=vault,
     )
@@ -154,10 +156,10 @@ async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[St
                 cycle_id=summary.cycle_id,
                 mode=mode,
                 discovered=summary.campaigns_discovered,
-                selected=summary.campaigns_selected,
-                produced=summary.clips_produced,
-                submitted=summary.submissions_completed,
-                escalations=len(summary.escalations_raised),
+                selected=summary.opportunities_selected,
+                produced=summary.production_tasks_dispatched,
+                submitted=summary.submissions_processed,
+                escalations=summary.escalations_raised,
             )
             return 0
         except Exception as e:
@@ -188,8 +190,10 @@ async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[St
                 cycle_number=cycle_count,
                 cycle_id=summary.cycle_id,
                 discovered=summary.campaigns_discovered,
-                selected=summary.campaigns_selected,
-                produced=summary.clips_produced,
+                selected=summary.opportunities_selected,
+                produced=summary.production_tasks_dispatched,
+                submitted=summary.submissions_processed,
+                escalations=summary.escalations_raised,
             )
         except Exception as e:
             logger.error("Error during scheduled orchestration cycle", cycle_number=cycle_count, error=str(e))

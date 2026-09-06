@@ -379,3 +379,147 @@ async def test_16_publishing_lock_prevents_irreversible_publishing(local_storage
 
     summary = await engine.run_orchestration_cycle(dry_run=False)
     assert summary.submissions_processed == 0
+
+
+@pytest.mark.anyio
+async def test_17_al_amr_master_key_loading_and_preflight_pass(local_storage):
+    """Verifies that configuring AL_AMR_MASTER_KEY in environment causes vault_master_key check to PASS."""
+    from cryptography.fernet import Fernet
+    from clipping.config.settings import Settings, get_master_key
+
+    valid_key = Fernet.generate_key().decode("utf-8")
+    with patch.dict(os.environ, {"AL_AMR_MASTER_KEY": valid_key}):
+        settings = Settings()
+        assert get_master_key() == valid_key
+
+        validator = SystemPreflightValidator(storage_driver=local_storage, settings=settings)
+        checks = await validator.check_vault()
+        master_checks = [c for c in checks if c.name == "vault_master_key"]
+        assert len(master_checks) == 1
+        assert master_checks[0].status == PreflightStatus.PASS
+        assert master_checks[0].details["configured"] is True
+
+
+@pytest.mark.anyio
+async def test_18_account_enrollment_api_safe_metadata_and_vault_credential_resolution(local_storage):
+    """Verifies POST /api/accounts registers creator account metadata without leaking credentials, stores secrets in vault, and check_creator_accounts/check_platform_credentials discovers them."""
+    from clipping.ui.server import register_account_api, AccountRegistrationRequest
+
+    req = AccountRegistrationRequest(
+        platform="youtube",
+        account_id="creator_acc_prod_01",
+        username="AlAmrOfficial",
+        display_name="AL AMR Official Shorts",
+        credentials={
+            "client_id": "test_client_id.apps.googleusercontent.com",
+            "client_secret": "test_client_secret_xyz",
+            "refresh_token": "test_refresh_token_123",
+        },
+    )
+    res = await register_account_api(req=req, operator="SecAudit", storage=local_storage)
+    assert res["status"] == "success"
+    assert res["account"]["account_id"] == "creator_acc_prod_01"
+    assert res["account"]["platform"] == "youtube"
+    # Verify zero credentials leaked in response:
+    assert "client_secret" not in str(res)
+    assert "test_refresh_token_123" not in str(res)
+
+    # Verify validator discovers creator accounts:
+    validator = SystemPreflightValidator(storage_driver=local_storage)
+    acc_checks = await validator.check_creator_accounts()
+    assert len(acc_checks) == 1
+    assert acc_checks[0].status == PreflightStatus.PASS
+    assert acc_checks[0].details["account_count"] == 1
+    assert "creator_acc_prod_01" in acc_checks[0].details["accounts"]
+
+
+@pytest.mark.anyio
+async def test_19_real_service_verifier_distinguishes_unconfigured_vs_auth_failure(local_storage):
+    """Verifies that RealServiceVerifier clearly distinguishes unconfigured (WARN) vs authentication failure (FAIL)."""
+    verifier = RealServiceVerifier()
+
+    # 1. Unconfigured state:
+    with patch.dict(os.environ, {"WHOP_API_KEY": ""}, clear=True):
+        unconf = await verifier.verify_whop()
+        assert unconf.configured is False
+        assert unconf.verified is False
+        assert "not configured" in unconf.message
+
+    # 2. Configured but Auth Failure (e.g. 401 Unauthorized from API):
+    with patch.dict(os.environ, {"WHOP_API_KEY": "invalid_whop_token_xyz"}):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = '{"error": "Unauthorized"}'
+
+        with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_resp
+            auth_fail = await verifier.verify_whop()
+            assert auth_fail.configured is True
+            assert auth_fail.verified is False
+            assert auth_fail.status_code == 401
+            assert "authentication failed" in auth_fail.message.lower()
+
+    # 3. Check validator converts unconfigured -> WARN and auth failure -> FAIL
+    validator = SystemPreflightValidator(storage_driver=local_storage)
+    with patch.object(verifier, "verify_whop", return_value=unconf):
+        with patch("clipping.preflight.service_verifier.RealServiceVerifier", return_value=verifier):
+            checks = await validator.check_platform_credentials()
+            whop_check = next(c for c in checks if c.name == "whop_campaign_discovery")
+            assert whop_check.status == PreflightStatus.WARN
+
+    with patch.object(verifier, "verify_whop", return_value=auth_fail):
+        with patch("clipping.preflight.service_verifier.RealServiceVerifier", return_value=verifier):
+            checks = await validator.check_platform_credentials()
+            whop_check = next(c for c in checks if c.name == "whop_campaign_discovery")
+            assert whop_check.status == PreflightStatus.FAIL
+
+
+@pytest.mark.anyio
+async def test_20_dry_run_full_cycle_execution_and_clean_completion(local_storage):
+    """Verifies full CLI orchestrator execution in dry-run mode completes cleanly with exit code 0 and suppresses live publishing."""
+    import argparse
+    from datetime import datetime, timezone
+    from clipping.cli.orchestrator import run_orchestrator
+    from clipping.agent.campaign.models import (
+        CampaignRecord,
+        CampaignPlatform,
+        CampaignStatus,
+        PostingRequirements,
+        PayoutTerms,
+        SourceMaterial,
+    )
+
+    # Seed an active campaign in repository
+    camp_repo = CampaignRepository(storage_driver=local_storage)
+    campaign = CampaignRecord(
+        campaign_id="camp_dry_run_test_001",
+        name="Test Autonomous Dry Run Campaign",
+        source="whop",
+        status=CampaignStatus.ACTIVE,
+        required_platforms=[CampaignPlatform.YOUTUBE_SHORTS],
+        posting_requirements=PostingRequirements(required_hashtags=["#shorts"]),
+        payout_terms=PayoutTerms(cpm_rate=15.0),
+        source_material=SourceMaterial(video_urls=["https://youtube.com/watch?v=mock_video_dry_run"]),
+        discovered_at=datetime.now(timezone.utc),
+    )
+    await camp_repo.save_campaign(campaign)
+
+    args = argparse.Namespace(
+        mode="dry-run",
+        preflight=False,
+        dry_run=True,
+        once=True,
+        continuous=False,
+        skip_preflight=True,
+        interval=300,
+        target_campaign=None,
+        source="whop",
+        max_campaigns=5,
+        json=False,
+        strict=False,
+    )
+
+    exit_code = await run_orchestrator(args, storage_driver=local_storage)
+    assert exit_code == 0
+
+
