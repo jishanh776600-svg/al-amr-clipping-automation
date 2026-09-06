@@ -66,3 +66,76 @@ def test_deterministic_reproducibility():
 
     assert score1.overall_virality_score == score2.overall_virality_score
     assert score1.breakdown.hook_score == score2.breakdown.hook_score
+
+
+def test_opinion_bomb_detection():
+    """Verifies that contrarian statements are detected and scored appropriately."""
+    text = "Unpopular opinion: everyone is wrong about startup funding. Stop doing what gurus preach."
+    hook = "Unpopular opinion: everyone is wrong about startup funding."
+    cand = make_candidate(text, hook)
+
+    scorer = DeterministicClipScorer()
+    score = scorer.score_candidate(cand)
+
+    assert score.breakdown.opinion_bomb_score >= 50.0
+    assert score.breakdown.virality_rationale is not None
+    assert "contrarian opinion" in score.breakdown.virality_rationale.lower()
+
+
+def test_revelation_contrarian_paradox_detection():
+    """Verifies that counterintuitive revelations are detected and scored appropriately."""
+    text = "The paradox is it actually does the opposite when you scale up. We realized this after testing fifty variations."
+    hook = "The paradox is it actually does the opposite when you scale up."
+    cand = make_candidate(text, hook)
+
+    scorer = DeterministicClipScorer()
+    score = scorer.score_candidate(cand)
+
+    assert score.breakdown.revelation_score >= 50.0
+    assert score.breakdown.virality_rationale is not None
+    assert "counterintuitive revelation" in score.breakdown.virality_rationale.lower()
+
+
+def test_virality_rationale_generation():
+    """Verifies that virality_rationale is deterministic and reflects detected triggers."""
+    # Case A: Combined hook + opinion bomb + revelation
+    text_rich = "Unpopular opinion: everyone gets this wrong. The counterintuitive truth is it actually does the opposite."
+    hook_rich = "Unpopular opinion: everyone gets this wrong."
+    cand_rich = make_candidate(text_rich, hook_rich)
+
+    scorer = DeterministicClipScorer()
+    score_rich = scorer.score_candidate(cand_rich)
+    breakdown_rich = score_rich.breakdown
+
+    assert breakdown_rich.opinion_bomb_score > 0.0
+    assert breakdown_rich.revelation_score > 0.0
+    assert "contrarian opinion" in breakdown_rich.virality_rationale.lower()
+    assert "counterintuitive revelation" in breakdown_rich.virality_rationale.lower()
+
+    # Case B: Neutral text without strong virality markers
+    text_plain = "The system updates every morning at six. Database backups run every hour on the local disk."
+    hook_plain = "The system updates every morning at six."
+    cand_plain = make_candidate(text_plain, hook_plain)
+
+    score_plain = scorer.score_candidate(cand_plain)
+    assert score_plain.breakdown.opinion_bomb_score == 0.0
+    assert score_plain.breakdown.revelation_score == 0.0
+    assert "Standard narrative segment with neutral engagement signals" in score_plain.breakdown.virality_rationale
+
+
+def test_existing_scoring_behavior_preserved():
+    """Ensures existing scoring factors and penalty calculations remain consistent."""
+    text = "The truth is most people build products nobody wants. I realized this after losing $50K on my first startup."
+    hook = "The truth is most people build products nobody wants."
+    cand = make_candidate(text, hook)
+
+    scorer = DeterministicClipScorer()
+    score = scorer.score_candidate(cand)
+
+    assert score.breakdown.opinion_bomb_score == 0.0
+    assert score.breakdown.revelation_score == 0.0
+    assert score.hook_strength >= 70.0
+    assert score.breakdown.specificity_score >= 40.0
+    assert score.breakdown.emotion_score >= 50.0
+    assert score.breakdown.virality_rationale is not None
+

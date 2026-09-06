@@ -35,6 +35,24 @@ class DeterministicClipScorer:
     FILLER_WORDS = ["um", "uh", "like", "you know", "sort of", "kind of", "literally", "basically", "i mean"]
     INTENSITY_WORDS = ["incredible", "terrible", "crucial", "disaster", "breakthrough", "transform", "massive", "vital", "worst", "best", "losing"]
 
+    OPINION_BOMB_PATTERNS = [
+        re.compile(r"\b(unpopular\s+opinion|hot\s+take)\b", re.IGNORECASE),
+        re.compile(r"\b(everyone\s+is\s+(wrong|lying|mistaken|delusional)|everyone\s+gets\s+this\s+wrong)\b", re.IGNORECASE),
+        re.compile(r"\b(worst\s+(advice|mistake|decision|lie)|biggest\s+lie)\b", re.IGNORECASE),
+        re.compile(r"\b(stop\s+doing|never\s+(do|say|buy|use)\s+this|you\s+need\s+to\s+stop)\b", re.IGNORECASE),
+        re.compile(r"\b(nobody\s+wants\s+to\s+admit|hard\s+truth|brutal\s+truth|hard\s+pill\s+to\s+swallow)\b", re.IGNORECASE),
+        re.compile(r"\b(is\s+a\s+scam|total\s+waste\s+of\s+(time|money))\b", re.IGNORECASE),
+    ]
+
+    REVELATION_PATTERNS = [
+        re.compile(r"\b(the\s+paradox\s+(is|of)|here\s+is\s+the\s+paradox)\b", re.IGNORECASE),
+        re.compile(r"\b(counterintuitive\s+(truth|reality|nature|fact)|counterintuitively)\b", re.IGNORECASE),
+        re.compile(r"\b(it\s+actually\s+does\s+the\s+opposite|does\s+the\s+exact\s+opposite|the\s+opposite\s+is\s+true)\b", re.IGNORECASE),
+        re.compile(r"\b(turns\s+out\s+(that|it)|what\s+actually\s+happens\s+is)\b", re.IGNORECASE),
+        re.compile(r"\b(the\s+exact\s+reverse|it\s+sounded\s+crazy\s+until|everything\s+changed\s+when\s+i\s+realized)\b", re.IGNORECASE),
+        re.compile(r"\b(revelation\s+was|the\s+breakthrough\s+moment|eye-opening\s+truth)\b", re.IGNORECASE),
+    ]
+
     def __init__(self, config: Optional[ClipDiscoveryConfig] = None):
         self.config = config or ClipDiscoveryConfig()
 
@@ -120,7 +138,25 @@ class DeterministicClipScorer:
                 visual_score = 60.0 + (avg_conf * 35.0)
         visual_score = min(100.0, visual_score)
 
-        # 8. Penalties Calculation
+        # 8. Opinion Bomb Score (0-100)
+        opinion_bomb_score = 0.0
+        for pattern in self.OPINION_BOMB_PATTERNS:
+            if pattern.search(text):
+                opinion_bomb_score += 35.0
+            if pattern.search(hook_text):
+                opinion_bomb_score += 15.0
+        opinion_bomb_score = min(100.0, opinion_bomb_score)
+
+        # 9. Revelation / Contrarian Paradox Score (0-100)
+        revelation_score = 0.0
+        for pattern in self.REVELATION_PATTERNS:
+            if pattern.search(text):
+                revelation_score += 35.0
+            if pattern.search(hook_text):
+                revelation_score += 15.0
+        revelation_score = min(100.0, revelation_score)
+
+        # 10. Penalties Calculation
         # Filler Penalty
         filler_count = sum(1 for w in words if w.word.lower().strip(".,!?") in self.FILLER_WORDS)
         filler_ratio = filler_count / max(1, len(words))
@@ -148,7 +184,7 @@ class DeterministicClipScorer:
             boundary_penalty = (dur - self.config.preferred_max_duration) * 1.0
         boundary_penalty = min(20.0, boundary_penalty)
 
-        # 9. Weighted Composite Total Score
+        # 11. Weighted Composite Total Score
         total_positive = (
             self.config.weight_hook * hook_score
             + self.config.weight_completeness * completeness_score
@@ -159,8 +195,19 @@ class DeterministicClipScorer:
             + self.config.weight_visual * visual_score
         )
 
+        virality_boost = min(5.0, (opinion_bomb_score * 0.025) + (revelation_score * 0.025))
         total_penalties = filler_penalty + silence_penalty + repetition_penalty + boundary_penalty
-        total_score = max(0.0, min(100.0, total_positive - total_penalties))
+        total_score = max(0.0, min(100.0, total_positive + virality_boost - total_penalties))
+
+        virality_rationale = self._generate_virality_rationale(
+            hook_score=hook_score,
+            curiosity_score=curiosity_score,
+            specificity_score=specificity_score,
+            emotion_score=emotion_score,
+            completeness_score=completeness_score,
+            opinion_bomb_score=opinion_bomb_score,
+            revelation_score=revelation_score,
+        )
 
         breakdown = CandidateScoreBreakdown(
             hook_score=round(hook_score, 1),
@@ -170,17 +217,21 @@ class DeterministicClipScorer:
             emotion_score=round(emotion_score, 1),
             standalone_score=round(standalone_score, 1),
             visual_score=round(visual_score, 1),
+            opinion_bomb_score=round(opinion_bomb_score, 1),
+            revelation_score=round(revelation_score, 1),
             filler_penalty=round(filler_penalty, 1),
             silence_penalty=round(silence_penalty, 1),
             repetition_penalty=round(repetition_penalty, 1),
             boundary_penalty=round(boundary_penalty, 1),
             total_score=round(total_score, 1),
+            virality_rationale=virality_rationale,
         )
 
         reasoning = (
             f"Hook={breakdown.hook_score:.0f}, Completeness={breakdown.completeness_score:.0f}, "
             f"Curiosity={breakdown.curiosity_score:.0f}, Specificity={breakdown.specificity_score:.0f}, "
-            f"Penalties={total_penalties:.1f}"
+            f"OpinionBomb={breakdown.opinion_bomb_score:.0f}, Revelation={breakdown.revelation_score:.0f}, "
+            f"Penalties={total_penalties:.1f}. Rationale: {virality_rationale}"
         )
 
         return ClipScore(
@@ -193,3 +244,66 @@ class DeterministicClipScorer:
             breakdown=breakdown,
             reasoning=reasoning,
         )
+
+    def _generate_virality_rationale(
+        self,
+        hook_score: float,
+        curiosity_score: float,
+        specificity_score: float,
+        emotion_score: float,
+        completeness_score: float,
+        opinion_bomb_score: float,
+        revelation_score: float,
+    ) -> str:
+        """
+        Synthesizes a concise, deterministic virality rationale
+        derived strictly from detected signals without LLM hallucination.
+        """
+        has_hook = hook_score >= 60.0
+        has_curiosity = curiosity_score >= 50.0
+        has_opinion_bomb = opinion_bomb_score >= 35.0
+        has_revelation = revelation_score >= 35.0
+        has_emotion = emotion_score >= 50.0
+        has_specificity = specificity_score >= 55.0
+        has_completeness = completeness_score >= 70.0
+
+        # Primary opening hook clause
+        if has_hook and has_opinion_bomb:
+            lead = "Opens with a strong contrarian opinion hook"
+        elif has_hook and has_curiosity:
+            lead = "Opens with a strong curiosity trigger"
+        elif has_opinion_bomb:
+            lead = "Delivers a provocative contrarian opinion"
+        elif has_hook:
+            lead = "Opens with a high-retention hook"
+        elif has_curiosity:
+            lead = "Introduces an intriguing curiosity gap"
+        elif has_specificity:
+            lead = "Opens with high-specificity data"
+        elif has_emotion:
+            lead = "Anchored in personal narrative"
+        else:
+            lead = "Topic-focused discussion segment"
+
+        # Narrative trajectory / climax clause
+        trailing = []
+        if has_revelation:
+            trailing.append("builds toward a counterintuitive revelation")
+        if has_emotion and not (has_revelation and "narrative" in lead):
+            trailing.append("high emotional resonance")
+        if has_specificity and "data" not in lead:
+            trailing.append("concrete real-world evidence")
+        if has_completeness:
+            trailing.append("clear standalone closure")
+
+        if trailing:
+            if len(trailing) == 1:
+                return f"{lead} and {trailing[0]}."
+            elif len(trailing) == 2:
+                return f"{lead} with {trailing[0]} and {trailing[1]}."
+            else:
+                return f"{lead} featuring {trailing[0]}, {trailing[1]}, and {trailing[2]}."
+        else:
+            if lead != "Topic-focused discussion segment":
+                return f"{lead} with steady pacing."
+            return "Standard narrative segment with neutral engagement signals."

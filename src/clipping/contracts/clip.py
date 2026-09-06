@@ -54,6 +54,10 @@ class CandidateScoreBreakdown(BaseModel):
     emotion_score: float = Field(default=0.0, ge=0.0, le=100.0)
     standalone_score: float = Field(default=0.0, ge=0.0, le=100.0)
     visual_score: float = Field(default=0.0, ge=0.0, le=100.0)
+
+    # Virality Taxonomy Extensions
+    opinion_bomb_score: float = Field(default=0.0, ge=0.0, le=100.0, description="Opinion-driven contrarian statement score")
+    revelation_score: float = Field(default=0.0, ge=0.0, le=100.0, description="Surprising reversal / counterintuitive paradox score")
     
     # Penalties
     filler_penalty: float = Field(default=0.0, ge=0.0, le=50.0)
@@ -62,6 +66,7 @@ class CandidateScoreBreakdown(BaseModel):
     boundary_penalty: float = Field(default=0.0, ge=0.0, le=50.0)
     
     total_score: float = Field(..., ge=0.0, le=100.0, description="Weighted composite score 0-100")
+    virality_rationale: Optional[str] = Field(default=None, description="Concise machine-generated virality rationale")
 
 
 class ClipScore(BaseModel):
