@@ -17,8 +17,9 @@ class AgentTaskRepository:
     Ensures zero data loss across ephemeral GitHub Actions cloud runners.
     """
 
-    def __init__(self, storage_driver: StorageDriver):
+    def __init__(self, storage_driver: StorageDriver, escalation_notifier: Optional[Any] = None):
         self.storage = storage_driver
+        self.escalation_notifier = escalation_notifier
 
     def _task_key(self, task_id: str) -> str:
         return f"tasks/{task_id}/task.json"
@@ -151,6 +152,22 @@ class AgentTaskRepository:
             context=context,
         )
         await self.save_escalation(record)
+
+        # Dispatch real-time operator alert via Telegram if configured
+        notifier = self.escalation_notifier
+        if notifier is None:
+            try:
+                from clipping.approval.escalation_notifier import TelegramEscalationNotifier
+                notifier = TelegramEscalationNotifier()
+            except Exception:
+                notifier = None
+
+        if notifier and getattr(notifier, "is_configured", False):
+            try:
+                await notifier.notify(record)
+            except Exception as ex:
+                logger.error("Failed to notify escalation via Telegram", error=str(ex))
+
         return record
 
     async def get_escalation(self, escalation_id: str) -> Optional[EscalationRecord]:

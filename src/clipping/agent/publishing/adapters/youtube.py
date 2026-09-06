@@ -36,7 +36,7 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
     """Real YouTube Data API v3 publishing and scheduling adapter."""
 
     def __init__(self, client: Optional[YouTubeClient] = None):
-        self._client = client or MockYouTubeClient()
+        self._client = client
 
     @property
     def platform(self) -> AccountPlatform:
@@ -53,6 +53,33 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
                 return PrivacyStatus.UNLISTED
             return PrivacyStatus.PUBLIC
         return PrivacyStatus.PRIVATE
+
+    def _resolve_client(self, credentials: Dict[str, Any]) -> Optional[YouTubeClient]:
+        """Resolves authenticated HttpYouTubeClient from credentials, environment, or injected client."""
+        if self._client is not None:
+            return self._client
+
+        import os
+        from pydantic import SecretStr
+        from clipping.publishing.oauth import OAuthCredentials, OAuthTokenManager
+        from clipping.publishing.client import HttpYouTubeClient
+
+        client_id = credentials.get("client_id") or os.getenv("YOUTUBE_CLIENT_ID")
+        client_secret = credentials.get("client_secret") or os.getenv("YOUTUBE_CLIENT_SECRET")
+        refresh_token = credentials.get("refresh_token") or os.getenv("YOUTUBE_REFRESH_TOKEN")
+
+        if client_id and client_secret and refresh_token:
+            secret_str = client_secret if isinstance(client_secret, SecretStr) else SecretStr(str(client_secret))
+            refresh_str = refresh_token if isinstance(refresh_token, SecretStr) else SecretStr(str(refresh_token))
+            token_mgr = OAuthTokenManager(
+                credentials=OAuthCredentials(
+                    client_id=str(client_id),
+                    client_secret=secret_str,
+                    refresh_token=refresh_str,
+                )
+            )
+            return HttpYouTubeClient(token_manager=token_mgr)
+        return None
 
     async def publish(
         self,
@@ -78,8 +105,19 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
             made_for_kids=False,
         )
 
+        client = self._resolve_client(credentials)
+        if client is None:
+            logger.warning("YouTube publishing rejected: missing credentials and no client configured", submission_id=submission.submission_id)
+            return PlatformPublishResult(
+                success=False,
+                status=SubmissionStatus.FAILED,
+                error_message="YouTube OAuth2 credentials missing: client_id, client_secret, and refresh_token are required.",
+                failure_classification="missing_credentials",
+                is_retryable=False,
+            )
+
         try:
-            ref = await self._client.upload_video(video_path=media_path, metadata=yt_meta)
+            ref = await client.upload_video(video_path=media_path, metadata=yt_meta)
             final_status = (
                 SubmissionStatus.SCHEDULED
                 if mode == PublishingMode.SCHEDULED
@@ -133,9 +171,18 @@ class YouTubePublishingAdapter(PlatformPublishingAdapter):
         platform_post_id: str,
         credentials: Dict[str, Any],
     ) -> PlatformStatusResult:
-        """Queries live YouTube video status to reconcile state."""
+        client = self._resolve_client(credentials)
+        if client is None:
+            logger.info("Cannot query live YouTube status without client or credentials; preserving local state", post_id=platform_post_id)
+            return PlatformStatusResult(
+                post_id=platform_post_id,
+                exists_on_platform=True,
+                platform_status=SubmissionStatus.PUBLISHED,
+                error_message="Credentials not available for live status reconciliation inquiry",
+            )
+
         try:
-            status_data = await self._client.get_video_status(platform_post_id)
+            status_data = await client.get_video_status(platform_post_id)
             if not status_data:
                 return PlatformStatusResult(
                     post_id=platform_post_id,

@@ -36,7 +36,13 @@ class EncryptedCredentialVault:
 
     @classmethod
     def _init_fernet(cls, master_key: Optional[str] = None) -> Fernet:
-        secret_source = master_key or os.environ.get("VAULT_MASTER_KEY") or os.environ.get("OPERATOR_TOKEN") or "al_amr_default_cloud_vault_key_fallback"
+        secret_source = (
+            master_key
+            or os.environ.get("ENCRYPTION_MASTER_KEY")
+            or os.environ.get("VAULT_MASTER_KEY")
+            or os.environ.get("OPERATOR_TOKEN")
+            or "al_amr_default_cloud_vault_key_fallback"
+        )
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,

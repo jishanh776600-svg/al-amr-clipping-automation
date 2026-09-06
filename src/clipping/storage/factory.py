@@ -29,3 +29,11 @@ def create_storage_driver(settings: Optional[Settings] = None) -> StorageDriver:
         )
 
     return LocalStorageDriver(root_dir=cfg.LOCAL_STORAGE_ROOT)
+
+
+class StorageFactory:
+    """Convenience factory class wrapper for create_storage_driver."""
+
+    @staticmethod
+    def create(settings: Optional[Settings] = None) -> StorageDriver:
+        return create_storage_driver(settings)

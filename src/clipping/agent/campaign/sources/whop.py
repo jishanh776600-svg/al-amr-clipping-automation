@@ -37,8 +37,9 @@ class WhopCampaignSource(CampaignSource):
         browser_driver: Optional[BrowserDriver] = None,
         timeout_seconds: float = 15.0,
     ):
-        self._base_url = base_url or self.DEFAULT_BASE_URL
-        self._api_token = api_token
+        import os
+        self._base_url = base_url or os.getenv("WHOP_BASE_URL", self.DEFAULT_BASE_URL)
+        self._api_token = api_token or os.getenv("WHOP_API_KEY") or os.getenv("WHOP_API_TOKEN")
         self._driver = browser_driver
         self._timeout = timeout_seconds
 

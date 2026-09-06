@@ -1460,6 +1460,20 @@ async def list_orchestration_cycle_history_api(
     return [s.model_dump(mode="json") for s in summaries]
 
 
+@app.get("/api/system/preflight")
+async def get_system_preflight_api(
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Runs complete operational preflight verification and returns structured readiness status."""
+    from clipping.control.repository import ControlRepository
+    from clipping.preflight.validator import SystemPreflightValidator
+
+    ctrl_repo = ControlRepository(storage_driver=storage)
+    validator = SystemPreflightValidator(storage_driver=storage, control_repository=ctrl_repo)
+    report = await validator.validate()
+    return report.model_dump(mode="json")
+
+
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

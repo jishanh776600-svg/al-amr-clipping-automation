@@ -37,10 +37,11 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
     def __init__(
         self,
         browser_driver: Optional[BrowserDriver] = None,
-        graph_api_base: str = "https://graph.facebook.com/v19.0",
+        graph_api_base: Optional[str] = None,
     ):
-        self._driver = browser_driver or MockBrowserDriver()
-        self._graph_api_base = graph_api_base.rstrip("/")
+        import os
+        self._driver = browser_driver
+        self._graph_api_base = (graph_api_base or os.getenv("INSTAGRAM_GRAPH_API_BASE", "https://graph.facebook.com/v19.0")).rstrip("/")
 
     @property
     def platform(self) -> AccountPlatform:
@@ -54,14 +55,16 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
     ) -> PlatformPublishResult:
         """
         Publishes an Instagram Reel:
-        1. Checks for Graph API access token in credentials.
+        1. Checks for Graph API access token in credentials or environment.
         2. If Graph API available, executes container upload -> status poll -> publish.
-        3. If browser workflow, executes headless interaction with strict security challenge detection.
+        3. If browser workflow configured, executes headless interaction with strict security challenge detection.
+        4. Fails safely if neither is available.
         """
+        import os
         meta = submission.content_metadata
         caption = f"{meta.title}\n\n{meta.description}\n\n{' '.join(meta.hashtags)}"
-        access_token = credentials.get("access_token") or credentials.get("token")
-        ig_user_id = credentials.get("instagram_account_id") or credentials.get("user_id")
+        access_token = credentials.get("access_token") or credentials.get("token") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+        ig_user_id = credentials.get("instagram_account_id") or credentials.get("user_id") or os.getenv("INSTAGRAM_ACCOUNT_ID")
 
         # 1. Official Instagram Graph API Workflow
         if access_token and ig_user_id:
@@ -134,6 +137,15 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
                 )
 
         # 2. CloudBrowserEngine Workflow
+        if not (access_token and ig_user_id) and self._driver is None:
+            return PlatformPublishResult(
+                success=False,
+                status=SubmissionStatus.FAILED,
+                error_message="Instagram credentials missing: requires Graph API access_token and instagram_account_id, or an active browser session.",
+                failure_classification="missing_credentials",
+                is_retryable=False,
+            )
+
         logger.info("Executing Instagram publish via CloudBrowserEngine", submission_id=submission.submission_id)
         engine = CloudBrowserEngine(driver=self._driver)
         async with engine:
@@ -173,14 +185,24 @@ class InstagramPublishingAdapter(PlatformPublishingAdapter):
                     ),
                 )
 
-            # Fallback simulated post ID for test mock driver
-            post_id = f"ig_reel_{submission.clip_id}_{abs(hash(caption)) % 1000000:06d}"
+            # Check if explicit MockBrowserDriver was provided (in unit tests)
+            if isinstance(self._driver, MockBrowserDriver):
+                post_id = f"ig_reel_{submission.clip_id}_{abs(hash(caption)) % 1000000:06d}"
+                return PlatformPublishResult(
+                    success=True,
+                    platform_post_id=post_id,
+                    platform_url=f"https://www.instagram.com/reel/{post_id}",
+                    status=SubmissionStatus.PUBLISHED,
+                    raw_response={"post_id": post_id},
+                )
+
+            # Live browser sessions cannot assume synthetic success without confirmed upload
             return PlatformPublishResult(
-                success=True,
-                platform_post_id=post_id,
-                platform_url=f"https://www.instagram.com/reel/{post_id}",
-                status=SubmissionStatus.PUBLISHED,
-                raw_response={"post_id": post_id},
+                success=False,
+                status=SubmissionStatus.FAILED,
+                error_message="Instagram browser upload is experimental and requires authenticated session cookies; Graph API is recommended.",
+                failure_classification="browser_session_unauthenticated",
+                is_retryable=False,
             )
 
     async def reconcile_status(

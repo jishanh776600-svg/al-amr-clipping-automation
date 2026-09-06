@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     OPERATOR_TOKEN: Optional[SecretStr] = None  # Master Control secret token for mutating endpoints
     GITHUB_PAT: Optional[SecretStr] = None       # GitHub PAT for workflow dispatch
     GITHUB_REPO: Optional[str] = None            # e.g. "org/clipping-automation"
+    ENCRYPTION_MASTER_KEY: Optional[SecretStr] = None  # Vault AES-GCM master encryption key
+
+    # 1B. WHOP CAMPAIGN SOURCE SETTINGS
+    WHOP_API_KEY: Optional[SecretStr] = None
+    WHOP_BASE_URL: str = "https://api.whop.com/v5"
 
     # 2. STORAGE SETTINGS
     STORAGE_DRIVER: Literal["local", "gdrive", "s3"] = "local"
@@ -77,6 +82,11 @@ class Settings(BaseSettings):
     YOUTUBE_CLIENT_SECRETS_FILE: Optional[str] = "./secrets/client_secrets.json"
     YOUTUBE_CREDENTIALS_STORAGE_DIR: str = "./secrets/youtube_tokens"
     YOUTUBE_DEFAULT_CHANNEL_ID: Optional[str] = None
+
+    # 5B. INSTAGRAM SETTINGS
+    INSTAGRAM_ACCESS_TOKEN: Optional[SecretStr] = None
+    INSTAGRAM_ACCOUNT_ID: Optional[str] = None
+    INSTAGRAM_GRAPH_API_BASE: str = "https://graph.facebook.com/v19.0"
 
     # 6. GOOGLE & GOOGLE DRIVE SETTINGS
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
