@@ -161,6 +161,21 @@ class AlAmrAPI {
         });
     }
 
+    static async resolveSource(payload) {
+        return this.request("/api/campaigns/resolve-source", {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+    }
+
+    static async validateJob(payload) {
+        return this.request("/api/campaigns/validate-job", {
+            method: "POST",
+            body: JSON.stringify(payload)
+        });
+    }
+
+
     // 5. Agent & Task Queue
     static async getAgentStatus() {
         return this.request("/api/agent/status");

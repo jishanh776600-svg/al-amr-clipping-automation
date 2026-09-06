@@ -23,6 +23,9 @@ from clipping.logging.logger import get_logger
 from clipping.publishing.models import PublishStatus
 from clipping.publishing.repository import PublishingRepository
 from clipping.contracts.requirements import CampaignRequirements
+from clipping.contracts.source import SourceResolutionResult, SourceAccessStatus
+from clipping.ingestion.source_resolver import SourceResolutionEngine
+from clipping.agent.campaign.compatibility_gate import PreProductionCompatibilityGate, CompatibilityGateResult
 from clipping.state.models import JobState
 from clipping.state.remote import RemoteStorageStateRepository
 from clipping.storage.base import StorageDriver
@@ -30,6 +33,7 @@ from clipping.storage.google_drive import GoogleDriveStorageDriver
 from clipping.storage.local import LocalStorageDriver
 
 logger = get_logger("clipping.ui.server")
+
 
 app = FastAPI(
     title="AL AMR Clipping Automation Console",
@@ -229,6 +233,22 @@ class OverrideRequirementsRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class ResolveSourceRequest(BaseModel):
+    source_uri: Optional[str] = None
+    source_type: Optional[str] = None
+    brief_storage_key: Optional[str] = None
+    requirements: Optional[CampaignRequirements] = None
+    whop_discovered_urls: Optional[List[str]] = None
+
+
+class ValidateJobRequest(BaseModel):
+    source_uri: str
+    target_platform: str = "youtube_shorts"
+    target_account_id: Optional[str] = None
+    brief_storage_key: Optional[str] = None
+    requirements: Optional[CampaignRequirements] = None
+
+
 class CreateAndRunCampaignRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
     source_uri: str = Field(..., min_length=1, max_length=1024)
@@ -241,6 +261,7 @@ class CreateAndRunCampaignRequest(BaseModel):
     target_account_id: Optional[str] = Field(default=None, description="Selected destination account ID from vault")
     cpm_rate: float = Field(default=1.5, ge=0.0)
     payout_budget: float = Field(default=500.0, ge=0.0)
+
 
 
 
@@ -538,6 +559,18 @@ async def get_job_live_status(
     clips = await get_job_clips(job_id=job_id, storage=storage)
     history = await state_repo.get_job_history(job_id)
 
+    # Compute execution telemetry and monitor fields
+    elapsed_seconds = round(max(0.0, (datetime.now(timezone.utc) - job.created_at).total_seconds()), 1)
+    fail_reason = job.metadata_json.get("failure_reason")
+    if not fail_reason and history and job.current_state.value == "failed":
+        fail_reason = history[-1].reason
+
+    download_pct = 100 if canonical_stage != "01_INGESTION" or job.current_state.value in ["completed", "awaiting_approval"] else 50
+    checkpoint = job.metadata_json.get("checkpoint", canonical_stage)
+    retry_count = job.metadata_json.get("retry_count", 0)
+    resumable = job.metadata_json.get("resumable", job.current_state.value != "failed")
+    op_intervention = job.metadata_json.get("operator_intervention_state", "none")
+
     return {
         "job_id": job.job_id,
         "campaign_id": job.campaign_id,
@@ -545,6 +578,15 @@ async def get_job_live_status(
         "current_stage": canonical_stage,
         "current_state": job.current_state.value,
         "progress_percent": progress,
+        "source_resolution_state": job.metadata_json.get("source_resolution"),
+        "download_progress": download_pct,
+        "validation_state": job.metadata_json.get("validation_state"),
+        "retry_count": retry_count,
+        "operator_intervention_state": op_intervention,
+        "checkpoint": checkpoint,
+        "elapsed_time_seconds": elapsed_seconds,
+        "failure_reason": fail_reason,
+        "resumability": resumable,
         "stage_history": [
             {
                 "from_state": s.from_state.value,
@@ -560,6 +602,7 @@ async def get_job_live_status(
         "created_at": job.created_at.isoformat(),
         "updated_at": job.updated_at.isoformat(),
     }
+
 
 
 @app.get("/api/jobs/{job_id}/publishing")
@@ -1555,6 +1598,97 @@ async def upload_source_video_api(
     }
 
 
+@app.post("/api/campaigns/resolve-source")
+async def resolve_source_api(
+    req: ResolveSourceRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Resolves and validates video source with priority hierarchy, media verification, and checksums."""
+    active_requirements = req.requirements
+    if not active_requirements and req.brief_storage_key and await storage.exists(req.brief_storage_key):
+        try:
+            from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+            active_requirements = await CampaignBriefIntelligenceEngine().analyze_from_storage(storage, req.brief_storage_key)
+        except Exception as e:
+            logger.warning("Could not extract requirements for source resolution", error=str(e))
+
+    engine = SourceResolutionEngine(storage=storage)
+    clean_source = req.source_uri.strip() if req.source_uri else None
+    op_upload = clean_source if (req.source_type == "local_file" or (clean_source and not clean_source.startswith("http"))) else None
+    op_url = clean_source if (clean_source and clean_source.startswith("http")) else None
+
+    result = await engine.resolve_source(
+        operator_uploaded_path=op_upload,
+        operator_source_url=op_url,
+        campaign_requirements=active_requirements,
+        whop_discovered_urls=req.whop_discovered_urls,
+    )
+    return result.model_dump(mode="json")
+
+
+@app.post("/api/campaigns/validate-job")
+async def validate_job_api(
+    req: ValidateJobRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Pre-production compatibility gate validating SOURCE + REQUIREMENTS + PLATFORM + ACCOUNT."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+
+    # 1. Requirements
+    active_requirements = req.requirements
+    if not active_requirements and req.brief_storage_key and await storage.exists(req.brief_storage_key):
+        try:
+            from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+            active_requirements = await CampaignBriefIntelligenceEngine().analyze_from_storage(storage, req.brief_storage_key)
+        except Exception as e:
+            logger.warning("Could not extract requirements for validation", error=str(e))
+
+    # 2. Source resolution
+    engine = SourceResolutionEngine(storage=storage)
+    clean_source = req.source_uri.strip() if req.source_uri else None
+    op_upload = clean_source if (not clean_source or not clean_source.startswith("http")) else None
+    op_url = clean_source if (clean_source and clean_source.startswith("http")) else None
+
+    source_res = await engine.resolve_source(
+        operator_uploaded_path=op_upload,
+        operator_source_url=op_url,
+        campaign_requirements=active_requirements,
+    )
+
+    # 3. Account
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    target_plat = req.target_platform.lower()
+    p_enum = AccountPlatform.INSTAGRAM if "instagram" in target_plat else AccountPlatform.YOUTUBE
+
+    target_acc = None
+    if req.target_account_id:
+        target_acc = await vault.get_account_metadata(p_enum, req.target_account_id)
+    else:
+        active_accs = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
+        if active_accs:
+            target_acc = active_accs[0]
+
+    # 4. Compatibility gate
+    gate = PreProductionCompatibilityGate()
+    gate_res = gate.evaluate(
+        source_result=source_res,
+        requirements=active_requirements,
+        target_platform=req.target_platform,
+        target_account=target_acc,
+    )
+
+    return {
+        "is_valid": gate_res.is_valid,
+        "blockers": gate_res.blockers,
+        "warnings": gate_res.warnings,
+        "checks": gate_res.checks,
+        "source_resolution": source_res.model_dump(mode="json"),
+    }
+
+
 @app.post("/api/campaigns/create-and-run")
 async def create_and_run_campaign_api(
     req: CreateAndRunCampaignRequest,
@@ -1570,7 +1704,7 @@ async def create_and_run_campaign_api(
             detail=f"Cannot start campaign: System is in {state.mode.value} state (Emergency Stop: {state.emergency_stopped}, Paused: {state.automation_paused})",
         )
 
-    # 1. Validate Source URI
+    # 1. Validate Source URI structure
     clean_source = req.source_uri.strip() if req.source_uri else ""
     if not clean_source:
         raise HTTPException(status_code=400, detail="Source video URI or uploaded file is required")
@@ -1597,6 +1731,7 @@ async def create_and_run_campaign_api(
 
     vault = EncryptedCredentialVault(storage_driver=storage)
     target_acc_id = req.target_account_id
+    acc_meta = None
 
     if target_acc_id:
         acc_meta = await vault.get_account_metadata(p_enum, target_acc_id)
@@ -1611,17 +1746,57 @@ async def create_and_run_campaign_api(
                 detail=f"Target account '{target_acc_id}' is not active (current status: {acc_meta.status.value}). Only verified active accounts may receive campaign jobs.",
             )
     else:
-        # Check if an active account exists for this platform
         active_accounts = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
         if active_accounts:
-            target_acc_id = active_accounts[0].account_id
+            acc_meta = active_accounts[0]
+            target_acc_id = acc_meta.account_id
         else:
             raise HTTPException(
                 status_code=400,
                 detail=f"No active, verified account found for platform {p_enum.value}. Please connect and verify an account first.",
             )
 
-    # 3. Create Campaign Record
+    # 3. Extract or Resolve Requirements
+    active_requirements = req.requirements
+    if not active_requirements and req.brief_storage_key and await storage.exists(req.brief_storage_key):
+        try:
+            from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+            active_requirements = await CampaignBriefIntelligenceEngine().analyze_from_storage(storage, req.brief_storage_key)
+        except Exception as e:
+            logger.warning("Could not auto-extract requirements on campaign run", error=str(e))
+
+    # 4. Source Resolution with Priority & Campaign Restriction Checks
+    engine = SourceResolutionEngine(storage=storage)
+    op_upload = clean_source if (req.source_type == "local_file" or not clean_source.startswith("http")) else None
+    op_url = clean_source if clean_source.startswith("http") else None
+
+    source_res = await engine.resolve_source(
+        operator_uploaded_path=op_upload,
+        operator_source_url=op_url,
+        campaign_requirements=active_requirements,
+    )
+    if not source_res.is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source resolution failed: {source_res.failure_reason or 'Invalid source asset'}",
+        )
+
+    # 5. Pre-Production Compatibility Gate
+    gate = PreProductionCompatibilityGate()
+    gate_res = gate.evaluate(
+        source_result=source_res,
+        requirements=active_requirements,
+        target_platform=primary_platform_str,
+        target_account=acc_meta,
+    )
+    if not gate_res.is_valid:
+        blockers_summary = "; ".join(gate_res.blockers)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pre-production compatibility gate failed: {blockers_summary}",
+        )
+
+    # 6. Create Campaign Record
     import uuid
     import asyncio
     from clipping.agent.campaign.models import (
@@ -1640,15 +1815,7 @@ async def create_and_run_campaign_api(
     camp_repo = CampaignRepository(storage_driver=storage)
 
     rules = [line.strip() for line in req.requirements_text.splitlines() if line.strip()] if req.requirements_text else []
-    resolved_source_urls = [clean_source] if clean_source.startswith("http") else []
-
-    active_requirements = req.requirements
-    if not active_requirements and req.brief_storage_key and await storage.exists(req.brief_storage_key):
-        try:
-            from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
-            active_requirements = await CampaignBriefIntelligenceEngine().analyze_from_storage(storage, req.brief_storage_key)
-        except Exception as e:
-            logger.warning("Could not auto-extract requirements on campaign run", error=str(e))
+    resolved_source_urls = [source_res.resolved_uri] if source_res.resolved_uri.startswith("http") else []
 
     record = CampaignRecord(
         campaign_id=campaign_id,
@@ -1673,18 +1840,24 @@ async def create_and_run_campaign_api(
     )
     await camp_repo.save_campaign(record)
 
-    # 4. Create Job State Record
+    # 7. Create Job State Record with Complete Execution Telemetry
     job_id = f"job_run_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:4]}"
     state_repo = RemoteStorageStateRepository(storage_driver=storage)
     source_id = f"src_{uuid.uuid4().hex[:8]}"
 
     job_metadata = {
-        "source_uri": clean_source,
-        "source_type": source_ref.source_type.value,
+        "source_uri": source_res.resolved_uri,
+        "source_type": source_res.source_type,
+        "source_resolution": source_res.model_dump(mode="json"),
+        "validation_state": gate_res.model_dump(mode="json"),
         "operator": operator,
         "campaign_name": req.name,
         "target_platform": p_enum.value,
         "target_account_id": target_acc_id,
+        "checkpoint": "01_INGESTION",
+        "retry_count": 0,
+        "resumable": True,
+        "operator_intervention_state": "none",
     }
     if req.brief_storage_key:
         job_metadata["brief_storage_key"] = req.brief_storage_key
@@ -1701,12 +1874,12 @@ async def create_and_run_campaign_api(
         metadata=job_metadata,
     )
 
-    # 5. Background Pipeline Execution
+    # 8. Background Pipeline Execution
     async def _runner():
         try:
             logger.info("Starting background pipeline execution", job_id=job_id, campaign_id=campaign_id)
             code = await run_pipeline(
-                source_uri=clean_source,
+                source_uri=source_res.resolved_uri,
                 campaign_id=campaign_id,
                 job_id=job_id,
                 storage=storage,
@@ -1714,6 +1887,25 @@ async def create_and_run_campaign_api(
             logger.info("Background pipeline finished execution", job_id=job_id, return_code=code)
         except Exception as e:
             logger.exception("Background pipeline runner unhandled error", job_id=job_id, error=str(e))
+            from clipping.agent.campaign.failures import ExecutionFailureClassifier
+            fail = ExecutionFailureClassifier.classify_exception(e, context={"job_id": job_id})
+            try:
+                cur_job = await state_repo.get_job(job_id)
+                if cur_job:
+                    meta_copy = dict(cur_job.metadata_json)
+                    meta_copy["failure_reason"] = fail.message
+                    meta_copy["failure_category"] = fail.category.value
+                    meta_copy["resumable"] = fail.retryable
+                    if fail.is_operator_required:
+                        meta_copy["operator_intervention_state"] = "operator_required"
+                    await state_repo.update_job_state(
+                        job_id=job_id,
+                        new_state=JobState.FAILED,
+                        reason=fail.message,
+                        metadata=meta_copy,
+                    )
+            except Exception:
+                pass
 
     asyncio.create_task(_runner())
 
@@ -1723,10 +1915,13 @@ async def create_and_run_campaign_api(
         "job_id": job_id,
         "target_platform": p_enum.value,
         "target_account_id": target_acc_id,
-        "source_type": source_ref.source_type.value,
+        "source_type": source_res.source_type,
         "requirements": active_requirements.model_dump() if active_requirements else None,
+        "validation_state": gate_res.model_dump(mode="json"),
+        "source_resolution": source_res.model_dump(mode="json"),
         "message": f"Campaign '{req.name}' created and autonomous clipping pipeline started.",
     }
+
 
 
 @app.get("/api/accounts")

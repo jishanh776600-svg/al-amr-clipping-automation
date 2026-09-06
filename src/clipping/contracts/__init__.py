@@ -76,6 +76,13 @@ from clipping.contracts.publishing import (
     PublishingJob,
     PublishingResult,
 )
+from clipping.contracts.source import (
+    SourceCandidatePriority,
+    SourceAccessStatus,
+    SourceCandidate,
+    SourceResolutionResult,
+)
+
 
 __all__ = [
     "BoundingBox",
@@ -138,4 +145,9 @@ __all__ = [
     "PublishingStatus",
     "PublishingJob",
     "PublishingResult",
+    "SourceCandidatePriority",
+    "SourceAccessStatus",
+    "SourceCandidate",
+    "SourceResolutionResult",
 ]
+

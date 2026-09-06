@@ -2693,6 +2693,104 @@ window.AlAmrModals = {
         }
     },
 
+    async runJobPreflightValidation() {
+        let source_uri = "";
+        if (this.campaignSourceType === "local_file") {
+            source_uri = this.campaignVideoFile ? this.campaignVideoFile.name : "";
+        } else {
+            const inputEl = document.getElementById("campaign-source-input");
+            source_uri = inputEl ? inputEl.value.trim() : "";
+        }
+
+        const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+        const platform = (platformRadio && platformRadio.value) || "youtube_shorts";
+        const accountSelect = document.getElementById("campaign-account-select");
+        const targetAccountId = (accountSelect && accountSelect.value) || null;
+
+        const badge = document.getElementById("gate-ready-badge");
+        const diagCard = document.getElementById("source-diag-card");
+        const blockerBanner = document.getElementById("gate-blocker-banner");
+        const blockerText = document.getElementById("gate-blocker-text");
+        const operatorBanner = document.getElementById("gate-operator-banner");
+
+        if (blockerBanner) blockerBanner.classList.add("hidden");
+        if (operatorBanner) operatorBanner.classList.add("hidden");
+        if (badge) {
+            badge.textContent = "VALIDATING...";
+            badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-900 text-cyan-200 animate-pulse";
+        }
+
+        try {
+            const valRes = await AlAmrAPI.validateJob({
+                source_uri: source_uri || "test",
+                target_platform: platform,
+                target_account_id: targetAccountId,
+                brief_storage_key: this.currentBriefStorageKey,
+                requirements: this.currentRequirements,
+            });
+
+            const setCheck = (id, status) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const name = el.textContent.trim().split(' ')[0];
+                if (status === "PASS") {
+                    el.className = "p-1.5 rounded bg-emerald-950/60 border border-emerald-500/60 text-emerald-400 font-bold";
+                    el.innerHTML = `${name} <span class="check-icon">✓</span>`;
+                } else if (status === "FAIL") {
+                    el.className = "p-1.5 rounded bg-rose-950/60 border border-rose-500/60 text-rose-400 font-bold";
+                    el.innerHTML = `${name} <span class="check-icon">✕</span>`;
+                } else {
+                    el.className = "p-1.5 rounded bg-amber-950/60 border border-amber-500/60 text-amber-400 font-bold";
+                    el.innerHTML = `${name} <span class="check-icon">⚠</span>`;
+                }
+            };
+
+            const checks = valRes.checks || {};
+            setCheck("check-source", (checks.source && checks.source.status) || "PASS");
+            setCheck("check-requirements", (checks.requirements && checks.requirements.status) || "PASS");
+            setCheck("check-destination", (checks.destination && checks.destination.status) || "PASS");
+            setCheck("check-account", (checks.account && checks.account.status) || "PASS");
+            setCheck("check-production", valRes.is_valid ? "PASS" : "FAIL");
+
+            if (valRes.source_resolution && diagCard) {
+                diagCard.classList.remove("hidden");
+                const sr = valRes.source_resolution;
+                document.getElementById("diag-source-type").textContent = `${sr.source_type.toUpperCase()} (${sr.source_access_status.toUpperCase()})`;
+                document.getElementById("diag-duration").textContent = sr.duration ? `${sr.duration.toFixed(1)}s` : "Unknown";
+                document.getElementById("diag-resolution").textContent = (sr.width && sr.height) ? `${sr.width}x${sr.height}` : "Unknown";
+                document.getElementById("diag-filesize").textContent = sr.file_size ? `${(sr.file_size / (1024*1024)).toFixed(1)} MB` : "Stream";
+                document.getElementById("diag-checksum").textContent = sr.checksum ? sr.checksum.slice(0, 16) + "..." : "Computed on download";
+            }
+
+            if (valRes.is_valid) {
+                if (badge) {
+                    badge.textContent = "READY FOR PRODUCTION ✓";
+                    badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/60";
+                }
+            } else {
+                if (badge) {
+                    badge.textContent = "VALIDATION FAILED ✕";
+                    badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950 text-rose-300 border border-rose-500/60";
+                }
+                if (blockerBanner && blockerText) {
+                    blockerBanner.classList.remove("hidden");
+                    blockerText.innerHTML = (valRes.blockers || []).map(b => `<div>• ${b}</div>`).join("");
+                }
+            }
+            return valRes;
+        } catch (err) {
+            if (badge) {
+                badge.textContent = "VALIDATION ERROR ✕";
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-950 text-rose-300 border border-rose-500/60";
+            }
+            if (blockerBanner && blockerText) {
+                blockerBanner.classList.remove("hidden");
+                blockerText.textContent = err.message || "Failed to complete compatibility preflight.";
+            }
+            return null;
+        }
+    },
+
     async submitCreateCampaign() {
         const nameInput = document.getElementById("campaign-name-input");
         const sourceInput = document.getElementById("campaign-source-input");
@@ -2715,6 +2813,7 @@ window.AlAmrModals = {
             alertEl.className = `p-3 rounded text-xs border font-mono ${isError ? 'bg-rose-950/50 border-rose-500/60 text-rose-300' : 'bg-emerald-950/50 border-emerald-500/60 text-emerald-300'}`;
             alertEl.innerHTML = `<div class="font-bold mb-0.5">${isError ? '⚠ Campaign Creation Blocked' : '✓ Processing'}</div><div>${msg}</div>`;
         };
+
 
         if (!name) {
             showAlert("Campaign name is required.");

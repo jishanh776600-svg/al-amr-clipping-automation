@@ -35,8 +35,11 @@ class ExtractionMetadata(BaseModel):
     num_pages: int = Field(default=1, ge=1)
     is_image_only: bool = False
     extraction_status: str = Field(default="SUCCESS", description="SUCCESS, NEEDS_REVIEW, or FAILED")
+    review_flag: Optional[str] = None
+    model_used: Optional[str] = None
     error_message: Optional[str] = None
     confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
+
 
 
 class CampaignIdentityRequirements(BaseModel):
@@ -50,8 +53,11 @@ class CampaignIdentityRequirements(BaseModel):
 class SourceRequirements(BaseModel):
     """2. Source video requirements."""
     permitted_source_videos: List[str] = Field(default_factory=list)
+    permitted_source_urls: List[str] = Field(default_factory=list)
     source_urls: List[str] = Field(default_factory=list)
     source_footage_restrictions: List[str] = Field(default_factory=list)
+    source_restrictions: List[str] = Field(default_factory=list)
+    prohibited_content: List[str] = Field(default_factory=list)
     specific_footage_required: bool = False
     raw_source_text: Optional[str] = None
 
@@ -62,8 +68,10 @@ class ClipRequirements(BaseModel):
     min_duration_seconds: Optional[float] = Field(default=None, ge=1.0)
     max_duration_seconds: Optional[float] = Field(default=None, ge=1.0)
     preferred_duration_seconds: Optional[float] = Field(default=None, ge=1.0)
+    target_duration_seconds: Optional[float] = Field(default=None, ge=1.0)
     aspect_ratio: str = Field(default="9:16", description="Target aspect ratio e.g. 9:16")
     resolution: Optional[str] = Field(default="1080x1920")
+    resolution_min: Optional[str] = Field(default=None)
     fps: Optional[int] = Field(default=None, ge=1)
     duration_modality: RequirementModality = RequirementModality.UNKNOWN
 
@@ -82,6 +90,7 @@ class BrandingRequirements(BaseModel):
     """5. Branding, watermark, and caption requirements."""
     required_logo: Optional[str] = None
     watermark_requirements: Optional[str] = None
+    required_watermark: Optional[str] = None
     branding_rules: List[str] = Field(default_factory=list)
     caption_subtitle_requirements: Optional[str] = None
     watermark_modality: RequirementModality = RequirementModality.UNKNOWN
@@ -96,11 +105,13 @@ class TextRequirements(BaseModel):
     call_to_action: Optional[str] = None
     cta_modality: RequirementModality = RequirementModality.UNKNOWN
     required_keywords: List[str] = Field(default_factory=list)
+    mention_handles: List[str] = Field(default_factory=list)
 
 
 class PlatformRequirements(BaseModel):
     """7. Target platform requirements."""
     platforms: List[str] = Field(default_factory=list, description="Target platforms e.g. ['youtube_shorts', 'instagram_reels']")
+    target_platforms: List[str] = Field(default_factory=list)
     preferred_platform: Optional[str] = None
     raw_platform_notes: Optional[str] = None
 
@@ -109,9 +120,12 @@ class SubmissionRequirements(BaseModel):
     """8. Submission metadata, caps, and deadlines."""
     submission_count: Optional[int] = Field(default=None, ge=1)
     deadline: Optional[str] = None
+    submission_deadline: Optional[str] = None
+    submission_platform: Optional[str] = None
     submission_url_or_process: Optional[str] = None
     naming_requirements: Optional[str] = None
     campaign_specific_metadata: Dict[str, Any] = Field(default_factory=dict)
+
 
 
 class MonetizationRequirements(BaseModel):

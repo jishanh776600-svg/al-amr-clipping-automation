@@ -11,14 +11,20 @@ from clipping.ingestion.exceptions import (
     ChecksumMismatchError,
 )
 
+from clipping.ingestion.robust_downloader import RobustMediaDownloader
+from clipping.ingestion.source_resolver import SourceResolutionEngine
+
 __all__ = [
     "SourceType",
     "SourceReference",
     "VideoIngestor",
     "RemoteVideoIngestor",
+    "RobustMediaDownloader",
+    "SourceResolutionEngine",
     "IngestionError",
     "InvalidSourceError",
     "IngestionNetworkError",
     "UnsupportedMediaError",
     "ChecksumMismatchError",
 ]
+

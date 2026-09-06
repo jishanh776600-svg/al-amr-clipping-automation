@@ -667,7 +667,79 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- SECTION 3.5: SOURCE & CAMPAIGN EXECUTION (PRE-PRODUCTION GATE) -->
+                <div id="source-execution-panel" class="p-3.5 bg-surface2/90 rounded border border-cyan-500/40 space-y-3">
+                    <div class="flex items-center justify-between border-b border-slate-700/60 pb-1.5">
+                        <span class="text-cyan-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                            <span>⚡ SOURCE & CAMPAIGN EXECUTION</span>
+                            <span class="text-slate-500 font-normal">// Pre-Production Gate</span>
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <span id="gate-ready-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                PENDING VALIDATION
+                            </span>
+                            <button type="button" onclick="AlAmrModals.runJobPreflightValidation()" class="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-900/50 hover:bg-cyan-800 text-cyan-200 border border-cyan-500/40 transition">
+                                🔍 CHECK COMPATIBILITY
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Validation Checkpoints Matrix -->
+                    <div class="grid grid-cols-5 gap-1.5 text-center text-[10px] font-mono">
+                        <div id="check-source" class="p-1.5 rounded bg-surface1 border border-slate-700 text-slate-400">
+                            SOURCE <span class="check-icon">⋯</span>
+                        </div>
+                        <div id="check-requirements" class="p-1.5 rounded bg-surface1 border border-slate-700 text-slate-400">
+                            REQUIREMENTS <span class="check-icon">⋯</span>
+                        </div>
+                        <div id="check-destination" class="p-1.5 rounded bg-surface1 border border-slate-700 text-slate-400">
+                            DESTINATION <span class="check-icon">⋯</span>
+                        </div>
+                        <div id="check-account" class="p-1.5 rounded bg-surface1 border border-slate-700 text-slate-400">
+                            ACCOUNT <span class="check-icon">⋯</span>
+                        </div>
+                        <div id="check-production" class="p-1.5 rounded bg-surface1 border border-slate-700 text-slate-400">
+                            READY <span class="check-icon">⋯</span>
+                        </div>
+                    </div>
+
+                    <!-- Source Diagnostics Sub-card -->
+                    <div id="source-diag-card" class="hidden p-2 rounded bg-surface1 border border-slate-700 text-[11px] font-mono space-y-1">
+                        <div class="flex items-center justify-between text-slate-300">
+                            <span>RESOLVED ASSET:</span>
+                            <span id="diag-source-type" class="text-cyan-300 font-bold">--</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-1 text-[10px] text-slate-400">
+                            <div>Duration: <span id="diag-duration" class="text-slate-200 font-bold">--</span></div>
+                            <div>Resolution: <span id="diag-resolution" class="text-slate-200 font-bold">--</span></div>
+                            <div>File Size: <span id="diag-filesize" class="text-slate-200 font-bold">--</span></div>
+                        </div>
+                        <div class="text-[9px] text-slate-500 truncate">
+                            SHA-256: <span id="diag-checksum" class="text-slate-400">--</span>
+                        </div>
+                    </div>
+
+                    <!-- Blocker / Fatal Error Banner -->
+                    <div id="gate-blocker-banner" class="hidden p-2.5 rounded bg-rose-950/60 border border-rose-500/60 text-xs font-mono text-rose-200 space-y-1">
+                        <div class="flex items-center gap-1.5 font-bold text-rose-400">
+                            <span>🚫</span>
+                            <span id="gate-blocker-title">COMPATIBILITY BLOCKER</span>
+                        </div>
+                        <div id="gate-blocker-text" class="text-[11px] text-rose-300 leading-relaxed"></div>
+                    </div>
+
+                    <!-- Operator Action Required Banner -->
+                    <div id="gate-operator-banner" class="hidden p-2.5 rounded bg-amber-950/60 border border-amber-500/60 text-xs font-mono text-amber-200 space-y-1">
+                        <div class="flex items-center gap-1.5 font-bold text-amber-400">
+                            <span>⚠️</span>
+                            <span>OPERATOR ACTION REQUIRED</span>
+                        </div>
+                        <div id="gate-operator-text" class="text-[11px] text-amber-300 leading-relaxed"></div>
+                    </div>
+                </div>
             </div>
+
 
             <!-- SECTION 4: START PIPELINE (ACTIONS & SUBMISSION) -->
             <div class="flex items-center justify-between p-3.5 border-t border-slate-800 bg-surface1">

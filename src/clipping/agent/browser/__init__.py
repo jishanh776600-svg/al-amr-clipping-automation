@@ -11,6 +11,16 @@ from clipping.agent.browser.models import (
     PageExtractionResult,
 )
 
+from clipping.agent.browser.challenge import (
+    ChallengeType,
+    ChallengeResolutionStatus,
+    ChallengeResult,
+    ChallengeHandler,
+    OperatorEscalationChallengeHandler,
+    ChallengeSolverAdapter,
+    BrowserChallengeManager,
+)
+
 __all__ = [
     "BrowserAutomationCapability",
     "BrowserDriver",
@@ -22,4 +32,12 @@ __all__ = [
     "BrowserActionType",
     "BrowserSessionConfig",
     "PageExtractionResult",
+    "ChallengeType",
+    "ChallengeResolutionStatus",
+    "ChallengeResult",
+    "ChallengeHandler",
+    "OperatorEscalationChallengeHandler",
+    "ChallengeSolverAdapter",
+    "BrowserChallengeManager",
 ]
+
