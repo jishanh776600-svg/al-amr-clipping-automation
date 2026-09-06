@@ -275,3 +275,77 @@ async def test_ui_publish_clip_lifecycle(ui_test_env, monkeypatch):
         assert pub_data["status"] == "success"
         assert pub_data["platform_post_id"] == "yt_short_12345"
 
+
+@pytest.mark.asyncio
+async def test_ui_verify_account_live_meta_and_youtube(ui_test_env, monkeypatch):
+    from unittest.mock import AsyncMock
+    from clipping.preflight.service_verifier import ServiceVerificationResult
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Unconfigured Instagram returns unconfigured / unverified cleanly
+        resp_unconf = await client.post(
+            "/api/accounts/verify",
+            json={"platform": "instagram", "credentials": {}},
+        )
+        assert resp_unconf.status_code == 200
+        data_unconf = resp_unconf.json()
+        assert data_unconf["configured"] is False
+        assert data_unconf["verified"] is False
+        assert "not configured" in data_unconf["message"]
+
+        # 2. Simulate genuine successful Meta verification
+        mock_ig_res = ServiceVerificationResult(
+            service="instagram",
+            configured=True,
+            verified=True,
+            status_code=200,
+            account_identity="@alamr_official (178414001)",
+            message="Instagram Graph API verified: Authenticated as @alamr_official",
+            why_required="Automated Instagram Reels publishing",
+            configuration_requirement="Meta Graph API access token",
+            blocks_dry_run=False,
+            blocks_live_operation=False,
+        )
+        monkeypatch.setattr(
+            "clipping.preflight.service_verifier.RealServiceVerifier.verify_instagram",
+            AsyncMock(return_value=mock_ig_res),
+        )
+
+        resp_ver = await client.post(
+            "/api/accounts/verify",
+            json={
+                "platform": "instagram",
+                "account_id": "178414001",
+                "credentials": {"access_token": "EAA...", "instagram_account_id": "178414001"},
+            },
+        )
+        assert resp_ver.status_code == 200
+        data_ver = resp_ver.json()
+        assert data_ver["verified"] is True
+        assert data_ver["account_identity"] == "@alamr_official (178414001)"
+
+        # 3. Register account with verify_connection: True
+        reg_resp = await client.post(
+            "/api/accounts",
+            json={
+                "platform": "instagram",
+                "account_id": "178414001",
+                "username": "alamr_official",
+                "display_name": "AL AMR Official Reels",
+                "credentials": {"access_token": "EAA..."},
+                "verify_connection": True,
+            },
+        )
+        assert reg_resp.status_code == 200
+        reg_data = reg_resp.json()
+        assert reg_data["status"] == "success"
+        assert reg_data["account"]["status"] == "active"
+        assert reg_data["verification"]["verified"] is True
+
+        # 4. Re-verify enrolled account
+        enrolled_ver = await client.get("/api/accounts/instagram/178414001/verify")
+        assert enrolled_ver.status_code == 200
+        assert enrolled_ver.json()["verified"] is True
+
+

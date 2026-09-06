@@ -860,26 +860,47 @@ window.AlAmrViews = {
             const rows = filtered.length > 0
                 ? filtered.map(a => `
                     <tr class="border-b border-slate-800">
-                        <td class="font-mono font-bold text-cyan-400">${a.platform.toUpperCase()}</td>
+                        <td class="font-mono font-bold ${a.platform === 'youtube' ? 'text-red-400' : 'text-purple-400'}">${a.platform.toUpperCase()}</td>
                         <td class="font-mono font-bold text-white">${a.account_id}</td>
-                        <td class="font-mono">${a.username}</td>
+                        <td class="font-mono text-cyan-300">${a.username}</td>
                         <td>${a.display_name || '—'}</td>
-                        <td><span class="status-pill ${a.status === 'active' ? 'operational' : 'emergency'}">${a.status.toUpperCase()}</span></td>
+                        <td><span class="status-pill ${a.status === 'active' ? 'operational' : (a.status === 'pending_verification' ? 'warning' : 'emergency')}">${a.status.toUpperCase()}</span></td>
+                        <td>
+                            ${a.status === 'active'
+                                ? '<span class="text-emerald-400 font-mono text-xs flex items-center gap-1 font-bold"><span>✓</span><span>VERIFIED</span></span>'
+                                : (a.status === 'pending_verification'
+                                    ? '<span class="text-amber-400 font-mono text-xs flex items-center gap-1 font-bold"><span>⏳</span><span>PENDING</span></span>'
+                                    : '<span class="text-rose-400 font-mono text-xs flex items-center gap-1 font-bold"><span>⚠</span><span>RESTRICTED</span></span>'
+                                  )
+                            }
+                        </td>
                         <td class="font-mono text-xs">${a.reuse_eligibility ? 'YES' : 'NO'}</td>
                         <td>
-                            <button onclick="AlAmrModals.openAccountStatusModal('${a.platform}', '${a.account_id}', '${a.status}')" class="px-2 py-0.5 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-cyan-400 border border-slate-700">
-                                Toggle Status
-                            </button>
+                            <div class="flex items-center gap-1.5">
+                                <button onclick="AlAmrModals.verifyEnrolledAccount('${a.platform}', '${a.account_id}')" class="px-2 py-0.5 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-cyan-400 border border-slate-700 transition" title="Test Live Connection">
+                                    ⚡ Verify
+                                </button>
+                                <button onclick="AlAmrModals.openAccountStatusModal('${a.platform}', '${a.account_id}', '${a.status}')" class="px-2 py-0.5 text-xs font-mono rounded bg-surface3 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+                                    Status
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `).join('')
-                : `<tr><td colspan="7" class="text-center py-6 text-slate-500 font-mono text-xs">No matching accounts found in encrypted vault.</td></tr>`;
+                : `<tr><td colspan="8" class="text-center py-6 text-slate-500 font-mono text-xs">No matching accounts found in encrypted vault.</td></tr>`;
 
             container.innerHTML = `
                 <div class="tech-card">
                     <div class="tech-card-header">
-                        <div class="tech-card-title">MANAGED CHANNELS & ACCOUNTS (${filtered.length}/${accounts.length})</div>
-                        <span class="status-pill passed">FERNET ENCRYPTED AES-128 (ZERO SECRETS EXPOSED)</span>
+                        <div class="flex items-center gap-3">
+                            <div class="tech-card-title">MANAGED CHANNELS & ACCOUNTS (${filtered.length}/${accounts.length})</div>
+                            <span class="status-pill passed">FERNET ENCRYPTED AES-128 (ZERO SECRETS EXPOSED)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="AlAmrModals.openAddAccountModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5 shadow-md shadow-cyan-950">
+                                <span>+</span><span>ADD ACCOUNT</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Filter Toolbar -->
@@ -896,13 +917,13 @@ window.AlAmrViews = {
                             </select>
                         </div>
                         <div class="text-right flex items-center justify-end text-slate-400">
-                            <span>OAuth Tokens Masked</span>
+                            <span>OAuth & Graph API Tokens Masked</span>
                         </div>
                     </div>
 
                     <div class="tech-table-container">
                         <table class="tech-table">
-                            <thead><tr><th>PLATFORM</th><th>ACCOUNT ID</th><th>USERNAME</th><th>DISPLAY NAME</th><th>STATUS</th><th>REUSE</th><th>ACTION</th></tr></thead>
+                            <thead><tr><th>PLATFORM</th><th>ACCOUNT ID</th><th>USERNAME</th><th>DISPLAY NAME</th><th>STATUS</th><th>VERIFICATION</th><th>REUSE</th><th>ACTIONS</th></tr></thead>
                             <tbody>${rows}</tbody>
                         </table>
                     </div>
@@ -1752,6 +1773,209 @@ window.AlAmrModals = {
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
             alert(`Account update failed: ${err.message}`);
+        }
+    },
+
+    // 7b. Add Account Modal & Registration
+    openAddAccountModal() {
+        const modal = document.getElementById("modal-add-account");
+        if (!modal) return;
+        const ytId = document.getElementById("add-account-yt-id");
+        const ytUser = document.getElementById("add-account-yt-user");
+        const ytRefresh = document.getElementById("add-account-yt-refresh");
+        const igId = document.getElementById("add-account-ig-id");
+        const igUser = document.getElementById("add-account-ig-user");
+        const igName = document.getElementById("add-account-ig-name");
+        const igToken = document.getElementById("add-account-ig-token");
+        const verResult = document.getElementById("add-account-ver-result");
+
+        if (ytId) ytId.value = "";
+        if (ytUser) ytUser.value = "";
+        if (ytRefresh) ytRefresh.value = "";
+        if (igId) igId.value = "";
+        if (igUser) igUser.value = "";
+        if (igName) igName.value = "";
+        if (igToken) igToken.value = "";
+        if (verResult) {
+            verResult.className = "hidden p-3 rounded text-[11px] font-mono border";
+            verResult.innerHTML = "";
+        }
+
+        this.setAddAccountPlatform("youtube");
+        modal.classList.remove("hidden");
+    },
+
+    closeAddAccountModal() {
+        const modal = document.getElementById("modal-add-account");
+        if (modal) modal.classList.add("hidden");
+    },
+
+    setAddAccountPlatform(platform) {
+        const platInput = document.getElementById("add-account-platform");
+        if (platInput) platInput.value = platform;
+
+        const tabYt = document.getElementById("add-account-tab-yt");
+        const tabIg = document.getElementById("add-account-tab-ig");
+        const panelYt = document.getElementById("add-account-panel-youtube");
+        const panelIg = document.getElementById("add-account-panel-instagram");
+        const verResult = document.getElementById("add-account-ver-result");
+
+        if (verResult) {
+            verResult.className = "hidden p-3 rounded text-[11px] font-mono border";
+            verResult.innerHTML = "";
+        }
+
+        if (platform === "youtube") {
+            if (tabYt) tabYt.className = "flex-1 py-1.5 px-3 rounded text-xs font-mono font-bold transition flex items-center justify-center gap-1.5 bg-red-600/20 text-red-300 border border-red-500/40";
+            if (tabIg) tabIg.className = "flex-1 py-1.5 px-3 rounded text-xs font-mono font-bold transition flex items-center justify-center gap-1.5 bg-surface2 text-slate-400 hover:text-slate-200 border border-slate-700";
+            if (panelYt) panelYt.classList.remove("hidden");
+            if (panelIg) panelIg.classList.add("hidden");
+        } else {
+            if (tabIg) tabIg.className = "flex-1 py-1.5 px-3 rounded text-xs font-mono font-bold transition flex items-center justify-center gap-1.5 bg-purple-600/20 text-purple-300 border border-purple-500/40";
+            if (tabYt) tabYt.className = "flex-1 py-1.5 px-3 rounded text-xs font-mono font-bold transition flex items-center justify-center gap-1.5 bg-surface2 text-slate-400 hover:text-slate-200 border border-slate-700";
+            if (panelIg) panelIg.classList.remove("hidden");
+            if (panelYt) panelYt.classList.add("hidden");
+        }
+    },
+
+    async startYouTubeOAuth() {
+        try {
+            window.AlAmrShellInstance.showToast("Initiating Google Cloud OAuth flow...", "info");
+            const res = await AlAmrAPI.getYouTubeAuthUrl();
+            if (res && res.authorize_url) {
+                window.open(res.authorize_url, "_blank", "width=600,height=700");
+                window.AlAmrShellInstance.showToast("OAuth consent window opened. Complete authorization there.", "success");
+            } else {
+                throw new Error("Missing authorize_url in response");
+            }
+        } catch (err) {
+            alert(`Failed to start Google OAuth: ${err.message}`);
+        }
+    },
+
+    async testVerifyAccount() {
+        const platform = document.getElementById("add-account-platform")?.value || "instagram";
+        const verResult = document.getElementById("add-account-ver-result");
+        if (!verResult) return;
+
+        verResult.classList.remove("hidden");
+        verResult.className = "p-3 rounded text-[11px] font-mono border bg-slate-800/80 border-slate-600 text-slate-300 flex items-center gap-2";
+        verResult.innerHTML = `<span>⏳</span><span>Validating credentials with live provider API...</span>`;
+
+        try {
+            let accountId = "";
+            let credentials = {};
+
+            if (platform === "instagram") {
+                accountId = document.getElementById("add-account-ig-id")?.value.trim() || "";
+                const token = document.getElementById("add-account-ig-token")?.value.trim() || "";
+                if (!token) {
+                    verResult.className = "p-3 rounded text-[11px] font-mono border bg-amber-950/40 border-amber-500/50 text-amber-300";
+                    verResult.innerHTML = `<div class="font-bold mb-1">⚠ Missing Access Token</div><div>Enter a Meta Graph API Access Token to test connection.</div>`;
+                    return;
+                }
+                credentials = { access_token: token };
+            } else {
+                accountId = document.getElementById("add-account-yt-id")?.value.trim() || "";
+                const refresh = document.getElementById("add-account-yt-refresh")?.value.trim() || "";
+                credentials = { refresh_token: refresh };
+            }
+
+            const res = await AlAmrAPI.verifyAccount(platform, accountId || null, credentials);
+            if (res.verified) {
+                verResult.className = "p-3 rounded text-[11px] font-mono border bg-emerald-950/40 border-emerald-500/50 text-emerald-300";
+                verResult.innerHTML = `
+                    <div class="font-bold flex items-center gap-1.5 mb-1">
+                        <span>✓</span><span>LIVE CONNECTION VERIFIED</span>
+                    </div>
+                    <div>Identity: ${res.account_identity || res.username || accountId}</div>
+                    <div class="text-[10px] text-emerald-400/80 mt-1">${res.message || 'Status 200 OK'}</div>
+                `;
+            } else {
+                verResult.className = "p-3 rounded text-[11px] font-mono border bg-rose-950/40 border-rose-500/50 text-rose-300";
+                verResult.innerHTML = `
+                    <div class="font-bold flex items-center gap-1.5 mb-1">
+                        <span>⚠</span><span>VERIFICATION REJECTED (HTTP ${res.status_code || 'ERROR'})</span>
+                    </div>
+                    <div>${res.message || 'Provider rejected credentials.'}</div>
+                    ${res.configuration_requirement ? `<div class="text-[10px] text-rose-400/80 mt-1">Required: ${res.configuration_requirement}</div>` : ''}
+                `;
+            }
+        } catch (err) {
+            verResult.className = "p-3 rounded text-[11px] font-mono border bg-rose-950/40 border-rose-500/50 text-rose-300";
+            verResult.innerHTML = `<div class="font-bold mb-1">⚠ Verification Failed</div><div>${err.message}</div>`;
+        }
+    },
+
+    async submitAddAccount() {
+        const platform = document.getElementById("add-account-platform")?.value || "youtube";
+        let accountId = "";
+        let username = "";
+        let displayName = "";
+        let credentials = {};
+
+        if (platform === "youtube") {
+            accountId = document.getElementById("add-account-yt-id")?.value.trim() || "";
+            username = document.getElementById("add-account-yt-user")?.value.trim() || "";
+            const refresh = document.getElementById("add-account-yt-refresh")?.value.trim() || "";
+            if (!accountId) {
+                alert("YouTube Channel ID is required (e.g. UC_...).");
+                return;
+            }
+            displayName = username ? `${username} (YouTube)` : "YouTube Channel";
+            if (refresh) {
+                credentials.refresh_token = refresh;
+            }
+        } else if (platform === "instagram") {
+            accountId = document.getElementById("add-account-ig-id")?.value.trim() || "";
+            username = document.getElementById("add-account-ig-user")?.value.trim() || "";
+            displayName = document.getElementById("add-account-ig-name")?.value.trim() || (username ? `@${username} (Reels)` : "Instagram Account");
+            const token = document.getElementById("add-account-ig-token")?.value.trim() || "";
+            if (!accountId || !username) {
+                alert("Instagram Account ID and Username are required.");
+                return;
+            }
+            if (token) {
+                credentials.access_token = token;
+            }
+        }
+
+        try {
+            window.AlAmrShellInstance.showToast("Enrolling account in encrypted vault...", "info");
+            const res = await AlAmrAPI.registerAccount({
+                platform,
+                account_id: accountId,
+                username: username || accountId,
+                display_name: displayName,
+                credentials,
+                verify_connection: true
+            });
+
+            this.closeAddAccountModal();
+            const status = res.account?.status || res.status || "enrolled";
+            if (status === "active") {
+                window.AlAmrShellInstance.showToast(`Account ${accountId} enrolled & verified active!`, "success");
+            } else {
+                window.AlAmrShellInstance.showToast(`Account ${accountId} enrolled (${status.toUpperCase()})`, "info");
+            }
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            alert(`Failed to add account: ${err.message}`);
+        }
+    },
+
+    async verifyEnrolledAccount(platform, accountId) {
+        try {
+            window.AlAmrShellInstance.showToast(`Verifying ${platform.toUpperCase()} account '${accountId}'...`, "info");
+            const res = await AlAmrAPI.verifyEnrolledAccount(platform, accountId);
+            if (res.verified) {
+                window.AlAmrShellInstance.showToast(`✓ Account '${accountId}' verified active with ${platform.toUpperCase()}`, "success");
+            } else {
+                window.AlAmrShellInstance.showToast(`⚠ Verification: ${res.verification?.message || 'Token expired or unverified'}`, "error");
+            }
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Verification request failed: ${err.message}`, "error");
         }
     },
 

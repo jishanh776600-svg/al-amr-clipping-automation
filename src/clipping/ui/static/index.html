@@ -495,6 +495,138 @@
         </div>
     </div>
 
+    <!-- ADD / CONNECT ACCOUNT MODAL -->
+    <div id="modal-add-account" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+        <div class="tech-card w-full max-w-xl bg-surface1 my-8">
+            <div class="tech-card-header">
+                <div>
+                    <div class="tech-card-title text-cyanAccent flex items-center gap-2">
+                        <span>CONNECT & ENROLL CREATOR ACCOUNT</span>
+                    </div>
+                    <div class="text-[10px] font-mono text-slate-400 mt-0.5">
+                        Encrypted Credential Vault // Live Platform Verification
+                    </div>
+                </div>
+                <button onclick="AlAmrModals.closeAddAccountModal()" class="text-slate-400 hover:text-white text-base">✕</button>
+            </div>
+
+            <div class="p-4 space-y-4 text-xs font-mono">
+                <!-- Platform Selector Tabs -->
+                <div>
+                    <label class="block text-slate-400 mb-1.5 font-bold">SELECT PLATFORM // PROVIDER</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" id="tab-btn-youtube" onclick="AlAmrModals.setAddAccountPlatform('youtube')" class="py-2.5 px-3 rounded border text-center font-bold transition flex items-center justify-center gap-2 border-cyan-500 bg-cyan-950/40 text-cyan-300">
+                            <span class="text-red-500">▶</span>
+                            <span>YouTube Shorts</span>
+                        </button>
+                        <button type="button" id="tab-btn-instagram" onclick="AlAmrModals.setAddAccountPlatform('instagram')" class="py-2.5 px-3 rounded border text-center font-bold transition flex items-center justify-center gap-2 border-slate-700 bg-surface2 text-slate-400 hover:text-white">
+                            <span class="text-pink-500">📷</span>
+                            <span>Instagram (Meta Graph)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <input type="hidden" id="add-account-platform" value="youtube">
+
+                <!-- YOUTUBE PANEL -->
+                <div id="add-account-panel-youtube" class="space-y-3">
+                    <div class="p-3 bg-surface2/80 rounded border border-slate-700/80">
+                        <div class="text-slate-300 font-bold mb-1 flex items-center gap-2">
+                            <span class="text-red-400">OAuth 2.0 Web Flow:</span>
+                            <span class="status-pill passed text-[9px]">RECOMMENDED</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mb-3">
+                            Connect via Google Cloud OAuth client. Click below to open the Google consent screen and grant YouTube upload & read permissions.
+                        </p>
+                        <button type="button" onclick="AlAmrModals.startYouTubeOAuth()" class="w-full py-2 px-3 rounded bg-red-700 hover:bg-red-600 text-white font-bold transition flex items-center justify-center gap-2 shadow-md shadow-red-950">
+                            <span>▶</span>
+                            <span>CONNECT VIA GOOGLE OAUTH 2.0</span>
+                        </button>
+                    </div>
+
+                    <div class="relative flex py-1 items-center">
+                        <div class="flex-grow border-t border-slate-800"></div>
+                        <span class="flex-shrink mx-3 text-slate-500 text-[10px]">OR MANUAL ENROLLMENT</span>
+                        <div class="flex-grow border-t border-slate-800"></div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div>
+                            <label class="block text-slate-400 mb-1">YouTube Channel ID:</label>
+                            <input type="text" id="add-account-yt-id" placeholder="e.g. UC_x0123456789abcdef" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">Channel Name / Handle:</label>
+                            <input type="text" id="add-account-yt-user" placeholder="e.g. al_amr_creator" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">OAuth Refresh Token (Optional if client configured in .env):</label>
+                            <input type="password" id="add-account-yt-refresh" placeholder="1//04... (kept strictly encrypted)" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INSTAGRAM PANEL -->
+                <div id="add-account-panel-instagram" class="hidden space-y-3">
+                    <div class="p-3 bg-purple-950/20 rounded border border-purple-800/40">
+                        <div class="text-purple-300 font-bold mb-1 flex items-center gap-2">
+                            <span>Official Meta Graph API v19.0 Integration</span>
+                            <span class="status-pill passed text-[9px]">PROD READY</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400">
+                            Connects directly to Meta Graph API for automated Instagram Reels publishing. Requires a Meta User or Page Access Token with <code class="text-pink-400 bg-surface3 px-1 rounded">instagram_content_publish</code> scope.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-slate-400 mb-1">Instagram Account ID:</label>
+                                <input type="text" id="add-account-ig-id" placeholder="e.g. 17841405829283921" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                            </div>
+                            <div>
+                                <label class="block text-slate-400 mb-1">Instagram Handle / Username:</label>
+                                <input type="text" id="add-account-ig-user" placeholder="e.g. al_amr_official" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">Display Name (Optional):</label>
+                            <input type="text" id="add-account-ig-name" placeholder="e.g. AL AMR Official Reels" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">Meta Graph API Access Token:</label>
+                            <input type="password" id="add-account-ig-token" placeholder="EAA... (User or Page Long-Lived Token)" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500">
+                        </div>
+                    </div>
+
+                    <!-- Test Connection Live Button -->
+                    <div class="pt-1">
+                        <button type="button" onclick="AlAmrModals.testVerifyAccount()" class="w-full py-2 px-3 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 font-bold border border-purple-500/50 transition flex items-center justify-center gap-2">
+                            <span>⚡</span>
+                            <span>TEST & VERIFY CONNECTION (META GRAPH API)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- LIVE VERIFICATION RESULT CONTAINER -->
+                <div id="add-account-ver-result" class="hidden p-3 rounded text-[11px] font-mono border"></div>
+
+                <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <span class="text-[10px] text-slate-500">Zero plain-text secrets stored</span>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="AlAmrModals.closeAddAccountModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                            Cancel
+                        </button>
+                        <button type="button" onclick="AlAmrModals.submitAddAccount()" class="px-4 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 shadow-md shadow-emerald-950">
+                            <span>✓</span>
+                            <span>ENROLL IN VAULT</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ACCOUNT STATUS UPDATE MODAL -->
     <div id="modal-account-status" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
         <div class="tech-card w-full max-w-md bg-surface1">

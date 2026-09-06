@@ -202,6 +202,35 @@ class AlAmrAPI {
         });
     }
 
+    static async registerAccount(accountData) {
+        return this.request("/api/accounts", {
+            method: "POST",
+            body: JSON.stringify(accountData)
+        });
+    }
+
+    static async verifyAccount(platform, accountId = null, credentials = {}) {
+        return this.request("/api/accounts/verify", {
+            method: "POST",
+            body: JSON.stringify({
+                platform,
+                account_id: accountId,
+                credentials
+            })
+        });
+    }
+
+    static async verifyEnrolledAccount(platform, accountId) {
+        return this.request(`/api/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(accountId)}/verify`);
+    }
+
+    static async getYouTubeAuthUrl(redirectUri = "http://localhost:8000/api/auth/youtube/callback") {
+        return this.request("/api/auth/youtube/authorize-url", {
+            method: "POST",
+            body: JSON.stringify({ redirect_uri: redirectUri })
+        });
+    }
+
     // 9. Human Approval Gateway
     static async listPendingApprovals(limit = 50) {
         return this.request(`/api/approvals/pending?limit=${limit}`);

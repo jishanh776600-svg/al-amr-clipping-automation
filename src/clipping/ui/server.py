@@ -147,6 +147,12 @@ class AccountStatusUpdateRequest(BaseModel):
     status: str = Field(..., description="'active', 'suspended', 'rate_limited', 'cooldown'")
 
 
+class AccountVerifyRequest(BaseModel):
+    platform: str = Field(..., description="'youtube' or 'instagram'")
+    account_id: Optional[str] = None
+    credentials: Dict[str, Any] = Field(default_factory=dict)
+
+
 class AccountRegistrationRequest(BaseModel):
     platform: str = Field(..., description="'youtube' or 'instagram'")
     account_id: str = Field(..., min_length=1, max_length=128)
@@ -156,6 +162,7 @@ class AccountRegistrationRequest(BaseModel):
     reuse_eligibility: bool = True
     tags: List[str] = Field(default_factory=list)
     credentials: Optional[Dict[str, Any]] = None  # Sensitive secrets encrypted into vault
+    verify_connection: bool = False
 
 
 class CampaignStatusUpdateRequest(BaseModel):
@@ -1404,6 +1411,104 @@ async def get_account_detail_api(
     return meta.to_safe_dict()
 
 
+@app.post("/api/accounts/verify")
+async def verify_account_credentials_api(
+    req: AccountVerifyRequest,
+    operator: str = Depends(get_current_operator),
+) -> Dict[str, Any]:
+    """
+    Non-destructively verifies credentials against live platform APIs (Google YouTube / Meta Instagram).
+    Zero media is published. Zero secrets are leaked in the response.
+    """
+    from clipping.preflight.service_verifier import RealServiceVerifier
+
+    verifier = RealServiceVerifier()
+    platform_clean = req.platform.lower().strip()
+
+    if platform_clean == "instagram":
+        creds = dict(req.credentials)
+        if req.account_id and not creds.get("instagram_account_id") and not creds.get("user_id"):
+            creds["instagram_account_id"] = req.account_id
+        res = await verifier.verify_instagram(credentials=creds)
+        return {
+            "platform": "instagram",
+            "configured": res.configured,
+            "verified": res.verified,
+            "status_code": res.status_code,
+            "account_identity": res.account_identity,
+            "message": res.message,
+            "details": res.details,
+            "blocks_live_operation": res.blocks_live_operation,
+        }
+    elif platform_clean == "youtube":
+        creds = dict(req.credentials)
+        if req.account_id and not creds.get("channel_id"):
+            creds["channel_id"] = req.account_id
+        res = await verifier.verify_youtube(credentials=creds)
+        return {
+            "platform": "youtube",
+            "configured": res.configured,
+            "verified": res.verified,
+            "status_code": res.status_code,
+            "account_identity": res.account_identity,
+            "message": res.message,
+            "details": res.details,
+            "blocks_live_operation": res.blocks_live_operation,
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform for live verification: {req.platform}")
+
+
+@app.get("/api/accounts/{platform}/{account_id}/verify")
+async def verify_enrolled_account_api(
+    platform: str,
+    account_id: str,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Tests an enrolled account's encrypted credentials against the platform's live API."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+    from clipping.preflight.service_verifier import RealServiceVerifier
+
+    try:
+        p_enum = AccountPlatform(platform.lower().strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    meta = await vault.get_account_metadata(p_enum, account_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Account not found in vault")
+
+    creds = await vault.get_account_credentials(p_enum, account_id) or {}
+    verifier = RealServiceVerifier()
+
+    if p_enum == AccountPlatform.INSTAGRAM:
+        res = await verifier.verify_instagram(credentials=creds)
+    elif p_enum == AccountPlatform.YOUTUBE:
+        res = await verifier.verify_youtube(credentials=creds)
+    else:
+        raise HTTPException(status_code=400, detail=f"Live verification not supported for platform: {platform}")
+
+    # Update account status if verification passed
+    if res.verified and meta.status != AccountStatus.ACTIVE:
+        await vault.update_account_status(p_enum, account_id, AccountStatus.ACTIVE)
+    elif not res.verified and meta.status == AccountStatus.ACTIVE and res.configured:
+        await vault.update_account_status(p_enum, account_id, AccountStatus.RESTRICTED)
+
+    return {
+        "platform": p_enum.value,
+        "account_id": account_id,
+        "configured": res.configured,
+        "verified": res.verified,
+        "status_code": res.status_code,
+        "account_identity": res.account_identity,
+        "message": res.message,
+        "details": res.details,
+    }
+
+
 @app.post("/api/accounts")
 async def register_account_api(
     req: AccountRegistrationRequest,
@@ -1413,11 +1518,55 @@ async def register_account_api(
     """Registers and stores creator account with encrypted credentials in the vault."""
     from clipping.agent.vault.vault import EncryptedCredentialVault
     from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+    from clipping.preflight.service_verifier import RealServiceVerifier
 
     try:
         p_enum = AccountPlatform(req.platform.lower())
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unsupported platform: {req.platform}")
+
+    account_status = AccountStatus.ACTIVE
+    verification_info = None
+
+    if req.verify_connection:
+        verifier = RealServiceVerifier()
+        creds = req.credentials or {}
+        if p_enum == AccountPlatform.INSTAGRAM:
+            ig_creds = dict(creds)
+            if not ig_creds.get("instagram_account_id") and not ig_creds.get("user_id"):
+                ig_creds["instagram_account_id"] = req.account_id
+            ver_res = await verifier.verify_instagram(credentials=ig_creds)
+            verification_info = {
+                "configured": ver_res.configured,
+                "verified": ver_res.verified,
+                "status_code": ver_res.status_code,
+                "message": ver_res.message,
+                "account_identity": ver_res.account_identity,
+            }
+            if ver_res.verified:
+                account_status = AccountStatus.ACTIVE
+            elif ver_res.configured:
+                account_status = AccountStatus.RESTRICTED
+            else:
+                account_status = AccountStatus.PENDING_VERIFICATION
+        elif p_enum == AccountPlatform.YOUTUBE:
+            yt_creds = dict(creds)
+            if not yt_creds.get("channel_id"):
+                yt_creds["channel_id"] = req.account_id
+            ver_res = await verifier.verify_youtube(credentials=yt_creds)
+            verification_info = {
+                "configured": ver_res.configured,
+                "verified": ver_res.verified,
+                "status_code": ver_res.status_code,
+                "message": ver_res.message,
+                "account_identity": ver_res.account_identity,
+            }
+            if ver_res.verified:
+                account_status = AccountStatus.ACTIVE
+            elif ver_res.configured:
+                account_status = AccountStatus.RESTRICTED
+            else:
+                account_status = AccountStatus.PENDING_VERIFICATION
 
     vault = EncryptedCredentialVault(storage_driver=storage)
     meta = AccountMetadata(
@@ -1426,18 +1575,21 @@ async def register_account_api(
         username=req.username,
         display_name=req.display_name or req.username,
         campaign_association=req.campaign_association,
-        status=AccountStatus.ACTIVE,
+        status=account_status,
         reuse_eligibility=req.reuse_eligibility,
         tags=req.tags,
     )
     await vault.save_account(meta, sensitive_credentials=req.credentials)
 
     logger.info("Operator registered account in vault", platform=req.platform, account_id=req.account_id, operator=operator)
-    return {
+    resp: Dict[str, Any] = {
         "status": "success",
         "account": meta.to_safe_dict(),
         "credentials_encrypted": bool(req.credentials),
     }
+    if verification_info:
+        resp["verification"] = verification_info
+    return resp
 
 
 @app.post("/api/accounts/{platform}/{account_id}/status")
