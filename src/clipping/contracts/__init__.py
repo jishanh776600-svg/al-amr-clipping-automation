@@ -38,6 +38,7 @@ from clipping.contracts.rendering import (
     SubtitleEvent,
     RenderJob,
     RenderOutput,
+    ProductionClipArtifact,
 )
 from clipping.contracts.qa import (
     QASeverity,
@@ -90,6 +91,7 @@ __all__ = [
     "SubtitleEvent",
     "RenderJob",
     "RenderOutput",
+    "ProductionClipArtifact",
     "QASeverity",
     "QACheckStatus",
     "QAPassStatus",

@@ -32,6 +32,12 @@ class CampaignClippingBridge:
         source_uri: str,
         account_id: Optional[str] = None,
         custom_job_id: Optional[str] = None,
+        clip_id: Optional[str] = None,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        hook: Optional[str] = None,
+        transcript_text: Optional[str] = None,
+        candidate_specs: Optional[Dict[str, Any]] = None,
     ) -> AgentTask:
         """
         Validates source URL and enqueues a REAL media clipping pipeline task.
@@ -51,22 +57,36 @@ class CampaignClippingBridge:
 
         target_platform = campaign.required_platforms[0].value if campaign.required_platforms else "youtube_shorts"
 
+        inputs: Dict[str, Any] = {
+            "capability": "media_clipping",
+            "source_uri": source_uri,
+            "source_video_id": url_hash,
+            "campaign_id": campaign.campaign_id,
+            "job_id": job_id,
+            "account_id": account_id,
+            "platform": target_platform,
+            "task_id": task_id,
+            "hashtags": campaign.posting_requirements.required_hashtags,
+            "mentions": campaign.posting_requirements.required_mentions,
+        }
+        if clip_id:
+            inputs["clip_id"] = clip_id
+        if start_time is not None:
+            inputs["start_time"] = start_time
+        if end_time is not None:
+            inputs["end_time"] = end_time
+        if hook:
+            inputs["hook"] = hook
+        if transcript_text:
+            inputs["transcript_text"] = transcript_text
+        if candidate_specs:
+            inputs["candidate"] = candidate_specs
+
         task = AgentTask(
             task_id=task_id,
             task_type=TaskType.MEDIA_CLIPPING,
             objective=f"Autonomous 9-stage clipping for campaign '{campaign.name}' from {source_uri}",
-            inputs={
-                "capability": "media_clipping",
-                "source_uri": source_uri,
-                "source_video_id": url_hash,
-                "campaign_id": campaign.campaign_id,
-                "job_id": job_id,
-                "account_id": account_id,
-                "platform": target_platform,
-                "task_id": task_id,
-                "hashtags": campaign.posting_requirements.required_hashtags,
-                "mentions": campaign.posting_requirements.required_mentions,
-            },
+            inputs=inputs,
             priority=TaskPriority.HIGH,
         )
 

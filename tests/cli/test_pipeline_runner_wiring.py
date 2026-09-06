@@ -1,7 +1,7 @@
 """Comprehensive tests for pipeline_runner real media engine wiring and checkpoint semantics."""
 
 import pytest
-from typing import List
+from typing import Any, List
 from clipping.approval.models import ApprovalStatus
 from clipping.cli.pipeline_runner import run_pipeline
 from clipping.control.models import SystemControlState
@@ -381,3 +381,163 @@ async def test_pipeline_runner_with_real_ffmpeg_and_qa(runner_env):
     # 6. Verify Telegram approval card received the rendered clip key
     assert len(approval.dispatched_requests) == 1
     assert approval.dispatched_requests[0].video_storage_key == final_video_key
+
+    # 7. Verify deterministic ProductionClipArtifact was saved to storage and job metadata
+    art_key = f"clips/{clip_id}/production_artifact.json"
+    assert await storage.exists(art_key) is True
+    from clipping.contracts.rendering import ProductionClipArtifact
+    art_bytes = await storage.download_bytes(art_key)
+    art = ProductionClipArtifact.model_validate_json(art_bytes.decode("utf-8"))
+    assert art.clip_id == clip_id
+    assert art.width == 1080
+    assert art.height == 1920
+    assert art.aspect_ratio == "9:16"
+    assert art.qa_status == "passed"
+    assert art.media_path == final_video_key
+    assert job.metadata_json["primary_clip_id"] == clip_id
+    assert job.metadata_json["primary_media_path"] == final_video_key
+    assert job.metadata_json["qa_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_runner_dispatched_candidate_and_capability_idempotency(runner_env):
+    """Verifies that an explicitly dispatched candidate flows through the pipeline, produces
+    production artifacts consumable by MediaClippingCapability, and supports idempotent cache hits."""
+    from clipping.agent.capabilities.base import CapabilityContext
+    from clipping.agent.capabilities.clipping_adapter import MediaClippingCapability
+    from clipping.contracts.clip import ClipCandidate
+    from clipping.contracts.perception import WordTimestamp
+
+    storage = runner_env["storage"]
+    state_repo = runner_env["state_repo"]
+
+    # 1. Mock runner representing pipeline execution
+    executed_count = 0
+
+    async def recording_runner(source_uri: str, campaign_id: str, job_id: str, storage: Any, candidate_specs=None):
+        nonlocal executed_count
+        executed_count += 1
+        # Seed state repository with passing job state & production artifact
+        target_clip_id = (candidate_specs or {}).get("clip_id", "clip_dispatched_01")
+        final_video_key = f"clips/{target_clip_id}/final_1080x1920.mp4"
+        await storage.upload_bytes(b"x" * 2048, final_video_key)
+
+        from clipping.contracts.rendering import ProductionClipArtifact
+        art = ProductionClipArtifact(
+            clip_id=target_clip_id,
+            source_video_id="src_disp_01",
+            campaign_id=campaign_id,
+            start_time=1.0,
+            end_time=15.0,
+            duration_seconds=14.0,
+            media_path=final_video_key,
+            aspect_ratio="9:16",
+            width=1080,
+            height=1920,
+            fps=30.0,
+            file_size_bytes=2048,
+            qa_status="passed",
+            qa_report_key=f"clips/{target_clip_id}/qa_report.json",
+            reframe_plan_key=f"clips/{target_clip_id}/reframe_plan.json",
+        )
+        await storage.upload_bytes(art.model_dump_json().encode("utf-8"), f"clips/{target_clip_id}/production_artifact.json")
+
+        await state_repo.create_job(job_id=job_id, campaign_id=campaign_id, source_video_id="src_disp_01", idempotency_key=f"idemp_{job_id}")
+        await state_repo.update_job_state(
+            job_id=job_id,
+            new_state=JobState.AWAITING_APPROVAL,
+            new_stage=PipelineStage.APPROVAL,
+            reason="QA verified",
+            metadata={
+                "passing_clips_count": 1,
+                "primary_clip_id": target_clip_id,
+                "primary_media_path": final_video_key,
+                "primary_duration": 14.0,
+                "resolution": "1080x1920",
+                "aspect_ratio": "9:16",
+                "qa_status": "passed",
+                "artifacts": [art.model_dump(mode="json")],
+            },
+        )
+        return 0
+
+    capability = MediaClippingCapability(runner_fn=recording_runner)
+
+    # 2. Execute capability with candidate specs
+    ctx = CapabilityContext(
+        task_id="task_disp_test_01",
+        inputs={
+            "source_uri": "https://youtube.com/watch?v=sample_disp",
+            "campaign_id": "camp_disp_01",
+            "job_id": "job_disp_01",
+            "clip_id": "clip_dispatched_01",
+            "start_time": 1.0,
+            "end_time": 15.0,
+            "hook": "Revolutionary discovery",
+        },
+        storage_driver=storage,
+    )
+    result = await capability.execute(ctx)
+    assert result.success is True
+    assert result.outputs["clip_id"] == "clip_dispatched_01"
+    assert result.outputs["media_path"] == "clips/clip_dispatched_01/final_1080x1920.mp4"
+    assert result.outputs["duration_seconds"] == 14.0
+    assert result.outputs["resolution"] == "1080x1920"
+    assert result.outputs["aspect_ratio"] == "9:16"
+    assert result.outputs["qa_status"] == "passed"
+    assert executed_count == 1
+
+    # 3. Idempotency test: Re-executing with the same clip_id reuses the artifact without re-running
+    ctx_cached = CapabilityContext(
+        task_id="task_disp_test_02",
+        inputs={
+            "source_uri": "https://youtube.com/watch?v=sample_disp",
+            "campaign_id": "camp_disp_01",
+            "job_id": "job_disp_02",
+            "clip_id": "clip_dispatched_01",
+        },
+        storage_driver=storage,
+    )
+    res_cached = await capability.execute(ctx_cached)
+    assert res_cached.success is True
+    assert res_cached.outputs["cached"] is True
+    assert res_cached.outputs["media_path"] == "clips/clip_dispatched_01/final_1080x1920.mp4"
+    assert executed_count == 1  # runner was NOT called again!
+
+
+@pytest.mark.asyncio
+async def test_capability_fails_explicitly_on_qa_rejection(runner_env):
+    """Verifies that if QA fails, MediaClippingCapability returns failed (never silently succeeds)."""
+    from clipping.agent.capabilities.base import CapabilityContext
+    from clipping.agent.capabilities.clipping_adapter import MediaClippingCapability
+
+    storage = runner_env["storage"]
+    state_repo = runner_env["state_repo"]
+
+    async def failing_qa_runner(source_uri: str, campaign_id: str, job_id: str, storage: Any, candidate_specs=None):
+        await state_repo.create_job(job_id=job_id, campaign_id=campaign_id, source_video_id="src_qa_fail", idempotency_key=f"idemp_{job_id}")
+        await state_repo.update_job_state(
+            job_id=job_id,
+            new_state=JobState.AWAITING_APPROVAL,
+            new_stage=PipelineStage.APPROVAL,
+            reason="All clips failed QA",
+            metadata={"passing_clips_count": 0, "qa_status": "failed"},
+        )
+        return 0
+
+    capability = MediaClippingCapability(runner_fn=failing_qa_runner)
+    ctx = CapabilityContext(
+        task_id="task_qa_reject_01",
+        inputs={
+            "source_uri": "https://youtube.com/watch?v=sample_fail",
+            "campaign_id": "camp_fail_01",
+            "job_id": "job_qa_fail_01",
+        },
+        storage_driver=storage,
+    )
+    result = await capability.execute(ctx)
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.error_type == "QAGatingFailure"
+    assert "0 clips passed QA" in result.error.error_message
+

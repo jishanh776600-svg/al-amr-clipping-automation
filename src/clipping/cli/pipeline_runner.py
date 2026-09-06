@@ -6,7 +6,7 @@ import asyncio
 import os
 import sys
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import TypeAdapter
 
@@ -16,7 +16,12 @@ from clipping.approval.security import SecurityValidator
 from clipping.approval.service import ApprovalService
 from clipping.approval.transport import HttpTelegramTransport, MockTelegramTransport
 from clipping.config.settings import Settings
-from clipping.contracts.clip import ClipSelectionResult, RankedCandidate
+from clipping.contracts.clip import (
+    ClipCandidate,
+    ClipScore,
+    ClipSelectionResult,
+    RankedCandidate,
+)
 from clipping.contracts.director import ReframePlan
 from clipping.contracts.perception import (
     ActiveSpeakerSegment,
@@ -27,7 +32,7 @@ from clipping.contracts.perception import (
     WordTimestamp,
 )
 from clipping.contracts.qa import QAReport
-from clipping.contracts.rendering import RenderOutput
+from clipping.contracts.rendering import ProductionClipArtifact, RenderOutput
 from clipping.control.repository import ControlRepository
 from clipping.core.workspace import WorkerScratchWorkspace
 from clipping.discovery.engine import ClipDiscoveryEngine
@@ -117,6 +122,8 @@ async def run_pipeline(
     approval_gateway: Optional[TelegramApprovalGateway] = None,
     settings: Optional[Settings] = None,
     storage: Optional[StorageDriver] = None,
+    target_candidate: Optional[ClipCandidate] = None,
+    candidate_specs: Optional[Dict[str, Any]] = None,
 ) -> int:
     active_settings = settings or Settings()
     active_job_id = job_id or f"job_{uuid.uuid4().hex[:12]}"
@@ -325,7 +332,95 @@ async def run_pipeline(
             selected_key = f"sources/{source_id}/selected_clips.json"
             selection_result: Optional[ClipSelectionResult] = None
 
-            if await active_storage.exists(selected_key):
+            if target_candidate is not None:
+                logger.info("Using explicit target candidate dispatched to pipeline", candidate_id=target_candidate.candidate_id)
+                target_candidate.validate_bounds()
+                ranked = RankedCandidate(
+                    candidate=target_candidate,
+                    score=ClipScore(
+                        candidate_id=target_candidate.candidate_id,
+                        hook_strength=92.0,
+                        narrative_completeness=90.0,
+                        curiosity_factor=88.0,
+                        campaign_relevance=100.0,
+                        overall_virality_score=90.0,
+                        reasoning="Candidate explicitly dispatched for production",
+                    ),
+                    rank=1,
+                    selection_reason="Target candidate explicitly dispatched for production",
+                    confidence=1.0,
+                    is_selected=True,
+                )
+                selection_result = ClipSelectionResult(
+                    source_video_id=source_id,
+                    total_candidates_generated=1,
+                    quality_threshold=70.0,
+                    selected_clips=[ranked],
+                    rejected_clips=[],
+                    selection_reasons=["Target candidate explicitly dispatched for production"],
+                )
+                await active_storage.upload_bytes(
+                    data=selection_result.model_dump_json(indent=2).encode("utf-8"),
+                    storage_key=selected_key,
+                    content_type="application/json",
+                )
+            elif candidate_specs is not None:
+                logger.info("Building candidate from explicit candidate_specs", specs=candidate_specs)
+                c_id = candidate_specs.get("candidate_id") or candidate_specs.get("clip_id") or f"clip_{source_id}_01"
+                c_start = float(candidate_specs.get("start_time", 0.0))
+                c_end = float(candidate_specs.get("end_time", c_start + 30.0))
+                c_hook = candidate_specs.get("hook_sentence") or candidate_specs.get("hook") or "Key highlight"
+                c_text = candidate_specs.get("transcript_text") or c_hook
+                c_words = candidate_specs.get("words", [])
+
+                if not c_words and speaker_transcript:
+                    c_words = [
+                        w for w in speaker_transcript.words
+                        if c_start <= w.start and w.end <= c_end
+                    ]
+
+                cand = ClipCandidate(
+                    candidate_id=c_id,
+                    source_video_id=source_id,
+                    campaign_id=campaign_id,
+                    start_time=c_start,
+                    end_time=c_end,
+                    duration=round(c_end - c_start, 3),
+                    transcript_text=c_text,
+                    words=c_words,
+                    hook_sentence=c_hook,
+                )
+                cand.validate_bounds()
+                ranked = RankedCandidate(
+                    candidate=cand,
+                    score=ClipScore(
+                        candidate_id=c_id,
+                        hook_strength=92.0,
+                        narrative_completeness=90.0,
+                        curiosity_factor=88.0,
+                        campaign_relevance=100.0,
+                        overall_virality_score=90.0,
+                        reasoning="Candidate specs dispatched for production",
+                    ),
+                    rank=1,
+                    selection_reason="Candidate specs provided directly",
+                    confidence=1.0,
+                    is_selected=True,
+                )
+                selection_result = ClipSelectionResult(
+                    source_video_id=source_id,
+                    total_candidates_generated=1,
+                    quality_threshold=70.0,
+                    selected_clips=[ranked],
+                    rejected_clips=[],
+                    selection_reasons=["Candidate specs provided directly"],
+                )
+                await active_storage.upload_bytes(
+                    data=selection_result.model_dump_json(indent=2).encode("utf-8"),
+                    storage_key=selected_key,
+                    content_type="application/json",
+                )
+            elif await active_storage.exists(selected_key):
                 logger.info("Resuming: clip selection already exists, skipping discovery", source_video_id=source_id)
                 sel_bytes = await active_storage.download_bytes(selected_key)
                 selection_result = ClipSelectionResult.model_validate_json(sel_bytes.decode("utf-8"))
@@ -506,9 +601,47 @@ async def run_pipeline(
                     new_state=JobState.AWAITING_APPROVAL,
                     new_stage=PipelineStage.APPROVAL,
                     reason="All rendered clips failed QA gating criteria",
-                    metadata={"passing_clips_count": 0},
+                    metadata={"passing_clips_count": 0, "qa_status": "failed"},
                 )
                 return 0
+
+            # Generate and persist canonical ProductionClipArtifact records for passing clips
+            production_artifacts: List[ProductionClipArtifact] = []
+            for ranked_cand in passing_candidates:
+                cand = ranked_cand.candidate
+                clip_id = cand.candidate_id
+                render_output = render_outputs.get(clip_id)
+                qa_report = qa_reports.get(clip_id)
+                fps_val = 30.0
+                if qa_report and qa_report.media_validation and qa_report.media_validation.fps > 0:
+                    fps_val = qa_report.media_validation.fps
+
+                artifact = ProductionClipArtifact(
+                    clip_id=clip_id,
+                    source_video_id=source_id,
+                    campaign_id=campaign_id,
+                    start_time=cand.start_time,
+                    end_time=cand.end_time,
+                    duration_seconds=render_output.duration_seconds if render_output else cand.duration,
+                    media_path=render_output.output_storage_key if render_output else f"clips/{clip_id}/final_1080x1920.mp4",
+                    aspect_ratio="9:16",
+                    width=1080,
+                    height=1920,
+                    fps=fps_val,
+                    file_size_bytes=render_output.file_size_bytes if render_output else 0,
+                    qa_status="passed",
+                    qa_report_key=f"clips/{clip_id}/qa_report.json",
+                    reframe_plan_key=f"clips/{clip_id}/reframe_plan.json",
+                    subtitles_key=f"clips/{clip_id}/subtitles.ass",
+                    pipeline_stage="approval",
+                )
+                artifact_key = f"clips/{clip_id}/production_artifact.json"
+                await active_storage.upload_bytes(
+                    data=artifact.model_dump_json(indent=2).encode("utf-8"),
+                    storage_key=artifact_key,
+                    content_type="application/json",
+                )
+                production_artifacts.append(artifact)
 
             # =========================================================================
             # STAGE 08: TELEGRAM APPROVAL GATEWAY
@@ -532,12 +665,22 @@ async def run_pipeline(
                 chat_id=chat_id,
             )
 
+            primary_art = production_artifacts[0] if production_artifacts else None
             await state_repo.update_job_state(
                 job_id=active_job_id,
                 new_state=JobState.AWAITING_APPROVAL,
                 new_stage=PipelineStage.APPROVAL,
                 reason=f"Dispatched {len(passing_candidates)} QA-verified clips for Telegram approval",
-                metadata={"passing_clips_count": len(passing_candidates)},
+                metadata={
+                    "passing_clips_count": len(passing_candidates),
+                    "primary_clip_id": primary_art.clip_id if primary_art else None,
+                    "primary_media_path": primary_art.media_path if primary_art else None,
+                    "primary_duration": primary_art.duration_seconds if primary_art else None,
+                    "resolution": "1080x1920",
+                    "aspect_ratio": "9:16",
+                    "qa_status": "passed",
+                    "artifacts": [art.model_dump(mode="json") for art in production_artifacts],
+                },
             )
 
             logger.info(

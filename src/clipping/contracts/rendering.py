@@ -47,3 +47,28 @@ class RenderOutput(BaseModel):
     file_size_bytes: int = Field(..., ge=0)
     render_time_seconds: float = Field(..., ge=0.0)
     completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ProductionClipArtifact(BaseModel):
+    """Authoritative production artifact contract for finished 9:16 vertical shorts."""
+    model_config = ConfigDict(frozen=True)
+
+    clip_id: str = Field(..., min_length=1, max_length=128)
+    source_video_id: str = Field(..., min_length=1, max_length=128)
+    campaign_id: str = Field(default="default_campaign")
+    start_time: float = Field(..., ge=0.0)
+    end_time: float = Field(..., ge=0.0)
+    duration_seconds: float = Field(..., gt=0.0)
+    media_path: str = Field(..., description="Storage key or physical path to final 1080x1920 MP4")
+    aspect_ratio: str = Field(default="9:16")
+    width: int = Field(default=1080)
+    height: int = Field(default=1920)
+    fps: float = Field(default=30.0)
+    file_size_bytes: int = Field(..., ge=0)
+    qa_status: str = Field(default="passed")
+    qa_report_key: str = Field(default="")
+    reframe_plan_key: str = Field(default="")
+    subtitles_key: Optional[str] = Field(default=None)
+    pipeline_stage: str = Field(default="approval")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
