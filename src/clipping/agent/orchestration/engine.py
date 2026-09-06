@@ -26,6 +26,9 @@ from clipping.agent.campaign.repository import CampaignRepository
 from clipping.agent.campaign.sources.registry import CampaignSourceRegistry
 from clipping.agent.capabilities.base import CapabilityContext
 from clipping.agent.cloud.queue import CloudTaskQueue
+from clipping.agent.cloud.telemetry import CloudTelemetryEngine, TelemetryEventType
+from clipping.agent.escalation import EscalationContext, EscalationReason, EscalationSeverity
+from clipping.agent.events import AgentEventSystem, AgentEventType
 from clipping.agent.models import AgentTask
 from clipping.agent.orchestration.models import (
     CampaignOrchestrationRecord,
@@ -36,6 +39,7 @@ from clipping.agent.orchestration.repository import OrchestrationRepository
 from clipping.agent.policy import PolicyEngine
 from clipping.agent.publishing.capability import PublishingCapability
 from clipping.agent.publishing.reconciliation import PublishingReconciliationService
+from clipping.agent.publishing.repository import CampaignSubmissionRepository
 from clipping.agent.repository import AgentTaskRepository
 from clipping.agent.state import TaskState
 from clipping.agent.vault.models import AccountPlatform
@@ -66,16 +70,21 @@ class AutonomousOrchestrationEngine:
         account_service: Optional[AccountLifecycleService] = None,
         clipping_bridge: Optional[CampaignClippingBridge] = None,
         publishing_capability: Optional[PublishingCapability] = None,
+        submission_repository: Optional[CampaignSubmissionRepository] = None,
         reconciler: Optional[PublishingReconciliationService] = None,
         policy_engine: Optional[PolicyEngine] = None,
         credential_vault: Optional[EncryptedCredentialVault] = None,
         task_queue: Optional[CloudTaskQueue] = None,
+        worker: Optional[Any] = None,
+        telemetry_engine: Optional[CloudTelemetryEngine] = None,
+        event_system: Optional[AgentEventSystem] = None,
     ):
         self.storage = storage_driver
         self.control_repo = control_repository
         self.campaign_repo = campaign_repository
         self.task_repo = task_repository
         self.orchestration_repo = orchestration_repository or OrchestrationRepository(storage_driver)
+        self.submission_repo = submission_repository or CampaignSubmissionRepository(storage_driver)
         self.policy = policy_engine or PolicyEngine()
         self.vault = credential_vault or EncryptedCredentialVault(storage_driver)
         self.evaluator = evaluator or CampaignEvaluator(preferred_cpm=2.0, min_viable_cpm=1.0, max_target_cpm=5.0)
@@ -94,13 +103,21 @@ class AutonomousOrchestrationEngine:
             queue=queue,
             task_repository=self.task_repo,
         )
-        self.publishing_capability = publishing_capability or PublishingCapability(
-            submission_repository=None,  # initialized internally if needed
-            campaign_repository=self.campaign_repo,
-            vault=self.vault,
-            control_repository=self.control_repo,
-            policy_engine=self.policy,
-        ) if hasattr(PublishingCapability, "__init__") else None
+        self.worker = worker
+        self.telemetry = telemetry_engine
+        self.events = event_system
+
+        if publishing_capability:
+            self.publishing_capability = publishing_capability
+        else:
+            self.publishing_capability = PublishingCapability(
+                submission_repository=self.submission_repo,
+                campaign_repository=self.campaign_repo,
+                vault=self.vault,
+                control_repository=self.control_repo,
+                policy_engine=self.policy,
+                telemetry_engine=self.telemetry,
+            )
 
         self.reconciler = reconciler or (self.publishing_capability.reconciler if self.publishing_capability else None)
 
@@ -205,7 +222,7 @@ class AutonomousOrchestrationEngine:
                 updated_camp = camp.model_copy(update={"opportunity_score": score.overall_score})
                 await self.campaign_repo.save_campaign(updated_camp)
 
-                if score.is_worth_pursuing():
+                if score.is_worth_pursuing() or (target_campaign_id and camp.campaign_id == target_campaign_id):
                     evaluated_opportunities.append((updated_camp, score))
                 else:
                     reason = score.tier.value
@@ -303,12 +320,23 @@ class AutonomousOrchestrationEngine:
                     source_uri = source_uris[0]
                     contradiction = campaign.validate_rules()
                     if contradiction:
-                        record = record.record_stage(
-                            OrchestrationStage.BLOCKED,
-                            {"reason": f"Contradictory campaign terms: {contradiction}"},
+                        esc_ctx = EscalationContext(
+                            what_happened=f"Campaign '{campaign.name}' brief contains contradictory requirements",
+                            why_it_happened=contradiction,
+                            decision_required="Human review required to resolve contradictory terms before clipping",
+                            available_options=["resolve_contradiction", "reject_campaign"],
+                            reason=EscalationReason.CONTRADICTORY_INSTRUCTIONS,
+                            severity=EscalationSeverity.HIGH,
+                            metadata={"campaign_id": cid},
                         )
-                        record = record.model_copy(update={"blocking_reason": contradiction})
+                        esc = await self.task_repo.create_escalation(esc_ctx)
+                        record = record.record_stage(
+                            OrchestrationStage.ESCALATED,
+                            {"escalation_id": esc.escalation_id, "reason": contradiction},
+                        )
+                        record = record.model_copy(update={"escalation_id": esc.escalation_id, "blocking_reason": contradiction})
                         await self.orchestration_repo.save_record(record)
+                        summary.escalations_raised += 1
                         continue
 
                     record = record.record_stage(
@@ -334,27 +362,58 @@ class AutonomousOrchestrationEngine:
                         await self.orchestration_repo.save_record(record)
                         summary.production_tasks_dispatched += 1
 
+                        # If an integrated worker is attached, execute the task to advance autonomously
+                        if self.worker:
+                            try:
+                                await self.worker.run_next_task()
+                            except Exception as w_err:
+                                logger.warning("Worker encountered error during inline task execution", error=str(w_err))
+
                 # Stage 9: Production Completion & QA Verification Gate
                 if record.current_stage == OrchestrationStage.PRODUCTION_DISPATCHED:
                     if record.production_task_id:
                         task = await self.task_repo.get_task(record.production_task_id)
                         if task:
                             if task.status == TaskState.SUCCEEDED:
+                                qa_stat = task.outputs.get("qa_status", "passed") if task.outputs else "passed"
                                 record = record.record_stage(
                                     OrchestrationStage.PRODUCTION_COMPLETED,
                                     {"task_id": task.task_id, "outputs": task.outputs},
                                 )
                                 record = record.record_stage(
                                     OrchestrationStage.QA_VERIFIED,
-                                    {"qa_status": "passed"},
+                                    {"qa_status": qa_stat},
                                 )
                                 await self.orchestration_repo.save_record(record)
                             elif task.status == TaskState.FAILED:
-                                if not task.can_retry():
+                                err_info = task.error_info or (task.attempts[-1].error if task.attempts else None)
+                                err_msg = err_info.error_message if err_info else "Production task failed"
+                                err_type = err_info.error_type if err_info else ""
+                                if err_type == "QAGatingFailure" or "qa verification" in err_msg.lower() or "0 clips passed qa" in err_msg.lower():
+                                    esc_ctx = EscalationContext(
+                                        what_happened=f"Production QA gating failed for campaign '{campaign.name}'",
+                                        why_it_happened=err_msg,
+                                        decision_required="Review clip QA failure or choose another source video",
+                                        available_options=["retry_with_new_source", "override_qa", "abandon_campaign"],
+                                        reason=EscalationReason.QUALITY_ASSURANCE_FAILURE,
+                                        severity=EscalationSeverity.MEDIUM,
+                                        metadata={"campaign_id": cid, "task_id": task.task_id},
+                                    )
+                                    esc = await self.task_repo.create_escalation(esc_ctx)
+                                    record = record.record_stage(
+                                        OrchestrationStage.ESCALATED,
+                                        {"escalation_id": esc.escalation_id, "reason": err_msg},
+                                    )
+                                    record = record.model_copy(update={"escalation_id": esc.escalation_id, "blocking_reason": err_msg})
+                                    await self.orchestration_repo.save_record(record)
+                                    summary.escalations_raised += 1
+                                    continue
+                                elif not task.can_retry():
                                     record = record.record_stage(
                                         OrchestrationStage.BLOCKED,
-                                        {"reason": "Production task failed and bounded retries exhausted"},
+                                        {"reason": f"Production task failed and retries exhausted: {err_msg}"},
                                     )
+                                    record = record.model_copy(update={"blocking_reason": err_msg})
                                     await self.orchestration_repo.save_record(record)
                                     continue
                             elif task.status == TaskState.ESCALATED:
@@ -378,6 +437,8 @@ class AutonomousOrchestrationEngine:
                 ):
                     if await self.control_repo.is_publishing_locked():
                         logger.warning("Publishing locked by Master Control; deferring submission", campaign_id=cid)
+                        record = record.model_copy(update={"blocking_reason": "Publishing Locked by Master Control"})
+                        await self.orchestration_repo.save_record(record)
                         continue
 
                     if self.publishing_capability:
@@ -385,8 +446,13 @@ class AutonomousOrchestrationEngine:
                         await self.orchestration_repo.save_record(record)
 
                         task = await self.task_repo.get_task(record.production_task_id) if record.production_task_id else None
-                        clip_id = (task.outputs.get("clip_id") if task and task.outputs else None) or f"clip_{cid[:8]}"
-                        media_path = (task.outputs.get("media_path") if task and task.outputs else None) or f"rendered/{clip_id}.mp4"
+                        outputs = task.outputs if (task and task.outputs) else {}
+                        clip_id = outputs.get("clip_id") or f"clip_{cid[:8]}"
+                        media_path = outputs.get("media_path") or f"rendered/{clip_id}.mp4"
+                        duration = float(outputs.get("duration_seconds", 35.0))
+                        source_vid = outputs.get("source_video_id") or record.source_video_id or "src_1"
+                        qa_stat = outputs.get("qa_status", "passed")
+                        qa_rec = {"status": qa_stat, "duration_seconds": duration}
 
                         pub_context = CapabilityContext(
                             task_id=f"pub_{cid[:8]}_{clip_id}",
@@ -397,7 +463,9 @@ class AutonomousOrchestrationEngine:
                                 "media_path": media_path,
                                 "platform": record.platform or "youtube",
                                 "publishing_mode": "draft",
-                                "source_video_id": record.source_video_id or "src_1",
+                                "duration_seconds": duration,
+                                "qa_record": qa_rec,
+                                "source_video_id": source_vid,
                             },
                             storage_driver=self.storage,
                         )
@@ -421,9 +489,9 @@ class AutonomousOrchestrationEngine:
                             esc = await self.task_repo.create_escalation(pub_res.escalation_context)
                             record = record.record_stage(
                                 OrchestrationStage.ESCALATED,
-                                {"escalation_id": esc.escalation_id, "reason": "Publishing safety escalation"},
+                                {"escalation_id": esc.escalation_id, "reason": pub_res.escalation_context.what_happened},
                             )
-                            record = record.model_copy(update={"escalation_id": esc.escalation_id})
+                            record = record.model_copy(update={"escalation_id": esc.escalation_id, "blocking_reason": pub_res.escalation_context.what_happened})
                             await self.orchestration_repo.save_record(record)
                             summary.escalations_raised += 1
                             continue
@@ -435,6 +503,7 @@ class AutonomousOrchestrationEngine:
                             )
                             record = record.model_copy(update={"blocking_reason": err_msg})
                             await self.orchestration_repo.save_record(record)
+                            summary.errors.append(f"Submission failed for {cid}: {err_msg}")
                             continue
 
                 # Stage 11: Submission Reconciliation Check

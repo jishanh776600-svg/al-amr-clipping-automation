@@ -25,6 +25,7 @@ class EscalationReason(str, Enum):
     IRREVERSIBLE_ACTION = "irreversible_action"
     LEGAL_COMPLIANCE_AMBIGUITY = "legal_compliance_ambiguity"
     RESOURCE_EXHAUSTION = "resource_exhaustion"
+    QUALITY_ASSURANCE_FAILURE = "quality_assurance_failure"
     UNCLASSIFIED_FAILURE = "unclassified_failure"
 
 
