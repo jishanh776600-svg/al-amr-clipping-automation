@@ -95,6 +95,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AL AMR CLIPPING System Preflight Validator")
     parser.add_argument("--json", action="store_true", help="Output report in raw JSON format")
     parser.add_argument("--strict", action="store_true", help="Fail with non-zero exit code on any warning")
+    parser.add_argument("--live-probe", action="store_true", help="Execute real read-only external service probes")
     parser.add_argument("--smoke-test", action="store_true", help="Execute real media rendering and QA smoke test")
     args = parser.parse_args()
 

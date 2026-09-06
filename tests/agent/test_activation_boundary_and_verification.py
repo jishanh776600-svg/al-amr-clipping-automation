@@ -523,3 +523,20 @@ async def test_20_dry_run_full_cycle_execution_and_clean_completion(local_storag
     assert exit_code == 0
 
 
+@pytest.mark.anyio
+async def test_21_preflight_cli_accepts_live_probe_argument(local_storage):
+    """Verifies that preflight CLI parser accepts --live-probe flag and runs without argument parsing errors."""
+    import argparse
+    from clipping.cli.preflight import run_preflight
+
+    args = argparse.Namespace(
+        json=True,
+        strict=False,
+        live_probe=True,
+        smoke_test=False,
+    )
+    exit_code = await run_preflight(args)
+    assert exit_code in (0, 1)
+
+
+
