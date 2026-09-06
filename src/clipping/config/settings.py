@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     YOUTUBE_DEFAULT_CHANNEL_ID: Optional[str] = None
 
     # 5B. INSTAGRAM SETTINGS
+    INSTAGRAM_APP_ID: Optional[str] = None
+    INSTAGRAM_APP_SECRET: Optional[SecretStr] = None
     INSTAGRAM_ACCESS_TOKEN: Optional[SecretStr] = None
     INSTAGRAM_ACCOUNT_ID: Optional[str] = None
     INSTAGRAM_GRAPH_API_BASE: str = "https://graph.facebook.com/v19.0"
