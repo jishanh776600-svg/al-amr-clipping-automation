@@ -186,6 +186,19 @@ async def test_ui_job_live_status(ui_test_env):
 @pytest.mark.asyncio
 async def test_ui_create_and_run_campaign(ui_test_env, monkeypatch):
     from unittest.mock import AsyncMock
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+
+    storage = ui_test_env["storage"]
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    yt_meta = AccountMetadata(
+        platform=AccountPlatform.YOUTUBE,
+        account_id="UC_live_test",
+        username="al_amr_creator",
+        display_name="AL AMR Official Shorts",
+        status=AccountStatus.ACTIVE,
+    )
+    await vault.save_account(yt_meta, sensitive_credentials={"client_id": "cid", "client_secret": "csec"})
 
     mock_run = AsyncMock(return_value=0)
     monkeypatch.setattr("clipping.cli.pipeline_runner.run_pipeline", mock_run)
@@ -199,6 +212,7 @@ async def test_ui_create_and_run_campaign(ui_test_env, monkeypatch):
                 "source_uri": "https://www.youtube.com/watch?v=sample12345",
                 "requirements_text": "Must be 30s to 60s clips",
                 "target_platforms": ["youtube_shorts"],
+                "target_account_id": "UC_live_test",
                 "cpm_rate": 2.0,
             },
         )

@@ -32,9 +32,13 @@ class AlAmrAPI {
 
     static async request(endpoint, options = {}) {
         const url = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+        const headers = this.getHeaders(options.headers || {});
+        if (options.body instanceof FormData) {
+            delete headers["Content-Type"];
+        }
         const config = {
             ...options,
-            headers: this.getHeaders(options.headers || {})
+            headers
         };
 
         try {
@@ -111,6 +115,24 @@ class AlAmrAPI {
         if (qs) url += `?${qs}`;
         return this.request(url, {
             method: "POST"
+        });
+    }
+
+    static async uploadBrief(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        return this.request("/api/campaigns/upload-brief", {
+            method: "POST",
+            body: formData
+        });
+    }
+
+    static async uploadSourceVideo(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        return this.request("/api/campaigns/upload-video", {
+            method: "POST",
+            body: formData
         });
     }
 

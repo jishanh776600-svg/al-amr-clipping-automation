@@ -422,78 +422,168 @@
         </div>
     </div>
 
-    <!-- CREATE & RUN CAMPAIGN MODAL -->
+    <!-- CREATE & RUN CAMPAIGN MODAL (OPERATOR PIPELINE DISPATCH) -->
     <div id="modal-create-campaign" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
-        <div class="tech-card w-full max-w-xl bg-surface1 border-emerald-500/40 shadow-2xl">
+        <div class="tech-card w-full max-w-2xl bg-surface1 border-emerald-500/40 shadow-2xl max-h-[92vh] flex flex-col">
             <div class="tech-card-header border-emerald-500/30">
-                <div class="tech-card-title text-emerald-400 flex items-center gap-2 font-bold">
-                    <span>🎬 START AUTONOMOUS CLIPPING CAMPAIGN</span>
+                <div class="tech-card-title text-emerald-400 flex items-center gap-2 font-bold tracking-wider">
+                    <span>🎬 MISSION CONTROL // NEW CLIPPING CAMPAIGN</span>
                 </div>
-                <button onclick="AlAmrModals.closeCreateCampaignModal()" class="text-slate-400 hover:text-white">✕</button>
+                <button onclick="AlAmrModals.closeCreateCampaignModal()" class="text-slate-400 hover:text-white text-base">✕</button>
             </div>
-            <p class="text-xs text-slate-300 mb-4">
-                Launch end-to-end autonomous media clipping. Ingests source video (YouTube URL or local file path), generates word-timestamped transcription, selects high-scoring viral clips, reframes into 9:16 with face tracking, generates kinetic subtitles, renders 1080x1920 MP4, and submits for human approval.
-            </p>
-            <div class="space-y-3.5 text-xs">
-                <div>
-                    <label class="block font-mono text-slate-400 mb-1">Campaign Name:</label>
-                    <input id="campaign-name-input" type="text" placeholder="e.g. Lex Fridman Ep 412 - Autonomous AI" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
-                </div>
-                <div>
-                    <label class="block font-mono text-slate-400 mb-1">Source Video URI (YouTube URL, direct URL, or local file):</label>
-                    <input id="campaign-source-input" type="text" placeholder="https://www.youtube.com/watch?v=... or C:\videos\source.mp4" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
-                </div>
-                <div>
-                    <label class="block font-mono text-slate-400 mb-1">Campaign Requirements / Directives (Optional):</label>
-                    <textarea id="campaign-requirements-input" rows="3" placeholder="e.g. Minimum 30s, max 60s. Prioritize emotional hooks, AI discussions, animated subtitles." class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none"></textarea>
-                </div>
-                <!-- DESTINATION PLATFORM & ACCOUNT SECTION -->
-                <div class="p-3 bg-surface2/80 rounded border border-slate-700/80 space-y-2.5">
-                    <div class="text-[11px] font-mono text-slate-400 font-bold uppercase tracking-wider flex items-center justify-between">
-                        <span>DESTINATION PLATFORM & ACCOUNT</span>
-                        <span class="text-[10px] text-cyan-400 font-normal">Vault Encrypted Binding</span>
+
+            <div class="overflow-y-auto px-1 py-1 space-y-4 text-xs font-mono">
+                <!-- ERROR / ALERT CONTAINER -->
+                <div id="campaign-create-alert" class="hidden p-3 rounded text-xs border font-mono"></div>
+
+                <!-- SECTION 1: CAMPAIGN (NAME + BRIEF) -->
+                <div class="p-3.5 bg-surface2/90 rounded border border-slate-700/80 space-y-3">
+                    <div class="flex items-center justify-between border-b border-slate-700/60 pb-1.5">
+                        <span class="text-emerald-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                            <span>1. CAMPAIGN</span>
+                            <span class="text-slate-500 font-normal">// Identity & Brief Specification</span>
+                        </span>
+                        <span class="text-[10px] text-slate-400 font-mono">Step 1 of 3</span>
                     </div>
+
                     <div>
-                        <label class="block font-mono text-slate-400 mb-1">Destination:</label>
+                        <label class="block text-slate-300 mb-1 font-bold">Campaign Name:</label>
+                        <input id="campaign-name-input" type="text" placeholder="e.g. Q3 Tech Summit - Episode 42 Autonomous AI" class="w-full bg-surface1 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-slate-300 mb-1 font-bold">Campaign Brief / Requirements (PDF, TXT, MD):</label>
+                        <input type="file" id="campaign-brief-file-input" accept=".pdf,.txt,.md" class="hidden" onchange="AlAmrModals.onBriefFileSelected(event)">
+                        
+                        <!-- Dropzone -->
+                        <div id="campaign-brief-dropzone" onclick="document.getElementById('campaign-brief-file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 rounded-lg p-3 text-center cursor-pointer transition bg-surface1/60 flex flex-col items-center justify-center gap-1.5">
+                            <span class="text-base">📄</span>
+                            <div class="text-slate-300 font-bold">Click to upload Campaign Brief <span class="text-slate-500 font-normal">or drag & drop here</span></div>
+                            <div class="text-[10px] text-slate-500">Supports PDF, TXT, Markdown (Max 25 MB)</div>
+                        </div>
+
+                        <!-- Selected File Chip -->
+                        <div id="campaign-brief-selected" class="hidden mt-2 p-2.5 rounded bg-emerald-950/40 border border-emerald-500/40 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold" id="campaign-brief-badge">PDF</span>
+                                <span id="campaign-brief-name" class="text-slate-200 font-bold truncate max-w-[280px]">brief.pdf</span>
+                                <span id="campaign-brief-size" class="text-slate-400 text-[10px]">(0 KB)</span>
+                            </div>
+                            <button type="button" onclick="AlAmrModals.clearBriefFile(event)" class="text-red-400 hover:text-red-300 text-xs px-2 py-0.5 rounded border border-red-500/30 hover:border-red-500">✕ Remove</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-slate-400 mb-1">Additional Brief Notes / Directives (Optional):</label>
+                        <textarea id="campaign-requirements-input" rows="2" placeholder="e.g. Focus on AI safety debate, keep clips 30-50s, prioritize energetic hooks" class="w-full bg-surface1 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none"></textarea>
+                    </div>
+                </div>
+
+                <!-- SECTION 2: SOURCE (URL / YOUTUBE / LOCAL UPLOAD) -->
+                <div class="p-3.5 bg-surface2/90 rounded border border-slate-700/80 space-y-3">
+                    <div class="flex items-center justify-between border-b border-slate-700/60 pb-1.5">
+                        <span class="text-cyan-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                            <span>2. SOURCE</span>
+                            <span class="text-slate-500 font-normal">// Ingestion Channel</span>
+                        </span>
+                        <span id="source-type-indicator" class="text-[10px] text-cyan-400 font-mono uppercase font-bold">▶️ YouTube URL</span>
+                    </div>
+
+                    <!-- Segmented Source Mode Selector -->
+                    <div class="grid grid-cols-3 gap-2">
+                        <button type="button" id="btn-src-youtube" onclick="AlAmrModals.setSourceType('youtube')" class="py-2 px-2.5 rounded border font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition bg-surface1 border-cyan-500 text-cyan-300 shadow-sm">
+                            <span>▶️ YouTube URL</span>
+                        </button>
+                        <button type="button" id="btn-src-direct" onclick="AlAmrModals.setSourceType('direct_url')" class="py-2 px-2.5 rounded border font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition bg-surface1/60 border-slate-700 text-slate-400 hover:text-slate-200">
+                            <span>🔗 Direct Video URL</span>
+                        </button>
+                        <button type="button" id="btn-src-local" onclick="AlAmrModals.setSourceType('local_file')" class="py-2 px-2.5 rounded border font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition bg-surface1/60 border-slate-700 text-slate-400 hover:text-slate-200">
+                            <span>📁 Local Video Upload</span>
+                        </button>
+                    </div>
+
+                    <!-- Source Input Container A/B: URL Input -->
+                    <div id="campaign-source-url-container">
+                        <label id="campaign-source-url-label" class="block text-slate-300 mb-1 font-bold">YouTube Source URL:</label>
+                        <input id="campaign-source-input" type="text" placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..." class="w-full bg-surface1 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono focus:border-cyan-500 outline-none">
+                        <div id="campaign-source-hint" class="text-[10px] text-slate-500 mt-1">
+                            RemoteVideoIngestor downloads and streams high-definition video master.
+                        </div>
+                    </div>
+
+                    <!-- Source Input Container C: Local Video File Upload -->
+                    <div id="campaign-source-local-container" class="hidden space-y-2">
+                        <label class="block text-slate-300 font-bold">Select Local Master Video:</label>
+                        <input type="file" id="campaign-video-file-input" accept=".mp4,.mov,.mkv,.webm" class="hidden" onchange="AlAmrModals.onVideoFileSelected(event)">
+                        
+                        <div id="campaign-video-dropzone" onclick="document.getElementById('campaign-video-file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-cyan-500/70 rounded-lg p-3 text-center cursor-pointer transition bg-surface1/60 flex flex-col items-center justify-center gap-1.5">
+                            <span class="text-base">🎥</span>
+                            <div class="text-slate-300 font-bold">Click to browse video file <span class="text-slate-500 font-normal">or drag & drop</span></div>
+                            <div class="text-[10px] text-slate-500">Supports MP4, MOV, MKV, WebM (Max 500 MB)</div>
+                        </div>
+
+                        <!-- Selected Video Chip -->
+                        <div id="campaign-video-selected" class="hidden p-2.5 rounded bg-cyan-950/40 border border-cyan-500/40 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">VIDEO</span>
+                                <span id="campaign-video-name" class="text-slate-200 font-bold truncate max-w-[280px]">master.mp4</span>
+                                <span id="campaign-video-size" class="text-slate-400 text-[10px]">(0 MB)</span>
+                            </div>
+                            <button type="button" onclick="AlAmrModals.clearVideoFile(event)" class="text-red-400 hover:text-red-300 text-xs px-2 py-0.5 rounded border border-red-500/30 hover:border-red-500">✕ Remove</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECTION 3: DESTINATION (PLATFORM & VERIFIED ACCOUNT) -->
+                <div class="p-3.5 bg-surface2/90 rounded border border-slate-700/80 space-y-3">
+                    <div class="flex items-center justify-between border-b border-slate-700/60 pb-1.5">
+                        <span class="text-purple-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                            <span>3. DESTINATION</span>
+                            <span class="text-slate-500 font-normal">// Verified Account Binding</span>
+                        </span>
+                        <span class="text-[10px] text-emerald-400 font-mono">Vault Fail-Closed Enforced</span>
+                    </div>
+
+                    <div>
+                        <label class="block text-slate-300 mb-1 font-bold">Target Platform:</label>
                         <div class="grid grid-cols-2 gap-2">
-                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-slate-500 transition">
+                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-red-500/60 transition">
                                 <input type="radio" name="campaign-destination-platform" value="youtube_shorts" checked onchange="AlAmrModals.onCampaignPlatformChange('youtube_shorts')" class="text-red-500 focus:ring-0">
                                 <span class="font-mono font-bold text-slate-200">YouTube Shorts</span>
                             </label>
-                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-slate-500 transition">
+                            <label class="flex items-center gap-2 p-2 rounded bg-surface1 border border-slate-700 cursor-pointer hover:border-purple-500/60 transition">
                                 <input type="radio" name="campaign-destination-platform" value="instagram_reels" onchange="AlAmrModals.onCampaignPlatformChange('instagram_reels')" class="text-purple-500 focus:ring-0">
                                 <span class="font-mono font-bold text-slate-200">Instagram Reels</span>
                             </label>
                         </div>
                     </div>
+
                     <div>
-                        <label class="block font-mono text-slate-400 mb-1">Target Enrolled Account:</label>
+                        <label class="block text-slate-300 mb-1 font-bold">Target Verified Creator Account:</label>
                         <select id="campaign-account-select" class="w-full bg-surface1 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none focus:border-cyan-500">
-                            <!-- Populated dynamically by AlAmrModals.onCampaignPlatformChange -->
+                            <!-- Populated dynamically with active verified accounts only -->
                         </select>
                         <div id="campaign-account-hint" class="text-[10px] font-mono text-slate-400 mt-1">
-                            Uses encrypted credentials from vault. Never silently publishes to the wrong account.
+                            Only active, verified accounts enrolled in the Encrypted Vault are permitted.
                         </div>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block font-mono text-slate-400 mb-1">CPM Rate ($/1k views):</label>
-                        <input id="campaign-cpm-input" type="number" step="0.1" value="1.5" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
-                    </div>
-                    <div>
-                        <label class="block font-mono text-slate-400 mb-1">Budget ($ Max):</label>
-                        <input id="campaign-budget-input" type="number" step="10" value="500" class="w-full bg-surface2 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 font-mono outline-none">
-                    </div>
-                </div>
             </div>
-            <div class="flex items-center justify-end gap-2 mt-6">
-                <button onclick="AlAmrModals.closeCreateCampaignModal()" class="px-3.5 py-2 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
-                    Cancel
-                </button>
-                <button onclick="AlAmrModals.submitCreateCampaign()" class="px-4 py-2 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-950">
-                    <span>🚀 START CAMPAIGN</span>
-                </button>
+
+            <!-- SECTION 4: START PIPELINE (ACTIONS & SUBMISSION) -->
+            <div class="flex items-center justify-between p-3.5 border-t border-slate-800 bg-surface1">
+                <div class="text-[11px] text-slate-400 font-mono flex items-center gap-2">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Ready to dispatch autonomous 9-stage clipping engine</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="AlAmrModals.closeCreateCampaignModal()" class="px-3.5 py-2 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
+                        Cancel
+                    </button>
+                    <button type="button" id="btn-start-campaign" onclick="AlAmrModals.submitCreateCampaign()" class="px-4 py-2 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-2 shadow-lg shadow-emerald-950">
+                        <span>🚀 START PIPELINE</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

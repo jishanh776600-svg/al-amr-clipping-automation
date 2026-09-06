@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, status
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -218,6 +218,9 @@ class YouTubeTokenExchangeRequest(BaseModel):
 class CreateAndRunCampaignRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
     source_uri: str = Field(..., min_length=1, max_length=1024)
+    source_type: Optional[str] = Field(default=None, description="Explicit source type: youtube, direct_url, or local_file")
+    brief_storage_key: Optional[str] = Field(default=None, description="Storage key of uploaded brief file")
+    brief_filename: Optional[str] = Field(default=None, description="Original filename of brief")
     requirements_text: Optional[str] = Field(default=None, max_length=10000)
     target_platforms: List[str] = Field(default=["youtube_shorts"])
     target_account_id: Optional[str] = Field(default=None, description="Selected destination account ID from vault")
@@ -1354,6 +1357,101 @@ async def launch_campaign_discovery_api(
     }
 
 
+@app.post("/api/campaigns/upload-brief")
+async def upload_campaign_brief_api(
+    file: UploadFile = File(...),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Securely uploads and ingests a campaign brief file (PDF, TXT, MD) into canonical storage."""
+    import uuid
+    import re
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded brief file missing filename")
+
+    clean_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    ext = Path(clean_filename).suffix.lower()
+    allowed_extensions = {".pdf", ".txt", ".md"}
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported brief file format '{ext}'. Allowed brief formats: PDF, TXT, MD",
+        )
+
+    content = await file.read()
+    max_size = 25 * 1024 * 1024  # 25 MB limit
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Brief file size ({len(content)} bytes) exceeds maximum 25 MB limit",
+        )
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded brief file cannot be empty")
+
+    storage_key = f"campaigns/briefs/{uuid.uuid4().hex[:12]}_{clean_filename}"
+    await storage.upload_bytes(content, storage_key)
+    logger.info("Campaign brief uploaded successfully", filename=clean_filename, storage_key=storage_key, operator=operator)
+    return {
+        "status": "success",
+        "brief_storage_key": storage_key,
+        "filename": clean_filename,
+        "size_bytes": len(content),
+        "format": ext.lstrip("."),
+    }
+
+
+@app.post("/api/campaigns/upload-video")
+async def upload_source_video_api(
+    file: UploadFile = File(...),
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Uploads a local source video file (.mp4, .mov, .mkv, .webm) into canonical storage for ingestion."""
+    import uuid
+    import re
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded video file missing filename")
+
+    clean_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    ext = Path(clean_filename).suffix.lower()
+    allowed_extensions = {".mp4", ".mov", ".mkv", ".webm"}
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported video format '{ext}'. Allowed video formats: MP4, MOV, MKV, WebM",
+        )
+
+    content = await file.read()
+    max_size = 500 * 1024 * 1024  # 500 MB limit
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video file size exceeds maximum 500 MB limit",
+        )
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded video file cannot be empty")
+
+    source_id = f"src_{uuid.uuid4().hex[:8]}"
+    storage_key = f"sources/{source_id}/master{ext}"
+    await storage.upload_bytes(content, storage_key)
+
+    source_uri = storage_key
+    if hasattr(storage, "root_dir") and storage.root_dir:
+        full_local_path = Path(storage.root_dir) / storage_key
+        source_uri = str(full_local_path.resolve())
+
+    logger.info("Source video uploaded successfully", filename=clean_filename, storage_key=storage_key, operator=operator)
+    return {
+        "status": "success",
+        "source_uri": source_uri,
+        "source_id": source_id,
+        "storage_key": storage_key,
+        "filename": clean_filename,
+        "size_bytes": len(content),
+        "source_type": "local_file",
+    }
+
+
 @app.post("/api/campaigns/create-and-run")
 async def create_and_run_campaign_api(
     req: CreateAndRunCampaignRequest,
@@ -1369,6 +1467,58 @@ async def create_and_run_campaign_api(
             detail=f"Cannot start campaign: System is in {state.mode.value} state (Emergency Stop: {state.emergency_stopped}, Paused: {state.automation_paused})",
         )
 
+    # 1. Validate Source URI
+    clean_source = req.source_uri.strip() if req.source_uri else ""
+    if not clean_source:
+        raise HTTPException(status_code=400, detail="Source video URI or uploaded file is required")
+
+    from clipping.ingestion.source import SourceReference, SourceType
+    from clipping.ingestion.exceptions import InvalidSourceError
+    try:
+        source_ref = SourceReference.from_uri(clean_source)
+    except (InvalidSourceError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid source video reference: {str(e)}")
+
+    if source_ref.source_type == SourceType.CUSTOM and not (clean_source.startswith("http://") or clean_source.startswith("https://")):
+        raise HTTPException(status_code=400, detail=f"Unsupported source URI format: '{clean_source}'")
+
+    # 2. Validate Platform and Destination Account
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+
+    primary_platform_str = req.target_platforms[0] if req.target_platforms else "youtube_shorts"
+    if "instagram" in primary_platform_str.lower():
+        p_enum = AccountPlatform.INSTAGRAM
+    else:
+        p_enum = AccountPlatform.YOUTUBE
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    target_acc_id = req.target_account_id
+
+    if target_acc_id:
+        acc_meta = await vault.get_account_metadata(p_enum, target_acc_id)
+        if not acc_meta:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target account '{target_acc_id}' not found in vault for platform {p_enum.value}",
+            )
+        if acc_meta.status != AccountStatus.ACTIVE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target account '{target_acc_id}' is not active (current status: {acc_meta.status.value}). Only verified active accounts may receive campaign jobs.",
+            )
+    else:
+        # Check if an active account exists for this platform
+        active_accounts = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
+        if active_accounts:
+            target_acc_id = active_accounts[0].account_id
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No active, verified account found for platform {p_enum.value}. Please connect and verify an account first.",
+            )
+
+    # 3. Create Campaign Record
     import uuid
     import asyncio
     from clipping.agent.campaign.models import (
@@ -1387,14 +1537,15 @@ async def create_and_run_campaign_api(
     camp_repo = CampaignRepository(storage_driver=storage)
 
     rules = [line.strip() for line in req.requirements_text.splitlines() if line.strip()] if req.requirements_text else []
+    resolved_source_urls = [clean_source] if clean_source.startswith("http") else []
 
     record = CampaignRecord(
         campaign_id=campaign_id,
         name=req.name,
         source="operator_console",
-        description=req.requirements_text or "",
+        description=req.requirements_text or (f"Brief: {req.brief_filename}" if req.brief_filename else ""),
         status=CampaignStatus.ACTIVE,
-        required_platforms=[CampaignPlatform.YOUTUBE_SHORTS],
+        required_platforms=[CampaignPlatform.INSTAGRAM_REELS if p_enum == AccountPlatform.INSTAGRAM else CampaignPlatform.YOUTUBE_SHORTS],
         quotas=QuotasAndCaps(
             daily_creator_limit=5,
             campaign_total_clip_cap=50,
@@ -1404,35 +1555,44 @@ async def create_and_run_campaign_api(
             total_budget=req.payout_budget,
             remaining_budget=req.payout_budget,
         ),
-        source_material=SourceMaterial(video_urls=[req.source_uri] if req.source_uri.startswith("http") else []),
+        source_material=SourceMaterial(video_urls=resolved_source_urls),
         allowed_content_rules=rules,
         posting_requirements=PostingRequirements(),
     )
     await camp_repo.save_campaign(record)
 
+    # 4. Create Job State Record
     job_id = f"job_run_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:4]}"
     state_repo = RemoteStorageStateRepository(storage_driver=storage)
     source_id = f"src_{uuid.uuid4().hex[:8]}"
-    primary_platform = req.target_platforms[0] if req.target_platforms else "youtube_shorts"
+
+    job_metadata = {
+        "source_uri": clean_source,
+        "source_type": source_ref.source_type.value,
+        "operator": operator,
+        "campaign_name": req.name,
+        "target_platform": p_enum.value,
+        "target_account_id": target_acc_id,
+    }
+    if req.brief_storage_key:
+        job_metadata["brief_storage_key"] = req.brief_storage_key
+    if req.brief_filename:
+        job_metadata["brief_filename"] = req.brief_filename
+
     await state_repo.create_job(
         job_id=job_id,
         campaign_id=campaign_id,
         source_video_id=source_id,
         idempotency_key=f"idemp_{job_id}",
-        metadata={
-            "source_uri": req.source_uri,
-            "operator": operator,
-            "campaign_name": req.name,
-            "target_platform": primary_platform,
-            "target_account_id": req.target_account_id,
-        },
+        metadata=job_metadata,
     )
 
+    # 5. Background Pipeline Execution
     async def _runner():
         try:
             logger.info("Starting background pipeline execution", job_id=job_id, campaign_id=campaign_id)
             code = await run_pipeline(
-                source_uri=req.source_uri,
+                source_uri=clean_source,
                 campaign_id=campaign_id,
                 job_id=job_id,
                 storage=storage,
@@ -1447,6 +1607,9 @@ async def create_and_run_campaign_api(
         "status": "success",
         "campaign_id": campaign_id,
         "job_id": job_id,
+        "target_platform": p_enum.value,
+        "target_account_id": target_acc_id,
+        "source_type": source_ref.source_type.value,
         "message": f"Campaign '{req.name}' created and autonomous clipping pipeline started.",
     }
 

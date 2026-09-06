@@ -2251,16 +2251,183 @@ window.AlAmrModals = {
         }
     },
 
-    // 13. Create & Run Campaign Modal
+    // 13. Create & Run Campaign Modal & Production Workflow
+    campaignBriefFile: null,
+    campaignVideoFile: null,
+    campaignSourceType: "youtube",
+
     openCreateCampaignModal() {
         const modal = document.getElementById("modal-create-campaign");
-        if (modal) modal.classList.remove("hidden");
+        if (!modal) return;
+
+        // Reset state
+        this.campaignBriefFile = null;
+        this.campaignVideoFile = null;
+        this.campaignSourceType = "youtube";
+
+        // Reset inputs
+        const nameInput = document.getElementById("campaign-name-input");
+        const sourceInput = document.getElementById("campaign-source-input");
+        const reqsInput = document.getElementById("campaign-requirements-input");
+        const alertEl = document.getElementById("campaign-create-alert");
+        const briefInput = document.getElementById("campaign-brief-file-input");
+        const videoInput = document.getElementById("campaign-video-file-input");
+
+        if (nameInput) nameInput.value = "";
+        if (sourceInput) sourceInput.value = "";
+        if (reqsInput) reqsInput.value = "";
+        if (briefInput) briefInput.value = "";
+        if (videoInput) videoInput.value = "";
+        if (alertEl) {
+            alertEl.className = "hidden p-3 rounded text-xs border font-mono";
+            alertEl.innerHTML = "";
+        }
+
+        // Reset file chips
+        this.clearBriefFile();
+        this.clearVideoFile();
+        this.setSourceType("youtube");
+
+        // Sync platform and active accounts
+        const ytRadio = document.querySelector('input[name="campaign-destination-platform"][value="youtube_shorts"]');
+        if (ytRadio) ytRadio.checked = true;
         this.onCampaignPlatformChange("youtube_shorts");
+
+        modal.classList.remove("hidden");
     },
 
     closeCreateCampaignModal() {
         const modal = document.getElementById("modal-create-campaign");
         if (modal) modal.classList.add("hidden");
+    },
+
+    setSourceType(type) {
+        this.campaignSourceType = type;
+        const btnYt = document.getElementById("btn-src-youtube");
+        const btnDirect = document.getElementById("btn-src-direct");
+        const btnLocal = document.getElementById("btn-src-local");
+        const urlContainer = document.getElementById("campaign-source-url-container");
+        const localContainer = document.getElementById("campaign-source-local-container");
+        const urlLabel = document.getElementById("campaign-source-url-label");
+        const urlInput = document.getElementById("campaign-source-input");
+        const hint = document.getElementById("campaign-source-hint");
+        const indicator = document.getElementById("source-type-indicator");
+
+        // Reset button styles
+        const activeClass = "py-2 px-2.5 rounded border font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition bg-surface1 border-cyan-500 text-cyan-300 shadow-sm";
+        const inactiveClass = "py-2 px-2.5 rounded border font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 transition bg-surface1/60 border-slate-700 text-slate-400 hover:text-slate-200";
+
+        if (btnYt) btnYt.className = type === "youtube" ? activeClass : inactiveClass;
+        if (btnDirect) btnDirect.className = type === "direct_url" ? activeClass : inactiveClass;
+        if (btnLocal) btnLocal.className = type === "local_file" ? activeClass : inactiveClass;
+
+        if (type === "local_file") {
+            if (urlContainer) urlContainer.classList.add("hidden");
+            if (localContainer) localContainer.classList.remove("hidden");
+            if (indicator) indicator.textContent = "📁 Local Video Upload";
+        } else {
+            if (localContainer) localContainer.classList.add("hidden");
+            if (urlContainer) urlContainer.classList.remove("hidden");
+            if (type === "youtube") {
+                if (urlLabel) urlLabel.textContent = "YouTube Source URL:";
+                if (urlInput) urlInput.placeholder = "https://www.youtube.com/watch?v=... or https://youtu.be/...";
+                if (hint) hint.textContent = "RemoteVideoIngestor downloads and streams high-definition video master from YouTube.";
+                if (indicator) indicator.textContent = "▶️ YouTube URL";
+            } else {
+                if (urlLabel) urlLabel.textContent = "Direct Video Stream URL (MP4/HLS):";
+                if (urlInput) urlInput.placeholder = "https://storage.googleapis.com/.../video.mp4";
+                if (hint) hint.textContent = "Direct video stream URL ingested directly into canonical storage.";
+                if (indicator) indicator.textContent = "🔗 Direct Video URL";
+            }
+        }
+    },
+
+    onBriefFileSelected(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!["pdf", "txt", "md"].includes(ext)) {
+            alert(`Unsupported brief format '.${ext}'. Allowed formats: PDF, TXT, MD`);
+            event.target.value = "";
+            return;
+        }
+        if (file.size > 25 * 1024 * 1024) {
+            alert(`Brief file size exceeds 25 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
+            event.target.value = "";
+            return;
+        }
+
+        this.campaignBriefFile = file;
+        const dropzone = document.getElementById("campaign-brief-dropzone");
+        const chip = document.getElementById("campaign-brief-selected");
+        const nameEl = document.getElementById("campaign-brief-name");
+        const sizeEl = document.getElementById("campaign-brief-size");
+        const badgeEl = document.getElementById("campaign-brief-badge");
+
+        if (dropzone) dropzone.classList.add("hidden");
+        if (chip) chip.classList.remove("hidden");
+        if (nameEl) nameEl.textContent = file.name;
+        if (sizeEl) sizeEl.textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
+        if (badgeEl) badgeEl.textContent = ext.toUpperCase();
+    },
+
+    clearBriefFile(event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        this.campaignBriefFile = null;
+        const input = document.getElementById("campaign-brief-file-input");
+        if (input) input.value = "";
+
+        const dropzone = document.getElementById("campaign-brief-dropzone");
+        const chip = document.getElementById("campaign-brief-selected");
+        if (dropzone) dropzone.classList.remove("hidden");
+        if (chip) chip.classList.add("hidden");
+    },
+
+    onVideoFileSelected(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!["mp4", "mov", "mkv", "webm"].includes(ext)) {
+            alert(`Unsupported video format '.${ext}'. Allowed formats: MP4, MOV, MKV, WebM`);
+            event.target.value = "";
+            return;
+        }
+        if (file.size > 500 * 1024 * 1024) {
+            alert(`Video file size exceeds 500 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
+            event.target.value = "";
+            return;
+        }
+
+        this.campaignVideoFile = file;
+        const dropzone = document.getElementById("campaign-video-dropzone");
+        const chip = document.getElementById("campaign-video-selected");
+        const nameEl = document.getElementById("campaign-video-name");
+        const sizeEl = document.getElementById("campaign-video-size");
+
+        if (dropzone) dropzone.classList.add("hidden");
+        if (chip) chip.classList.remove("hidden");
+        if (nameEl) nameEl.textContent = file.name;
+        if (sizeEl) sizeEl.textContent = `(${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
+    },
+
+    clearVideoFile(event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        this.campaignVideoFile = null;
+        const input = document.getElementById("campaign-video-file-input");
+        if (input) input.value = "";
+
+        const dropzone = document.getElementById("campaign-video-dropzone");
+        const chip = document.getElementById("campaign-video-selected");
+        if (dropzone) dropzone.classList.remove("hidden");
+        if (chip) chip.classList.add("hidden");
     },
 
     onCampaignPlatformChange(platform) {
@@ -2270,27 +2437,25 @@ window.AlAmrModals = {
 
         const pFilter = platform === "instagram_reels" ? "instagram" : "youtube";
         const accounts = (window.AlAmrShellInstance && window.AlAmrShellInstance.state && window.AlAmrShellInstance.state.accounts) || [];
-        const matching = accounts.filter(a => a.platform === pFilter);
+        
+        // Strict filtering: Only active, verified accounts enrolled in vault
+        const matchingActive = accounts.filter(a => a.platform === pFilter && a.status === "active");
 
-        if (matching.length === 0) {
-            select.innerHTML = `<option value="">-- No enrolled ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'} accounts in vault --</option>`;
-            if (hint) hint.innerHTML = `<span class="text-amber-400">⚠ No account enrolled yet for this platform. Please add one in Accounts tab first.</span>`;
+        if (matchingActive.length === 0) {
+            select.innerHTML = `<option value="">-- No active/verified ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'} accounts found --</option>`;
+            if (hint) {
+                hint.innerHTML = `<span class="text-amber-400 font-bold">⚠ No verified active account enrolled for ${pFilter.toUpperCase()}. Please verify one in the Accounts tab first.</span>`;
+            }
             return;
         }
 
-        select.innerHTML = matching.map(a => {
-            const isAct = a.status === "active";
-            const badge = isAct ? "✓ VERIFIED & ACTIVE" : `⏳ ${a.status.toUpperCase()}`;
-            return `<option value="${a.account_id}">${a.display_name || a.username} (${a.account_id}) — ${badge}</option>`;
+        select.innerHTML = matchingActive.map(a => {
+            return `<option value="${a.account_id}">${a.display_name || a.username} (${a.account_id}) — ✓ ACTIVE & VERIFIED</option>`;
         }).join("");
 
-        const firstActive = matching.find(a => a.status === "active");
-        if (firstActive) {
-            select.value = firstActive.account_id;
-            if (hint) hint.innerHTML = `<span class="text-emerald-400 font-bold">✓ Bound to verified account: ${firstActive.display_name || firstActive.username} (${firstActive.account_id})</span>`;
-        } else {
-            select.value = matching[0].account_id;
-            if (hint) hint.innerHTML = `<span class="text-amber-400">⚠ Account requires verification before publishing. Connect token in Accounts tab.</span>`;
+        select.value = matchingActive[0].account_id;
+        if (hint) {
+            hint.innerHTML = `<span class="text-emerald-400 font-bold">✓ Bound to verified account: ${matchingActive[0].display_name || matchingActive[0].username} (${matchingActive[0].account_id})</span>`;
         }
     },
 
@@ -2299,44 +2464,98 @@ window.AlAmrModals = {
         const sourceInput = document.getElementById("campaign-source-input");
         const reqsInput = document.getElementById("campaign-requirements-input");
         const accountSelect = document.getElementById("campaign-account-select");
-        const cpmInput = document.getElementById("campaign-cpm-input");
-        const budgetInput = document.getElementById("campaign-budget-input");
+        const alertEl = document.getElementById("campaign-create-alert");
+        const startBtn = document.getElementById("btn-start-campaign");
 
         const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
         const platform = (platformRadio && platformRadio.value) || "youtube_shorts";
-        const targetAccountId = (accountSelect && accountSelect.value) || null;
+        const targetAccountId = (accountSelect && accountSelect.value) || "";
 
         const name = (nameInput && nameInput.value.trim()) || "";
-        const source_uri = (sourceInput && sourceInput.value.trim()) || "";
+        let source_uri = (sourceInput && sourceInput.value.trim()) || "";
         const requirements_text = (reqsInput && reqsInput.value.trim()) || "";
-        const cpm_rate = (cpmInput && parseFloat(cpmInput.value)) || 1.5;
-        const payout_budget = (budgetInput && parseFloat(budgetInput.value)) || 500.0;
+
+        const showAlert = (msg, isError = true) => {
+            if (!alertEl) return;
+            alertEl.classList.remove("hidden");
+            alertEl.className = `p-3 rounded text-xs border font-mono ${isError ? 'bg-rose-950/50 border-rose-500/60 text-rose-300' : 'bg-emerald-950/50 border-emerald-500/60 text-emerald-300'}`;
+            alertEl.innerHTML = `<div class="font-bold mb-0.5">${isError ? '⚠ Campaign Creation Blocked' : '✓ Processing'}</div><div>${msg}</div>`;
+        };
 
         if (!name) {
-            alert("Campaign name is required.");
+            showAlert("Campaign name is required.");
             return;
         }
-        if (!source_uri) {
-            alert("Source video URI is required (YouTube URL or local file path).");
+        if (!targetAccountId) {
+            showAlert(`A verified active account is required for ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'}. Please connect an account first.`);
             return;
+        }
+
+        // Validate source depending on selected mode
+        if (this.campaignSourceType === "local_file") {
+            if (!this.campaignVideoFile) {
+                showAlert("Please select a local video file (.mp4, .mov, .mkv, .webm) to upload.");
+                return;
+            }
+        } else {
+            if (!source_uri) {
+                showAlert(`Source video URL is required (${this.campaignSourceType === 'youtube' ? 'YouTube link' : 'Direct video stream URL'}).`);
+                return;
+            }
+        }
+
+        // Start upload / submission with UI feedback
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.innerHTML = `<span>⏳</span><span>DISPATCHING PIPELINE...</span>`;
         }
 
         try {
+            let brief_storage_key = null;
+            let brief_filename = null;
+
+            // 1. Upload Brief if provided
+            if (this.campaignBriefFile) {
+                window.AlAmrShellInstance.showToast(`Uploading campaign brief (${this.campaignBriefFile.name})...`, "info");
+                const briefRes = await AlAmrAPI.uploadBrief(this.campaignBriefFile);
+                brief_storage_key = briefRes.brief_storage_key;
+                brief_filename = briefRes.filename;
+            }
+
+            // 2. Upload Video if local file selected
+            if (this.campaignSourceType === "local_file" && this.campaignVideoFile) {
+                window.AlAmrShellInstance.showToast(`Uploading source master video (${this.campaignVideoFile.name})...`, "info");
+                const videoRes = await AlAmrAPI.uploadSourceVideo(this.campaignVideoFile);
+                source_uri = videoRes.source_uri;
+            }
+
+            // 3. Dispatch Campaign & Job
+            window.AlAmrShellInstance.showToast("Creating campaign record and dispatching 9-stage pipeline...", "info");
             const res = await AlAmrAPI.createAndRunCampaign({
                 name,
                 source_uri,
+                source_type: this.campaignSourceType,
+                brief_storage_key,
+                brief_filename,
                 requirements_text,
                 target_platforms: [platform],
                 target_account_id: targetAccountId,
-                cpm_rate,
-                payout_budget,
+                cpm_rate: 1.5,
+                payout_budget: 500.0,
             });
+
             this.closeCreateCampaignModal();
-            window.AlAmrShellInstance.showToast(`Campaign started! Job: ${res.job_id}`, "success");
+            window.AlAmrShellInstance.showToast(`🚀 Campaign created! Autonomous Pipeline Job: ${res.job_id}`, "success");
             AlAmrPlayer.activeJobId = res.job_id;
             window.AlAmrShellInstance.navigateTo("clipping");
+            window.AlAmrShellInstance.syncState(true);
         } catch (err) {
-            alert(`Failed to start campaign: ${err.message}`);
+            showAlert(err.message || "Failed to create campaign and start pipeline.");
+        } finally {
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.innerHTML = `<span>🚀 START PIPELINE</span>`;
+            }
         }
     },
 
