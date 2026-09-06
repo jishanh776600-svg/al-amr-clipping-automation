@@ -38,6 +38,7 @@ from clipping.control.repository import ControlRepository
 from clipping.agent.orchestration.engine import AutonomousOrchestrationEngine
 from clipping.agent.orchestration.models import OrchestrationStage
 from clipping.agent.campaign.repository import CampaignRepository
+from clipping.config.settings import Settings
 from clipping.agent.publishing.repository import CampaignSubmissionRepository
 from clipping.agent.publishing.adapters.youtube import YouTubePublishingAdapter
 from clipping.agent.publishing.adapters.instagram import InstagramPublishingAdapter
@@ -66,7 +67,8 @@ def local_storage(tmp_path):
 async def test_01_missing_master_key_reported_in_matrix(local_storage):
     """Verifies that missing master key reports warning and blocks live operation."""
     with patch.dict(os.environ, {"ENCRYPTION_MASTER_KEY": "", "AL_AMR_MASTER_KEY": ""}, clear=True):
-        validator = SystemPreflightValidator(storage_driver=local_storage)
+        isolated_settings = Settings(_env_file=None, AL_AMR_MASTER_KEY=None, ENCRYPTION_MASTER_KEY=None)
+        validator = SystemPreflightValidator(storage_driver=local_storage, settings=isolated_settings)
         report = await validator.validate()
 
         vault_checks = [c for c in report.checks if c.name == "vault_master_key"]
@@ -459,14 +461,27 @@ async def test_19_real_service_verifier_distinguishes_unconfigured_vs_auth_failu
             assert auth_fail.status_code == 401
             assert "authentication failed" in auth_fail.message.lower()
 
-    # 3. Check validator converts unconfigured -> WARN and auth failure -> FAIL
+    # 3. Check validator converts unconfigured + browser active -> PASS, unconfigured + browser disabled -> WARN, and auth failure -> FAIL
     validator = SystemPreflightValidator(storage_driver=local_storage)
+
+    # 3a. When browser discovery is operational, unconfigured WHOP_API_KEY does NOT block readiness (PASS):
     with patch.object(verifier, "verify_whop", return_value=unconf):
         with patch("clipping.preflight.service_verifier.RealServiceVerifier", return_value=verifier):
             checks = await validator.check_platform_credentials()
             whop_check = next(c for c in checks if c.name == "whop_campaign_discovery")
-            assert whop_check.status == PreflightStatus.WARN
+            assert whop_check.status == PreflightStatus.PASS
+            assert "browser discovery operational" in whop_check.message.lower()
 
+    # 3b. When browser discovery is disabled AND WHOP_API_KEY is unconfigured, validator flags WARN:
+    with patch.dict(os.environ, {"DISABLE_BROWSER_DISCOVERY": "1"}):
+        with patch.object(verifier, "verify_whop", return_value=unconf):
+            with patch("clipping.preflight.service_verifier.RealServiceVerifier", return_value=verifier):
+                checks = await validator.check_platform_credentials()
+                whop_check = next(c for c in checks if c.name == "whop_campaign_discovery")
+                assert whop_check.status == PreflightStatus.WARN
+                assert "no legitimate campaign source available" in whop_check.message.lower()
+
+    # 3c. When WHOP_API_KEY is provided but fails authentication (401), validator flags FAIL:
     with patch.object(verifier, "verify_whop", return_value=auth_fail):
         with patch("clipping.preflight.service_verifier.RealServiceVerifier", return_value=verifier):
             checks = await validator.check_platform_credentials()

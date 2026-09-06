@@ -43,7 +43,7 @@ class RealServiceVerifier:
 
     async def verify_whop(self, api_key: Optional[str] = None) -> ServiceVerificationResult:
         """
-        Validates Whop API token against live Whop API endpoint.
+        Validates Whop API token against live Whop API endpoint if configured.
         Non-destructive GET request to /v5/campaigns.
         """
         token = api_key or os.getenv("WHOP_API_KEY") or os.getenv("WHOP_API_TOKEN")
@@ -52,9 +52,9 @@ class RealServiceVerifier:
                 service="whop",
                 configured=False,
                 verified=False,
-                message="WHOP_API_KEY is not configured; live discovery disabled",
+                message="WHOP_API_KEY is not configured (optional: browser discovery active)",
                 why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
-                configuration_requirement="Set WHOP_API_KEY in environment or .env",
+                configuration_requirement="Optional: Set WHOP_API_KEY if enterprise REST API access is enabled",
                 blocks_dry_run=False,
                 blocks_live_operation=False,
             )

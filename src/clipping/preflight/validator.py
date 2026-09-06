@@ -71,7 +71,7 @@ class ActivationReadinessMatrix(BaseModel):
     environment_ready: bool = Field(default=False, description="System binaries (FFmpeg/FFprobe) present in PATH")
     credential_ready: bool = Field(default=False, description="Vault encryption master key configured")
     account_ready: bool = Field(default=False, description="At least one creator account registered in vault")
-    campaign_source_ready: bool = Field(default=False, description="Whop API token configured or campaigns cached")
+    campaign_source_ready: bool = Field(default=False, description="Whop campaign source ready via browser discovery, cached active campaigns, or API")
     media_pipeline_ready: bool = Field(default=False, description="FFmpeg, FFprobe, and OpenCV available for clipping")
     storage_ready: bool = Field(default=False, description="Storage driver read/write/delete verified")
     worker_ready: bool = Field(default=False, description="Task queue and lease management operational")
@@ -109,10 +109,16 @@ class SystemPreflightValidator:
         storage_driver: Optional[StorageDriver] = None,
         control_repository: Optional[ControlRepository] = None,
         settings: Optional[Settings] = None,
+        target_campaign_id: Optional[str] = None,
+        target_campaign_url: Optional[str] = None,
+        browser_driver: Optional[Any] = None,
     ):
         self.settings = settings or get_settings()
         self.storage = storage_driver or StorageFactory.create()
         self.control_repo = control_repository or ControlRepository(self.storage)
+        self.target_campaign_id = target_campaign_id
+        self.target_campaign_url = target_campaign_url
+        self.browser_driver = browser_driver
 
     def check_runtime(self) -> List[PreflightCheck]:
         """Validates Python runtime and core libraries."""
@@ -631,28 +637,238 @@ class SystemPreflightValidator:
                 )
             ]
 
+    def _is_legitimate_campaign(self, camp: Any) -> bool:
+        """Validates that a campaign is authentic and not a mock/synthetic test record."""
+        if not camp:
+            return False
+        cid = str(getattr(camp, "campaign_id", "") or "").lower()
+        name = str(getattr(camp, "name", "") or "").lower()
+        if not cid or cid.startswith(("mock_", "synthetic_", "fake_", "test_")):
+            return False
+        if "mock" in cid or "synthetic" in cid or "fake" in cid:
+            return False
+        if "mock" in name or "synthetic" in name or "fake" in name:
+            return False
+
+        # Must have valid source material with video URLs
+        src_mat = getattr(camp, "source_material", None)
+        video_urls = getattr(src_mat, "video_urls", []) if src_mat else []
+        if not video_urls:
+            return False
+
+        for url in video_urls:
+            u_low = str(url).lower()
+            if "mock" in u_low or "synthetic" in u_low or "fake" in u_low:
+                return False
+
+        # Must not be budget exhausted
+        payout = getattr(camp, "payout_terms", None)
+        if payout and getattr(payout, "budget_exhausted", False):
+            return False
+
+        return True
+
+    def _check_browser_discovery(self) -> tuple[bool, str]:
+        """Validates that browser-based campaign discovery (Playwright) is operational."""
+        if self.browser_driver is not None:
+            return True, "Injected browser driver operational"
+
+        if os.getenv("DISABLE_BROWSER_DISCOVERY", "").lower() in ("1", "true", "yes"):
+            return False, "Browser discovery disabled via DISABLE_BROWSER_DISCOVERY"
+
+        try:
+            import playwright
+            from clipping.agent.browser.driver import PlaywrightBrowserDriver
+            _ = PlaywrightBrowserDriver()
+            return True, "Playwright headless browser engine operational"
+        except Exception as e:
+            return False, f"Playwright unavailable: {str(e)}"
+
+    async def check_campaign_source(self, verifier: Optional[Any] = None) -> PreflightCheck:
+        """
+        Evaluates Whop campaign source readiness based on real-world discovery architecture:
+        1. Explicit valid campaign specified (target_campaign_id or target_campaign_url)
+        2. Active legitimate campaigns already cached/enrolled in CampaignRepository
+        3. Browser-based discovery operational (Playwright engine available)
+        4. Optional: WHOP_API_KEY verified against live endpoint
+        Fails closed if no legitimate discovery mechanism or campaign source is available.
+        """
+        from clipping.agent.campaign.repository import CampaignRepository
+        from clipping.agent.campaign.models import CampaignStatus
+
+        camp_repo = CampaignRepository(storage_driver=self.storage)
+
+        # 1. Check explicit target campaign ID
+        if self.target_campaign_id:
+            camp = await camp_repo.get_campaign(self.target_campaign_id)
+            if camp:
+                if self._is_legitimate_campaign(camp):
+                    return PreflightCheck(
+                        name="whop_campaign_discovery",
+                        category=PreflightCategory.PLATFORM_INTEGRATION,
+                        is_mandatory=False,
+                        status=PreflightStatus.PASS,
+                        message=f"Campaign source ready: Explicit target campaign '{self.target_campaign_id}' validated",
+                        why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+                        configuration_requirement="Explicit target campaign ID",
+                        blocks_dry_run=False,
+                        blocks_live_publishing=False,
+                        details={"mechanism": "explicit_target", "campaign_id": self.target_campaign_id, "name": camp.name},
+                    )
+                else:
+                    return PreflightCheck(
+                        name="whop_campaign_discovery",
+                        category=PreflightCategory.PLATFORM_INTEGRATION,
+                        is_mandatory=False,
+                        status=PreflightStatus.FAIL,
+                        message=f"Campaign source rejected: Target campaign '{self.target_campaign_id}' is synthetic or mock",
+                        why_required="Live campaign discovery requires authentic campaign terms and footage",
+                        configuration_requirement="Provide legitimate, non-mock campaign",
+                        blocks_dry_run=False,
+                        blocks_live_publishing=True,
+                        details={"mechanism": "explicit_target", "campaign_id": self.target_campaign_id, "rejected": True},
+                    )
+            elif self.target_campaign_id.startswith("whop_") and not any(k in self.target_campaign_id.lower() for k in ("mock", "synthetic", "test", "fake")):
+                return PreflightCheck(
+                    name="whop_campaign_discovery",
+                    category=PreflightCategory.PLATFORM_INTEGRATION,
+                    is_mandatory=False,
+                    status=PreflightStatus.PASS,
+                    message=f"Campaign source ready: Explicit Whop campaign target '{self.target_campaign_id}' queued for extraction",
+                    why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+                    configuration_requirement="Explicit target campaign ID",
+                    blocks_dry_run=False,
+                    blocks_live_publishing=False,
+                    details={"mechanism": "explicit_target_id", "campaign_id": self.target_campaign_id},
+                )
+            else:
+                return PreflightCheck(
+                    name="whop_campaign_discovery",
+                    category=PreflightCategory.PLATFORM_INTEGRATION,
+                    is_mandatory=False,
+                    status=PreflightStatus.FAIL,
+                    message=f"Campaign source rejected: Target campaign '{self.target_campaign_id}' is invalid or synthetic",
+                    why_required="Live campaign discovery requires authentic campaign terms and footage",
+                    configuration_requirement="Provide legitimate, non-mock campaign",
+                    blocks_dry_run=False,
+                    blocks_live_publishing=True,
+                    details={"mechanism": "explicit_target", "campaign_id": self.target_campaign_id, "rejected": True},
+                )
+
+        # 2. Check explicit target URL
+        if self.target_campaign_url:
+            u_lower = self.target_campaign_url.lower()
+            if ("whop.com" in u_lower) and not any(k in u_lower for k in ("mock", "synthetic", "test", "fake")):
+                return PreflightCheck(
+                    name="whop_campaign_discovery",
+                    category=PreflightCategory.PLATFORM_INTEGRATION,
+                    is_mandatory=False,
+                    status=PreflightStatus.PASS,
+                    message=f"Campaign source ready: Explicit Whop portal URL '{self.target_campaign_url}' configured",
+                    why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+                    configuration_requirement="Explicit target campaign URL",
+                    blocks_dry_run=False,
+                    blocks_live_publishing=False,
+                    details={"mechanism": "explicit_url", "url": self.target_campaign_url},
+                )
+
+        # 3. Check active legitimate campaigns in repository
+        try:
+            active_camps = await camp_repo.list_campaigns(status=CampaignStatus.ACTIVE)
+            legit_camps = [c for c in active_camps if self._is_legitimate_campaign(c)]
+            if legit_camps:
+                return PreflightCheck(
+                    name="whop_campaign_discovery",
+                    category=PreflightCategory.PLATFORM_INTEGRATION,
+                    is_mandatory=False,
+                    status=PreflightStatus.PASS,
+                    message=f"Campaign source ready: {len(legit_camps)} active campaign(s) enrolled in repository",
+                    why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+                    configuration_requirement="Enrolled active campaign in repository",
+                    blocks_dry_run=False,
+                    blocks_live_publishing=False,
+                    details={
+                        "mechanism": "repository_cache",
+                        "active_count": len(legit_camps),
+                        "campaign_ids": [c.campaign_id for c in legit_camps[:5]],
+                    },
+                )
+        except Exception as e:
+            logger.warning("Error checking active campaigns in repository", error=str(e))
+
+        # 4. Optional WHOP_API_KEY check
+        v = verifier
+        if v is None:
+            from clipping.preflight.service_verifier import RealServiceVerifier
+            v = RealServiceVerifier()
+        whop_api_res = await v.verify_whop()
+        if whop_api_res.verified:
+            return PreflightCheck(
+                name="whop_campaign_discovery",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS,
+                message=whop_api_res.message,
+                why_required=whop_api_res.why_required,
+                configuration_requirement=whop_api_res.configuration_requirement,
+                blocks_dry_run=whop_api_res.blocks_dry_run,
+                blocks_live_publishing=whop_api_res.blocks_live_operation,
+                details={"mechanism": "whop_api", **whop_api_res.details},
+            )
+        elif whop_api_res.configured and not whop_api_res.verified:
+            # Explicit invalid token configured by operator -> fail-closed alert
+            return PreflightCheck(
+                name="whop_campaign_discovery",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.FAIL,
+                message=whop_api_res.message,
+                why_required=whop_api_res.why_required,
+                configuration_requirement=whop_api_res.configuration_requirement,
+                blocks_dry_run=whop_api_res.blocks_dry_run,
+                blocks_live_publishing=True,
+                details={"mechanism": "whop_api", **whop_api_res.details},
+            )
+
+        # 5. Check browser discovery operational
+        browser_ready, browser_msg = self._check_browser_discovery()
+        if browser_ready:
+            return PreflightCheck(
+                name="whop_campaign_discovery",
+                category=PreflightCategory.PLATFORM_INTEGRATION,
+                is_mandatory=False,
+                status=PreflightStatus.PASS,
+                message="Campaign source ready: Whop browser discovery operational (Playwright headless browser ready)",
+                why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+                configuration_requirement="Headless browser engine (Playwright)",
+                blocks_dry_run=False,
+                blocks_live_publishing=False,
+                details={"mechanism": "browser_discovery", "driver": "playwright", "info": browser_msg},
+            )
+
+        # 6. No legitimate source available -> Fail Closed
+        return PreflightCheck(
+            name="whop_campaign_discovery",
+            category=PreflightCategory.PLATFORM_INTEGRATION,
+            is_mandatory=False,
+            status=PreflightStatus.WARN,
+            message="No legitimate campaign source available: Browser discovery unavailable and no active campaigns in repository",
+            why_required="Live campaign discovery, CPM payout rules, and source video URL ingestion from Whop",
+            configuration_requirement="Ensure Playwright browser automation is operational or register an active campaign in repository",
+            blocks_dry_run=False,
+            blocks_live_publishing=True,
+            details={"mechanism": "none", "browser_error": browser_msg},
+        )
+
     async def check_platform_credentials(self) -> List[PreflightCheck]:
         """Validates platform integration tokens without leaking secret values, probing live APIs when configured."""
         checks = []
         from clipping.preflight.service_verifier import RealServiceVerifier
 
         verifier = RealServiceVerifier()
-        # 1. Whop
-        whop_res = await verifier.verify_whop()
-        checks.append(
-            PreflightCheck(
-                name="whop_campaign_discovery",
-                category=PreflightCategory.PLATFORM_INTEGRATION,
-                is_mandatory=False,
-                status=PreflightStatus.PASS if whop_res.verified else (PreflightStatus.WARN if not whop_res.configured else PreflightStatus.FAIL),
-                message=whop_res.message,
-                why_required=whop_res.why_required,
-                configuration_requirement=whop_res.configuration_requirement,
-                blocks_dry_run=whop_res.blocks_dry_run,
-                blocks_live_publishing=whop_res.blocks_live_operation,
-                details=whop_res.details,
-            )
-        )
+        # 1. Whop Campaign Source Discovery
+        whop_check = await self.check_campaign_source(verifier=verifier)
+        checks.append(whop_check)
 
         # Inspect vault for enrolled creator account credentials
         yt_creds = None
@@ -802,7 +1018,7 @@ class SystemPreflightValidator:
         if not env_ready:
             recommendations.append("Install FFmpeg and FFprobe in system PATH to enable media clipping and rendering.")
         if not whop_ready:
-            recommendations.append("Set WHOP_API_KEY in environment or .env to enable real-time campaign discovery.")
+            recommendations.append("Ensure browser discovery (Playwright) is operational or register an active campaign in repository.")
         if not pub_ready:
             recommendations.append("Configure YouTube OAuth credentials (YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN) or store in vault.")
         if not acct_ready:

@@ -56,7 +56,13 @@ async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[St
     # 2. Preflight Validation
     if mode == "preflight" or not args.skip_preflight:
         logger.info("Executing system preflight verification before engine activation...")
-        validator = SystemPreflightValidator(storage_driver=storage_driver, control_repository=control_repo)
+        target_url = args.source if (args.source and args.source.startswith("http")) else None
+        validator = SystemPreflightValidator(
+            storage_driver=storage_driver,
+            control_repository=control_repo,
+            target_campaign_id=args.target_campaign,
+            target_campaign_url=target_url,
+        )
         report = await validator.validate()
 
         if mode == "preflight":

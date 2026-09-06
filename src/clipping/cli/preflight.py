@@ -32,7 +32,7 @@ async def run_preflight(args: argparse.Namespace) -> int:
         print(f"   [{'+' if m.environment_ready else '!'}] 2.  ENVIRONMENT READY:          {'READY' if m.environment_ready else 'NOT READY (FFmpeg missing)'}")
         print(f"   [{'+' if m.credential_ready else '!'}] 3.  CREDENTIAL READY:           {'READY' if m.credential_ready else 'WARNING (ENCRYPTION_MASTER_KEY not set)'}")
         print(f"   [{'+' if m.account_ready else '!'}] 4.  ACCOUNT READY:              {'READY' if m.account_ready else 'NOT READY (No creator accounts in vault)'}")
-        print(f"   [{'+' if m.campaign_source_ready else '!'}] 5.  CAMPAIGN SOURCE READY:     {'READY' if m.campaign_source_ready else 'WARNING (WHOP_API_KEY missing)'}")
+        print(f"   [{'+' if m.campaign_source_ready else '!'}] 5.  CAMPAIGN SOURCE READY:     {'READY' if m.campaign_source_ready else 'NOT READY (No active campaign source)'}")
         print(f"   [{'+' if m.media_pipeline_ready else '!'}] 6.  MEDIA PIPELINE READY:      {'READY' if m.media_pipeline_ready else 'NOT READY'}")
         print(f"   [{'+' if m.storage_ready else '!'}] 7.  STORAGE READY:             {'READY' if m.storage_ready else 'NOT READY'}")
         print(f"   [{'+' if m.worker_ready else '!'}] 8.  WORKER READY:              {'READY' if m.worker_ready else 'NOT READY'}")
