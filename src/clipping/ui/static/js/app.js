@@ -2748,7 +2748,7 @@ window.AlAmrModals = {
         if (chip) chip.classList.add("hidden");
     },
 
-    onCampaignPlatformChange(platform) {
+    async onCampaignPlatformChange(platform) {
         const select = document.getElementById("campaign-account-select");
         const hint = document.getElementById("campaign-account-hint");
         if (!select) return;
@@ -2756,7 +2756,7 @@ window.AlAmrModals = {
         const pFilter = platform === "instagram_reels" ? "instagram" : "youtube";
         let accounts = [];
         try {
-            accounts = await AlAmrAPI.getAccounts();
+            accounts = await AlAmrAPI.listAccounts();
         } catch (_) {
             accounts = [];
         }
@@ -3878,7 +3878,7 @@ window.StudioDrawer = {
         const container = document.getElementById("drawer-accounts-list");
         if (!container) return;
         try {
-            const accounts = await AlAmrAPI.getAccounts();
+            const accounts = await AlAmrAPI.listAccounts();
             if (!accounts || accounts.length === 0) {
                 container.innerHTML = `
                     <div class="p-4 rounded-lg bg-surface2 border border-slate-800 text-center space-y-2">
