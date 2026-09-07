@@ -207,7 +207,7 @@
                             <!-- Panel 2: Paste Raw Guidelines -->
                             <div id="brief-panel-paste" class="hidden space-y-2">
                                 <textarea id="brief-paste-input" rows="4" placeholder="Paste guidelines, rules, payout terms, hashtags, or campaign instructions here (e.g. copied directly from Google Docs, Whop, Discord, or Notion)..." class="w-full bg-surface2 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none resize-y"></textarea>
-                                <button type="button" onclick="StudioWorkspace.parsePastedGuidelines()" class="w-full py-2 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-300 font-mono text-xs font-bold transition flex items-center justify-center gap-2">
+                                <button type="button" id="btn-parse-guidelines" onclick="StudioWorkspace.parsePastedGuidelines()" class="w-full py-2 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-300 font-mono text-xs font-bold transition flex items-center justify-center gap-2">
                                     <span>⚡ PARSE GUIDELINES & EXTRACT RULES</span>
                                 </button>
                             </div>
@@ -216,7 +216,7 @@
                             <div id="brief-panel-url" class="hidden space-y-2">
                                 <div class="flex gap-2">
                                     <input type="url" id="brief-url-input" placeholder="https://docs.google.com/document/d/... or webpage URL" class="flex-1 bg-surface2 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:border-cyan-500 outline-none">
-                                    <button type="button" onclick="StudioWorkspace.importBriefFromUrl()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs font-bold transition flex-shrink-0">
+                                    <button type="button" id="btn-import-url" onclick="StudioWorkspace.importBriefFromUrl()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs font-bold transition flex-shrink-0">
                                         IMPORT
                                     </button>
                                 </div>
@@ -714,10 +714,10 @@
 
                 <!-- Action Buttons -->
                 <div class="flex items-center gap-2.5">
-                    <button type="button" onclick="StudioWorkspace.toggleRejectFeedbackDrawer()" class="px-3.5 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/50 text-rose-300 font-bold transition flex items-center gap-1.5">
+                    <button type="button" id="btn-review-reject" onclick="StudioWorkspace.toggleRejectFeedbackDrawer()" class="px-3.5 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/50 text-rose-300 font-bold transition flex items-center gap-1.5">
                         <span>✕ REJECT / REVISE</span>
                     </button>
-                    <button type="button" onclick="StudioWorkspace.approveAndProceedToPublish()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center gap-2 shadow-lg shadow-emerald-950">
+                    <button type="button" id="btn-review-approve" onclick="StudioWorkspace.approveAndProceedToPublish()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center gap-2 shadow-lg shadow-emerald-950">
                         <span>✓ APPROVE & PUBLISH ➔</span>
                     </button>
                 </div>
@@ -728,8 +728,8 @@
                 <div class="text-rose-300 font-bold">OPERATOR REVISION NOTES:</div>
                 <textarea id="review-feedback-input" rows="2" placeholder="Specify required adjustments (e.g. adjust hook timing 2s earlier, fix face centering)..." class="w-full bg-surface1 border border-slate-700 rounded p-2 text-slate-200 outline-none focus:border-rose-500 text-xs"></textarea>
                 <div class="flex justify-end gap-2">
-                    <button onclick="StudioWorkspace.toggleRejectFeedbackDrawer()" class="px-3 py-1 rounded bg-surface3 text-slate-400">Cancel</button>
-                    <button onclick="StudioWorkspace.submitRejection()" class="px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold">Submit Revision</button>
+                    <button type="button" onclick="StudioWorkspace.toggleRejectFeedbackDrawer()" class="px-3 py-1 rounded bg-surface3 text-slate-400">Cancel</button>
+                    <button type="button" id="btn-submit-revision" onclick="StudioWorkspace.submitRejection()" class="px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold">Submit Revision</button>
                 </div>
             </div>
 
@@ -863,7 +863,7 @@
             <div class="flex items-center gap-2">
                 <span class="font-bold text-white text-sm font-mono tracking-wider">⚡ STUDIO UTILITIES</span>
             </div>
-            <button onclick="StudioDrawer.close()" class="text-slate-400 hover:text-white font-mono text-base">✕</button>
+            <button type="button" id="studio-drawer-close-btn" onclick="StudioDrawer.close()" class="text-slate-400 hover:text-white font-mono text-base">✕</button>
         </div>
 
         <!-- Drawer Navigation Tabs -->
@@ -1061,7 +1061,7 @@
                         <button type="button" onclick="AlAmrModals.closeAddAccountModal()" class="px-3 py-1.5 text-xs font-mono rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-300 transition">
                             Cancel
                         </button>
-                        <button type="button" onclick="AlAmrModals.submitAddAccount()" class="px-4 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 shadow-md shadow-emerald-950">
+                        <button type="button" id="btn-submit-add-account" onclick="AlAmrModals.submitAddAccount()" class="px-4 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1 shadow-md shadow-emerald-950">
                             <span>✓ ENROLL IN VAULT</span>
                         </button>
                     </div>
@@ -1095,8 +1095,8 @@
     <div id="toast-container"></div>
 
     <!-- 6. ENGINE CLIENT & APPLICATION SCRIPTS -->
-    <script src="/static/js/api.js"></script>
-    <script src="/static/js/shell.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/api.js?v=2.0.0"></script>
+    <script src="/static/js/shell.js?v=2.0.0"></script>
+    <script src="/static/js/app.js?v=2.0.0"></script>
 </body>
 </html>

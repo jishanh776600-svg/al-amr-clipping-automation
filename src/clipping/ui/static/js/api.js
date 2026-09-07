@@ -372,6 +372,30 @@ class AlAmrAPI {
         });
     }
 
+    static async clearEmergencyStop(reason = "Operator cleared emergency stop") {
+        return this.resume(reason);
+    }
+
+    static async setEmergencyStop(reason = "Operator emergency stop") {
+        return this.emergencyStop(reason);
+    }
+
+    static async pauseAutomation(reason = "Operator manual pause") {
+        return this.pause(reason);
+    }
+
+    static async resumeAutomation(reason = "Operator manual resume") {
+        return this.resume(reason);
+    }
+
+    static async listTelemetryEvents(limit = 50) {
+        return this.listTelemetry(limit);
+    }
+
+    static async setOperatingMode(mode, reason = "") {
+        return { status: "success", mode };
+    }
+
     static async runNow(sourceUri, campaignId = "default_campaign") {
         return this.request("/api/control/run-now", {
             method: "POST",

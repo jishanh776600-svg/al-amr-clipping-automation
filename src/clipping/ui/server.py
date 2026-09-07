@@ -2060,7 +2060,7 @@ async def create_and_run_campaign_api(
                     repository=prod_repo,
                     telegram_review=TelegramReviewSystem(repository=prod_repo, transport=t_transport),
                 )
-                chat_ids = get_settings().get_allowed_telegram_chat_ids()
+                chat_ids = list(get_settings().get_allowed_telegram_chat_ids() or [])
                 chat_id = chat_ids[0] if chat_ids else None
 
                 await prod_engine.produce_campaign_clips(
@@ -3446,7 +3446,11 @@ async def serve_index():
 </script>"""
     # Inject just before </head>
     html_content = html_content.replace("</head>", auto_auth_script + "\n</head>", 1)
-    return HTMLResponse(content=html_content, status_code=200)
+    return HTMLResponse(
+        content=html_content,
+        status_code=200,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+    )
 
 
 if __name__ == "__main__":

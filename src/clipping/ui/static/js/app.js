@@ -1944,6 +1944,12 @@ window.AlAmrModals = {
         }
 
         const hasAuthToken = Boolean(credentials.access_token || credentials.client_id || credentials.refresh_token);
+        const submitBtn = document.getElementById("btn-submit-add-account");
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ ENROLLING IN VAULT…</span>";
+        }
+
         try {
             window.AlAmrShellInstance.showToast("Enrolling account in encrypted vault...", "info");
             const res = await AlAmrAPI.registerAccount({
@@ -1954,6 +1960,10 @@ window.AlAmrModals = {
                 credentials,
                 verify_connection: hasAuthToken
             });
+
+            if (submitBtn) {
+                submitBtn.innerHTML = "<span>✓ ACCOUNT ENROLLED</span>";
+            }
 
             this.closeAddAccountModal();
             const status = res.account?.status || res.status || "enrolled";
@@ -1970,6 +1980,11 @@ window.AlAmrModals = {
             await this.onCampaignPlatformChange(curPlat);
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = "<span>✕ ENROLLMENT FAILED</span>";
+                setTimeout(() => { if (submitBtn) submitBtn.innerHTML = "<span>✓ ENROLL IN VAULT</span>"; }, 3000);
+            }
             alert(`Failed to add account: ${err.message}`);
         }
     },
@@ -2421,6 +2436,12 @@ window.AlAmrModals = {
             return;
         }
 
+        const parseBtn = document.getElementById("btn-parse-guidelines");
+        if (parseBtn) {
+            parseBtn.disabled = true;
+            parseBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ EXTRACTING RULES…</span>";
+        }
+
         window.AlAmrShellInstance.showToast("Analyzing pasted campaign guidelines...", "info");
         try {
             const nameInput = document.getElementById("campaign-name-input");
@@ -2443,11 +2464,21 @@ window.AlAmrModals = {
             if (size) size.textContent = `(${res.size_bytes} chars)`;
             if (chip) chip.classList.remove("hidden");
 
+            if (parseBtn) {
+                parseBtn.innerHTML = "<span>✓ RULES EXTRACTED</span>";
+                setTimeout(() => { if (parseBtn) { parseBtn.disabled = false; parseBtn.innerHTML = "<span>⚡ PARSE GUIDELINES & EXTRACT RULES</span>"; } }, 3000);
+            }
+
             if (res.requirements) {
                 this.displayExtractedRequirements(res.requirements, res.brief_storage_key);
                 window.AlAmrShellInstance.showToast("✓ Guidelines analyzed and rules extracted!", "success");
             }
         } catch (err) {
+            if (parseBtn) {
+                parseBtn.disabled = false;
+                parseBtn.innerHTML = "<span>✕ EXTRACTION FAILED</span>";
+                setTimeout(() => { if (parseBtn) parseBtn.innerHTML = "<span>⚡ PARSE GUIDELINES & EXTRACT RULES</span>"; }, 3000);
+            }
             alert(`Guidelines analysis failed: ${err.message}`);
         }
     },
@@ -2458,6 +2489,12 @@ window.AlAmrModals = {
         if (!url) {
             alert("Please enter a Google Doc link or guidelines webpage URL.");
             return;
+        }
+
+        const importBtn = document.getElementById("btn-import-url");
+        if (importBtn) {
+            importBtn.disabled = true;
+            importBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ FETCHING…</span>";
         }
 
         window.AlAmrShellInstance.showToast("Fetching and analyzing document from URL...", "info");
@@ -2479,11 +2516,21 @@ window.AlAmrModals = {
             if (size) size.textContent = `(${res.size_bytes} bytes)`;
             if (chip) chip.classList.remove("hidden");
 
+            if (importBtn) {
+                importBtn.innerHTML = "<span>✓ IMPORTED</span>";
+                setTimeout(() => { if (importBtn) { importBtn.disabled = false; importBtn.innerHTML = "IMPORT"; } }, 3000);
+            }
+
             if (res.requirements) {
                 this.displayExtractedRequirements(res.requirements, res.brief_storage_key);
                 window.AlAmrShellInstance.showToast("✓ Document imported & guidelines extracted!", "success");
             }
         } catch (err) {
+            if (importBtn) {
+                importBtn.disabled = false;
+                importBtn.innerHTML = "<span>✕ FAILED</span>";
+                setTimeout(() => { if (importBtn) importBtn.innerHTML = "IMPORT"; }, 3000);
+            }
             alert(err.message);
         }
     },
@@ -3148,6 +3195,7 @@ window.AlAmrModals = {
 
 window.StudioWorkspace = {
     activeMode: "intake",
+    get currentMode() { return this.activeMode; },
     activeCampaignId: "camp_demo_01",
     activeJobId: "job_run_20260907_1204",
     activeArtifactId: "art_demo_01",
@@ -3348,10 +3396,20 @@ window.StudioWorkspace = {
             requirements_text: requirementsText || undefined,
         };
 
+        const startBtn = document.getElementById("btn-start-production");
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ STARTING PRODUCTION…</span>";
+        }
+
         try {
             const res = await AlAmrAPI.createAndRunCampaign(payload);
             this.activeJobId = res.job_id;
             this.activeCampaignId = res.campaign_id;
+
+            if (startBtn) {
+                startBtn.innerHTML = "<span>✓ PRODUCTION RUNNING</span>";
+            }
 
             // Update Header Campaign Pill
             const campPill = document.getElementById("studio-active-campaign-pill");
@@ -3369,6 +3427,13 @@ window.StudioWorkspace = {
         } catch (err) {
             console.error("Create and run campaign failed:", err);
             const msg = err.message || "Unknown error";
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.innerHTML = `<span class="text-rose-200">✕ START FAILED — ${msg.slice(0, 35)}</span>`;
+                setTimeout(() => {
+                    if (startBtn) startBtn.innerHTML = "<span>▶ START AUTONOMOUS PRODUCTION</span>";
+                }, 5000);
+            }
             if (window.AlAmrShellInstance) {
                 window.AlAmrShellInstance.showToast(`PRODUCTION COULD NOT START: ${msg}`, "error");
             } else {
@@ -3688,14 +3753,28 @@ window.StudioWorkspace = {
             return;
         }
 
+        const revBtn = document.getElementById("btn-submit-revision");
+        if (revBtn) {
+            revBtn.disabled = true;
+            revBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ SUBMITTING REVISION…</span>";
+        }
+
         try {
             if (this.activeJobId && this.activeClipId) {
                 await AlAmrAPI.makeClipDecision(this.activeJobId, this.activeClipId, "reject", feedback);
+            }
+            if (revBtn) {
+                revBtn.innerHTML = "<span>✓ REVISION REQUESTED</span>";
             }
             if (window.AlAmrShellInstance) {
                 window.AlAmrShellInstance.showToast("📝 Revision requested. Feedback dispatched to iterative engine.", "info");
             }
         } catch (err) {
+            if (revBtn) {
+                revBtn.disabled = false;
+                revBtn.innerHTML = "<span>✕ REVISION FAILED</span>";
+                setTimeout(() => { if (revBtn) revBtn.innerHTML = "Submit Revision"; }, 3000);
+            }
             if (window.AlAmrShellInstance) {
                 window.AlAmrShellInstance.showToast(`Revision error: ${err.message}`, "error");
             }
@@ -3707,10 +3786,19 @@ window.StudioWorkspace = {
     },
 
     async approveAndProceedToPublish() {
+        const appBtn = document.getElementById("btn-review-approve");
+        if (appBtn) {
+            appBtn.disabled = true;
+            appBtn.innerHTML = "<span class='animate-pulse font-bold'>⏳ APPROVING…</span>";
+        }
+
         try {
             if (this.activeJobId && this.activeClipId) {
                 await AlAmrAPI.makeClipDecision(this.activeJobId, this.activeClipId, "approve", "Approved by Human Operator");
                 await AlAmrAPI.publishClip(this.activeJobId, this.activeClipId);
+            }
+            if (appBtn) {
+                appBtn.innerHTML = "<span>✓ APPROVED — PUBLISHING</span>";
             }
             if (window.AlAmrShellInstance) {
                 window.AlAmrShellInstance.showToast("✓ Artifact approved! Publishing initiated.", "success");
@@ -3721,6 +3809,11 @@ window.StudioWorkspace = {
             }
         } catch (err) {
             console.error("Approve/Publish error:", err);
+            if (appBtn) {
+                appBtn.disabled = false;
+                appBtn.innerHTML = "<span>✕ APPROVAL FAILED — RETRY</span>";
+                setTimeout(() => { if (appBtn) appBtn.innerHTML = "<span>✓ APPROVE & PUBLISH ➔</span>"; }, 4000);
+            }
             if (window.AlAmrShellInstance) {
                 window.AlAmrShellInstance.showToast(`Approval/Publish error: ${err.message}`, "error");
             }
