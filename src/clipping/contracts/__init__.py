@@ -90,6 +90,14 @@ from clipping.contracts.production import (
     OperatorInterventionRecord,
     RevisionRecord,
 )
+from clipping.contracts.orchestration import (
+    PipelineStage,
+    OverallStatus,
+    PlatformPublishStatus,
+    PlatformPublicationResult,
+    PipelineCheckpoint,
+    CampaignPipelineState,
+)
 
 
 __all__ = [
@@ -163,5 +171,11 @@ __all__ = [
     "ProductionArtifact",
     "OperatorInterventionRecord",
     "RevisionRecord",
+    "PipelineStage",
+    "OverallStatus",
+    "PlatformPublishStatus",
+    "PlatformPublicationResult",
+    "PipelineCheckpoint",
+    "CampaignPipelineState",
 ]
 

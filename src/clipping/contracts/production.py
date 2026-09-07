@@ -106,6 +106,11 @@ class OperatorInterventionRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resumed_at: Optional[datetime] = None
 
+    @property
+    def actionable_challenge_url(self) -> Optional[str]:
+        """Alias for actionable_url."""
+        return self.actionable_url
+
 
 class RevisionRecord(BaseModel):
     """Immutable audit record storing operator rejection feedback and requested modifications."""

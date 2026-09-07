@@ -15,6 +15,7 @@ from clipping.production.compliance_gate import ProductionComplianceGate, Genera
 from clipping.production.telegram_review import TelegramReviewSystem
 from clipping.production.challenge_escalation import ChallengeEscalationManager
 from clipping.production.engine import AutonomousProductionEngine
+from clipping.production.orchestrator import ProductionPipelineOrchestrator
 
 __all__ = [
     "ProductionStatus",
@@ -33,4 +34,5 @@ __all__ = [
     "TelegramReviewSystem",
     "ChallengeEscalationManager",
     "AutonomousProductionEngine",
+    "ProductionPipelineOrchestrator",
 ]

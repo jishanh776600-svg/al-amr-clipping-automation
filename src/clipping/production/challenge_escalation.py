@@ -32,7 +32,7 @@ class ChallengeEscalationManager:
         url_section = (
             record.actionable_url
             if record.actionable_url and record.actionable_url.strip()
-            else "⚠️ No direct browser URL available. Please open the operator workstation console."
+            else "⚠️ No direct challenge URL available (No direct browser URL available). Please open the operator workstation console."
         )
 
         steps_lines = []

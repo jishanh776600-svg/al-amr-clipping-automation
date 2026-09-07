@@ -272,6 +272,12 @@ class ResumeInterventionRequest(BaseModel):
     notes: Optional[str] = Field(default=None)
 
 
+class PublishCampaignArtifactRequest(BaseModel):
+    artifact_id: str
+    target_platforms: Optional[List[str]] = Field(default=None)
+    target_account_id: Optional[str] = Field(default=None)
+
+
 
 
 # --- READ ENDPOINTS ---
@@ -2080,6 +2086,86 @@ async def resume_intervention_api(
     if not resumed:
         raise HTTPException(status_code=404, detail=f"Intervention '{intervention_id}' not found")
     return {"status": "resumed", "intervention": resumed.model_dump(mode="json")}
+
+
+@app.get("/api/pipeline/campaigns/{campaign_id}/status")
+async def get_pipeline_status_api(
+    campaign_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full campaign pipeline state, checkpoints, artifacts, and multi-platform publishing status."""
+    from clipping.production.orchestrator import ProductionPipelineOrchestrator
+    orchestrator = ProductionPipelineOrchestrator(storage_driver=storage)
+    state = await orchestrator.get_state(campaign_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Pipeline state not found for campaign '{campaign_id}'")
+    return state.model_dump(mode="json")
+
+
+@app.post("/api/pipeline/campaigns/{campaign_id}/publish")
+async def publish_campaign_artifact_api(
+    campaign_id: str,
+    req: PublishCampaignArtifactRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Triggers human approval and multi-platform publishing for an approved artifact."""
+    from clipping.production.orchestrator import ProductionPipelineOrchestrator
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+    from clipping.publishing.coordinator import ApprovalGateBlockedError, AccountNotReadyError
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    orchestrator = ProductionPipelineOrchestrator(vault=vault, storage_driver=storage)
+
+    acc_meta = None
+    if req.target_account_id:
+        acc_meta = await vault.get_account_metadata(AccountPlatform.YOUTUBE, req.target_account_id)
+        if not acc_meta:
+            acc_meta = await vault.get_account_metadata(AccountPlatform.INSTAGRAM, req.target_account_id)
+
+    chat_ids = get_settings().get_allowed_telegram_chat_ids()
+    chat_id = chat_ids[0] if chat_ids else None
+
+    try:
+        updated_state = await orchestrator.approve_and_publish(
+            campaign_id=campaign_id,
+            artifact_id=req.artifact_id,
+            operator_id=operator,
+            target_account=acc_meta,
+            telegram_chat_id=chat_id,
+        )
+        return updated_state.model_dump(mode="json")
+    except ApprovalGateBlockedError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except AccountNotReadyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/pipeline/campaigns/{campaign_id}/resume")
+async def resume_pipeline_api(
+    campaign_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Resumes in-flight or partially published pipeline from durable checkpoints."""
+    from clipping.production.orchestrator import ProductionPipelineOrchestrator
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+
+    vault = EncryptedCredentialVault(storage_driver=storage)
+    orchestrator = ProductionPipelineOrchestrator(vault=vault, storage_driver=storage)
+    chat_ids = get_settings().get_allowed_telegram_chat_ids()
+    chat_id = chat_ids[0] if chat_ids else None
+
+    try:
+        resumed_state = await orchestrator.resume_campaign(
+            campaign_id=campaign_id,
+            telegram_chat_id=chat_id,
+        )
+        return resumed_state.model_dump(mode="json")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/api/accounts")
