@@ -2,10 +2,11 @@
 
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,14 +32,70 @@ from clipping.state.remote import RemoteStorageStateRepository
 from clipping.storage.base import StorageDriver
 from clipping.storage.google_drive import GoogleDriveStorageDriver
 from clipping.storage.local import LocalStorageDriver
+from clipping.storage.factory import create_storage_driver
 
 logger = get_logger("clipping.ui.server")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manages application lifespan including in-process background worker on Render."""
+    settings = get_settings()
+    enable_worker = os.getenv("ENABLE_IN_PROCESS_WORKER", "true").lower() in ("true", "1", "yes")
+    token = settings.TELEGRAM_BOT_TOKEN.get_secret_value() if settings.TELEGRAM_BOT_TOKEN else None
+    worker_task = None
+
+    if enable_worker and token:
+        async def _in_process_poll_loop():
+            import asyncio
+            from clipping.approval.dispatcher import TelegramApprovalDispatcher
+            from clipping.approval.service import ApprovalService
+            from clipping.approval.transport import HttpTelegramTransport
+            from clipping.approval.repository import ApprovalRepository
+            from clipping.approval.security import SecurityValidator
+
+            storage = create_storage_driver(settings)
+            transport = HttpTelegramTransport(bot_token=token)
+            repo = ApprovalRepository(storage_driver=storage)
+            sec = SecurityValidator(
+                allowed_user_ids=settings.get_allowed_telegram_user_ids(),
+                allowed_chat_ids=settings.get_allowed_telegram_chat_ids(),
+            )
+            svc = ApprovalService(repository=repo, transport=transport, security_validator=sec)
+            dispatcher = TelegramApprovalDispatcher(
+                approval_service=svc,
+                transport=transport,
+                storage_driver=storage,
+            )
+            logger.info("In-process Telegram polling dispatcher started for Render")
+
+            while True:
+                try:
+                    await dispatcher.poll_and_process_once(limit=25)
+                except asyncio.CancelledError:
+                    break
+                except Exception as poll_err:
+                    logger.debug("In-process polling tick notice", error=str(poll_err))
+                await asyncio.sleep(4.0)
+
+        import asyncio
+        worker_task = asyncio.create_task(_in_process_poll_loop())
+
+    yield
+
+    if worker_task:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except Exception:
+            pass
 
 
 app = FastAPI(
     title="AL AMR Clipping Automation Console",
     description="Autonomous Video Intelligence & Vertical Media Engine (Master Control Plane)",
     version="1.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -50,9 +107,6 @@ app.add_middleware(
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
-
-
-from clipping.storage.factory import create_storage_driver
 
 
 def get_storage_driver() -> StorageDriver:
@@ -2168,6 +2222,63 @@ async def resume_pipeline_api(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.post("/api/telegram/webhook")
+async def telegram_webhook_api(
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Receives incoming Telegram updates (messages, inline button callbacks) via Webhook on Render."""
+    settings = get_settings()
+    if settings.TELEGRAM_SECRET_TOKEN:
+        expected = settings.TELEGRAM_SECRET_TOKEN.get_secret_value()
+        if x_telegram_bot_api_secret_token != expected:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid Telegram secret token")
+
+    try:
+        update_data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON body")
+
+    from clipping.approval.dispatcher import TelegramApprovalDispatcher
+    from clipping.approval.service import ApprovalService
+    from clipping.approval.transport import HttpTelegramTransport, MockTelegramTransport
+    from clipping.approval.repository import ApprovalRepository
+    from clipping.approval.security import SecurityValidator
+
+    token = settings.TELEGRAM_BOT_TOKEN.get_secret_value() if settings.TELEGRAM_BOT_TOKEN else ""
+    transport = HttpTelegramTransport(bot_token=token) if token else MockTelegramTransport()
+    repo = ApprovalRepository(storage_driver=storage)
+    sec = SecurityValidator(
+        allowed_user_ids=settings.get_allowed_telegram_user_ids(),
+        allowed_chat_ids=settings.get_allowed_telegram_chat_ids(),
+    )
+    svc = ApprovalService(repository=repo, transport=transport, security_validator=sec)
+    dispatcher = TelegramApprovalDispatcher(
+        approval_service=svc,
+        transport=transport,
+        storage_driver=storage,
+    )
+
+    handled = False
+    if "callback_query" in update_data:
+        cb = update_data["callback_query"]
+        data = cb.get("data", "")
+        if data.startswith("art:") or data.startswith("res:"):
+            handled = await dispatcher._handle_production_callback(cb)
+        else:
+            handled = bool(await svc.handle_callback_query(cb))
+    elif "message" in update_data:
+        msg = update_data["message"]
+        text = msg.get("text", "")
+        uid = msg.get("from", {}).get("id")
+        cid = msg.get("chat", {}).get("id")
+        if text.startswith("/otp") or (text.strip().isdigit() and 4 <= len(text.strip()) <= 10):
+            handled = await dispatcher._handle_otp_message(uid, cid, text)
+
+    return {"status": "ok", "handled": handled}
+
+
 @app.get("/api/accounts")
 async def list_accounts_api(
     storage: StorageDriver = Depends(get_storage_driver),
@@ -3231,3 +3342,11 @@ async def serve_index():
     if not index_file.exists():
         return HTMLResponse("<h1>AL AMR Clipping Automation Console</h1><p>Static index.html not found</p>", status_code=200)
     return FileResponse(str(index_file))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", os.environ.get("API_PORT", 8000)))
+    host = os.environ.get("API_HOST", "0.0.0.0")
+    uvicorn.run("clipping.ui.server:app", host=host, port=port, log_level="info")
+

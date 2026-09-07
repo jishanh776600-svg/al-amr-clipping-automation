@@ -143,7 +143,23 @@ class TelegramApprovalDispatcher:
                         await self.transport.answer_callback_query(cb["id"], text="✅ Clip APPROVED for publishing.")
                     if chat_id:
                         if res:
-                            await self.transport.send_message(chat_id, text=f"✅ Clip `{artifact_id}` has been APPROVED. Ready for publishing.")
+                            await self.transport.send_message(chat_id, text=f"✅ Clip `{artifact_id}` has been APPROVED. Disagree/Revise is now locked. Initiating publishing pipeline...")
+                            if res.campaign_id:
+                                try:
+                                    from clipping.production.orchestrator import ProductionPipelineOrchestrator
+                                    from clipping.agent.vault.vault import EncryptedCredentialVault
+                                    vault = EncryptedCredentialVault(storage_driver=self.storage)
+                                    orch = ProductionPipelineOrchestrator(vault=vault, storage_driver=self.storage)
+                                    asyncio.create_task(
+                                        orch.approve_and_publish(
+                                            campaign_id=res.campaign_id,
+                                            artifact_id=artifact_id,
+                                            operator_id=op_id,
+                                            telegram_chat_id=chat_id,
+                                        )
+                                    )
+                                except Exception as pub_err:
+                                    logger.warning("Could not auto-trigger publishing following Telegram approval", error=str(pub_err))
                         else:
                             await self.transport.send_message(chat_id, text=f"⚠️ Cannot approve `{artifact_id}`: Blocker exists or artifact not found.")
                     return True

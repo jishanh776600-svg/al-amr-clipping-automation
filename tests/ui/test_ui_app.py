@@ -537,3 +537,25 @@ async def test_ui_connect_meta_token_lifecycle_and_fail_closed_publishing(ui_tes
         assert len(accounts_after_del) == 0
 
 
+@pytest.mark.asyncio
+async def test_ui_telegram_webhook_endpoint(ui_test_env):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Invalid JSON body returns 400
+        bad_resp = await client.post(
+            "/api/telegram/webhook",
+            content=b"invalid json",
+            headers={"content-type": "application/json"},
+        )
+        assert bad_resp.status_code == 400
+
+        # 2. Valid webhook update returns 200 and handled=True/False
+        valid_resp = await client.post(
+            "/api/telegram/webhook",
+            json={"update_id": 12345, "message": {"text": "status", "from": {"id": 123}, "chat": {"id": 123}}},
+        )
+        assert valid_resp.status_code == 200
+        assert valid_resp.json()["status"] == "ok"
+
+
+

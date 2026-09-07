@@ -1,16 +1,62 @@
+# ==============================================================================
+# RENDER BLUEPRINT // AL AMR CLIPPING AUTONOMOUS PRODUCTION DEPLOYMENT
+# ==============================================================================
+# Architecture:
+# 1. Web Service: Control Room UI, API, Media Streaming, Telegram Webhook
+# 2. Background Worker: 24/7 Autonomous Clipping Execution, Task Queue Polling
+# 3. Persistent Disk: Checkpoints, Uploads, Rendered Video Masters, Encrypted Vault
+# ==============================================================================
+
 services:
+  # ----------------------------------------------------------------------------
+  # 1. PRODUCTION WEB SERVICE (Control Room UI + API + Telegram Webhook)
+  # ----------------------------------------------------------------------------
   - type: web
-    name: al-amr-clipping-automation
-    runtime: python
-    plan: free
-    buildCommand: "pip install -e ."
-    startCommand: "uvicorn clipping.ui.server:app --host 0.0.0.0 --port $PORT"
+    name: al-amr-clipping-web
+    runtime: docker
+    dockerfilePath: Dockerfile
+    plan: starter
     healthCheckPath: /healthz
+    numInstances: 1
+    disk:
+      name: al-amr-storage
+      mountPath: /var/data
+      sizeGB: 10
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: STORAGE_DRIVER
-        value: gdrive
+        value: local
+      - key: LOCAL_STORAGE_ROOT
+        value: /var/data/project_vault
+      - key: ENABLE_IN_PROCESS_WORKER
+        value: "true"
+      - key: AL_AMR_MASTER_KEY
+        generateValue: true
+      - key: OPERATOR_TOKEN
+        generateValue: true
+      - key: TELEGRAM_SECRET_TOKEN
+        generateValue: true
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_IDS
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+      - key: INSTAGRAM_ACCOUNT_ID
+        sync: false
       - key: GOOGLE_DRIVE_ROOT_FOLDER_ID
         sync: false
       - key: GOOGLE_DRIVE_CLIENT_ID
@@ -19,9 +65,51 @@ services:
         sync: false
       - key: GOOGLE_DRIVE_REFRESH_TOKEN
         sync: false
+
+  # ----------------------------------------------------------------------------
+  # 2. PRODUCTION BACKGROUND WORKER (Autonomous Execution & Telegram Poller)
+  # ----------------------------------------------------------------------------
+  - type: worker
+    name: al-amr-clipping-worker
+    runtime: docker
+    dockerfilePath: Dockerfile
+    dockerCommand: "python -m clipping.cli.worker_daemon --poll-interval 5"
+    plan: starter
+    numInstances: 1
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: STORAGE_DRIVER
+        value: local
+      - key: LOCAL_STORAGE_ROOT
+        value: /var/data/project_vault
+      - key: AL_AMR_MASTER_KEY
+        fromService:
+          type: web
+          name: al-amr-clipping-web
+          envVarKey: AL_AMR_MASTER_KEY
       - key: OPERATOR_TOKEN
-        generateValue: true
-      - key: GITHUB_REPO
+        fromService:
+          type: web
+          name: al-amr-clipping-web
+          envVarKey: OPERATOR_TOKEN
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: GITHUB_PAT
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_IDS
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+      - key: INSTAGRAM_ACCOUNT_ID
         sync: false
