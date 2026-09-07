@@ -29,7 +29,7 @@ services:
       - key: AL_AMR_MASTER_KEY
         generateValue: true
       - key: OPERATOR_TOKEN
-        generateValue: true
+        value: alamr-op-2024-secure
       - key: TELEGRAM_SECRET_TOKEN
         generateValue: true
 
