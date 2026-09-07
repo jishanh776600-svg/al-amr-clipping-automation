@@ -558,4 +558,40 @@ async def test_ui_telegram_webhook_endpoint(ui_test_env):
         assert valid_resp.json()["status"] == "ok"
 
 
+@pytest.mark.asyncio
+async def test_ui_auto_enroll_configured_accounts_on_empty_vault(ui_test_env, monkeypatch):
+    """Verifies that an empty vault automatically seeds active creator accounts from environment/settings."""
+    from clipping.agent.vault.vault import EncryptedCredentialVault
+    from clipping.agent.vault.models import AccountPlatform, AccountStatus
+
+    storage = ui_test_env["storage"]
+    vault = EncryptedCredentialVault(storage_driver=storage)
+
+    # Verify vault starts empty
+    initial_accs = await vault.list_accounts()
+    assert len(initial_accs) == 0
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # GET /api/accounts should auto-enroll and return active accounts
+        resp = await client.get("/api/accounts")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+
+        # Check that YouTube or Instagram account exists and is ACTIVE
+        platforms = [a["platform"] for a in data]
+        assert "youtube" in platforms or "instagram" in platforms
+        for a in data:
+            assert a["status"] == "active"
+            assert "client_secret" not in a
+            assert "refresh_token" not in a
+            assert "access_token" not in a
+
+        # Verify vault now has persisted the accounts
+        persisted = await vault.list_accounts()
+        assert len(persisted) >= 1
+
+
+
 

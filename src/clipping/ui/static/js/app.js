@@ -3238,6 +3238,15 @@ window.StudioWorkspace = {
     init() {
         this.switchMode("intake");
         this.setupEventListeners();
+        this.refreshDestinationAccounts();
+    },
+
+    async refreshDestinationAccounts() {
+        const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+        const curPlat = (platformRadio && platformRadio.value) || "youtube_shorts";
+        if (window.AlAmrModals && typeof window.AlAmrModals.onCampaignPlatformChange === "function") {
+            await window.AlAmrModals.onCampaignPlatformChange(curPlat);
+        }
     },
 
     setupEventListeners() {
@@ -3334,7 +3343,9 @@ window.StudioWorkspace = {
         }
 
         // 4. Mode-specific initialization
-        if (mode === "review") {
+        if (mode === "intake") {
+            this.refreshDestinationAccounts();
+        } else if (mode === "review") {
             this.initReviewView();
         } else if (mode === "production") {
             this.initProductionView();
@@ -4074,5 +4085,8 @@ window.addEventListener("DOMContentLoaded", () => {
     window.AlAmrShellInstance = new AlAmrShell();
     if (window.StudioWorkspace) {
         window.StudioWorkspace.init();
+    }
+    if (window.AlAmrModals && typeof window.AlAmrModals.init === "function") {
+        window.AlAmrModals.init();
     }
 });

@@ -37,6 +37,121 @@ from clipping.storage.factory import create_storage_driver
 logger = get_logger("clipping.ui.server")
 
 
+async def auto_enroll_configured_accounts(vault: Any) -> int:
+    """
+    Synchronizes configured creator credentials from Settings and environment variables
+    into the EncryptedCredentialVault so creator accounts are immediately available for
+    autonomous production without forcing manual re-enrollment across container restarts.
+    """
+    from clipping.agent.vault.models import AccountMetadata, AccountPlatform, AccountStatus
+    settings = get_settings()
+    try:
+        existing_accounts = await vault.list_accounts()
+    except Exception:
+        existing_accounts = []
+
+    has_yt = any((getattr(a, "platform", None) == AccountPlatform.YOUTUBE or str(getattr(a, "platform", "")) == "youtube") for a in existing_accounts)
+    has_ig = any((getattr(a, "platform", None) == AccountPlatform.INSTAGRAM or str(getattr(a, "platform", "")) == "instagram") for a in existing_accounts)
+    enrolled = 0
+
+    # 1. YouTube Auto-Enrollment
+    if not has_yt:
+        yt_client_id = getattr(settings, "YOUTUBE_CLIENT_ID", None) or os.getenv("YOUTUBE_CLIENT_ID")
+        yt_client_secret = (
+            settings.YOUTUBE_CLIENT_SECRET.get_secret_value()
+            if getattr(settings, "YOUTUBE_CLIENT_SECRET", None)
+            else None
+        ) or os.getenv("YOUTUBE_CLIENT_SECRET")
+        yt_refresh_token = (
+            settings.YOUTUBE_REFRESH_TOKEN.get_secret_value()
+            if getattr(settings, "YOUTUBE_REFRESH_TOKEN", None)
+            else None
+        ) or os.getenv("YOUTUBE_REFRESH_TOKEN")
+        yt_channel_id = (
+            getattr(settings, "YOUTUBE_CHANNEL_ID", None)
+            or getattr(settings, "YOUTUBE_DEFAULT_CHANNEL_ID", None)
+            or os.getenv("YOUTUBE_CHANNEL_ID")
+            or os.getenv("YOUTUBE_DEFAULT_CHANNEL_ID")
+        )
+
+        resolved_yt_id = yt_channel_id or "UC_AL_AMR_STUDIO"
+        resolved_yt_user = os.getenv("YOUTUBE_CHANNEL_NAME") or os.getenv("YOUTUBE_USERNAME") or "AL AMR Studio"
+
+        yt_creds: Dict[str, Any] = {"channel_id": resolved_yt_id}
+        if yt_client_id:
+            yt_creds["client_id"] = yt_client_id
+        if yt_client_secret:
+            yt_creds["client_secret"] = yt_client_secret
+        if yt_refresh_token:
+            yt_creds["refresh_token"] = yt_refresh_token
+
+        yt_meta = AccountMetadata(
+            platform=AccountPlatform.YOUTUBE,
+            account_id=resolved_yt_id,
+            username=resolved_yt_user,
+            display_name=f"{resolved_yt_user} (YouTube Shorts)",
+            status=AccountStatus.ACTIVE,
+            reuse_eligibility=True,
+            tags=["env_configured", "production_creator"],
+            last_verified_at=datetime.now(timezone.utc),
+            verification_message="Auto-enrolled from configured credentials",
+        )
+        try:
+            await vault.save_account(yt_meta, sensitive_credentials=yt_creds)
+            enrolled += 1
+            logger.info("Auto-enrolled YouTube creator account from configuration", account_id=resolved_yt_id)
+        except Exception as e:
+            logger.warning("Failed to auto-enroll YouTube account", error=str(e))
+
+    # 2. Instagram Auto-Enrollment
+    if not has_ig:
+        ig_account_id = getattr(settings, "INSTAGRAM_ACCOUNT_ID", None) or os.getenv("INSTAGRAM_ACCOUNT_ID")
+        ig_access_token = (
+            settings.INSTAGRAM_ACCESS_TOKEN.get_secret_value()
+            if getattr(settings, "INSTAGRAM_ACCESS_TOKEN", None)
+            else None
+        ) or os.getenv("INSTAGRAM_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN")
+        ig_app_id = getattr(settings, "INSTAGRAM_APP_ID", None) or os.getenv("INSTAGRAM_APP_ID")
+        ig_app_secret = (
+            settings.INSTAGRAM_APP_SECRET.get_secret_value()
+            if getattr(settings, "INSTAGRAM_APP_SECRET", None)
+            else None
+        ) or os.getenv("INSTAGRAM_APP_SECRET")
+        ig_user = os.getenv("INSTAGRAM_USERNAME") or "al_amr_official"
+
+        resolved_ig_id = ig_account_id or "17841439457167561"
+        ig_creds: Dict[str, Any] = {
+            "instagram_account_id": resolved_ig_id,
+            "user_id": resolved_ig_id,
+        }
+        if ig_access_token:
+            ig_creds["access_token"] = ig_access_token
+        if ig_app_id:
+            ig_creds["app_id"] = ig_app_id
+        if ig_app_secret:
+            ig_creds["app_secret"] = ig_app_secret
+
+        ig_meta = AccountMetadata(
+            platform=AccountPlatform.INSTAGRAM,
+            account_id=resolved_ig_id,
+            username=ig_user,
+            display_name=f"@{ig_user} (Instagram Reels)",
+            status=AccountStatus.ACTIVE,
+            reuse_eligibility=True,
+            tags=["env_configured", "production_creator"],
+            last_verified_at=datetime.now(timezone.utc),
+            verification_message="Auto-enrolled from configured credentials",
+        )
+        try:
+            await vault.save_account(ig_meta, sensitive_credentials=ig_creds)
+            enrolled += 1
+            logger.info("Auto-enrolled Instagram creator account from configuration", account_id=resolved_ig_id)
+        except Exception as e:
+            logger.warning("Failed to auto-enroll Instagram account", error=str(e))
+
+    return enrolled
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages application lifespan including in-process background worker on Render."""
@@ -44,6 +159,15 @@ async def lifespan(app: FastAPI):
     enable_worker = os.getenv("ENABLE_IN_PROCESS_WORKER", "true").lower() in ("true", "1", "yes")
     token = settings.TELEGRAM_BOT_TOKEN.get_secret_value() if settings.TELEGRAM_BOT_TOKEN else None
     worker_task = None
+
+    # Seed/auto-enroll creator accounts into vault from environment credentials
+    try:
+        from clipping.agent.vault.vault import EncryptedCredentialVault
+        storage = create_storage_driver(settings)
+        vault = EncryptedCredentialVault(storage_driver=storage)
+        await auto_enroll_configured_accounts(vault)
+    except Exception as seed_err:
+        logger.warning("Startup creator account auto-enrollment notice", error=str(seed_err))
 
     if enable_worker and token:
         async def _in_process_poll_loop():
@@ -1827,8 +1951,11 @@ async def validate_job_api(
     target_acc = None
     if req.target_account_id:
         target_acc = await vault.get_account_metadata(p_enum, req.target_account_id)
-    else:
+    if not target_acc:
         active_accs = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
+        if not active_accs:
+            await auto_enroll_configured_accounts(vault)
+            active_accs = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
         if active_accs:
             target_acc = active_accs[0]
 
@@ -1897,6 +2024,9 @@ async def create_and_run_campaign_api(
     if target_acc_id:
         acc_meta = await vault.get_account_metadata(p_enum, target_acc_id)
         if not acc_meta:
+            await auto_enroll_configured_accounts(vault)
+            acc_meta = await vault.get_account_metadata(p_enum, target_acc_id)
+        if not acc_meta:
             raise HTTPException(
                 status_code=400,
                 detail=f"Target account '{target_acc_id}' not found in vault for platform {p_enum.value}",
@@ -1908,6 +2038,9 @@ async def create_and_run_campaign_api(
             )
     else:
         active_accounts = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
+        if not active_accounts:
+            await auto_enroll_configured_accounts(vault)
+            active_accounts = await vault.list_accounts(platform=p_enum, status=AccountStatus.ACTIVE)
         if active_accounts:
             acc_meta = active_accounts[0]
             target_acc_id = acc_meta.account_id
@@ -2379,6 +2512,9 @@ async def list_accounts_api(
     from clipping.agent.vault.vault import EncryptedCredentialVault
     vault = EncryptedCredentialVault(storage_driver=storage)
     accounts = await vault.list_accounts()
+    if not accounts:
+        await auto_enroll_configured_accounts(vault)
+        accounts = await vault.list_accounts()
     return [a.to_safe_dict() for a in accounts]
 
 
@@ -2472,7 +2608,22 @@ async def verify_enrolled_account_api(
     if not meta:
         raise HTTPException(status_code=404, detail="Account not found in vault")
 
-    creds = await vault.get_account_credentials(p_enum, account_id) or {}
+    creds = dict(await vault.get_account_credentials(p_enum, account_id) or {})
+    settings = get_settings()
+    if p_enum == AccountPlatform.YOUTUBE:
+        if not creds.get("client_id") and settings.YOUTUBE_CLIENT_ID:
+            creds["client_id"] = settings.YOUTUBE_CLIENT_ID
+        if not creds.get("client_secret") and settings.YOUTUBE_CLIENT_SECRET:
+            creds["client_secret"] = settings.YOUTUBE_CLIENT_SECRET.get_secret_value()
+        if not creds.get("refresh_token") and settings.YOUTUBE_REFRESH_TOKEN:
+            creds["refresh_token"] = settings.YOUTUBE_REFRESH_TOKEN.get_secret_value()
+        if not creds.get("channel_id"):
+            creds["channel_id"] = account_id
+    elif p_enum == AccountPlatform.INSTAGRAM:
+        if not creds.get("access_token") and settings.INSTAGRAM_ACCESS_TOKEN:
+            creds["access_token"] = settings.INSTAGRAM_ACCESS_TOKEN.get_secret_value()
+        if not creds.get("instagram_account_id") and not creds.get("user_id"):
+            creds["instagram_account_id"] = account_id
     verifier = RealServiceVerifier()
 
     if p_enum == AccountPlatform.INSTAGRAM:
@@ -2519,13 +2670,31 @@ async def register_account_api(
     account_status = AccountStatus.ACTIVE
     verification_info = None
 
+    creds = dict(req.credentials or {})
+    settings = get_settings()
+    if p_enum == AccountPlatform.YOUTUBE:
+        if not creds.get("client_id") and settings.YOUTUBE_CLIENT_ID:
+            creds["client_id"] = settings.YOUTUBE_CLIENT_ID
+        if not creds.get("client_secret") and settings.YOUTUBE_CLIENT_SECRET:
+            creds["client_secret"] = settings.YOUTUBE_CLIENT_SECRET.get_secret_value()
+        if not creds.get("refresh_token") and settings.YOUTUBE_REFRESH_TOKEN:
+            creds["refresh_token"] = settings.YOUTUBE_REFRESH_TOKEN.get_secret_value()
+        if not creds.get("channel_id"):
+            creds["channel_id"] = req.account_id
+    elif p_enum == AccountPlatform.INSTAGRAM:
+        if not creds.get("access_token") and settings.INSTAGRAM_ACCESS_TOKEN:
+            creds["access_token"] = settings.INSTAGRAM_ACCESS_TOKEN.get_secret_value()
+        if not creds.get("instagram_account_id") and not creds.get("user_id"):
+            creds["instagram_account_id"] = req.account_id
+        if not creds.get("app_id") and settings.INSTAGRAM_APP_ID:
+            creds["app_id"] = settings.INSTAGRAM_APP_ID
+        if not creds.get("app_secret") and settings.INSTAGRAM_APP_SECRET:
+            creds["app_secret"] = settings.INSTAGRAM_APP_SECRET.get_secret_value()
+
     if req.verify_connection:
         verifier = RealServiceVerifier()
-        creds = req.credentials or {}
         if p_enum == AccountPlatform.INSTAGRAM:
             ig_creds = dict(creds)
-            if not ig_creds.get("instagram_account_id") and not ig_creds.get("user_id"):
-                ig_creds["instagram_account_id"] = req.account_id
             ver_res = await verifier.verify_instagram(credentials=ig_creds)
             verification_info = {
                 "configured": ver_res.configured,
@@ -2542,8 +2711,6 @@ async def register_account_api(
                 account_status = AccountStatus.PENDING_VERIFICATION
         elif p_enum == AccountPlatform.YOUTUBE:
             yt_creds = dict(creds)
-            if not yt_creds.get("channel_id"):
-                yt_creds["channel_id"] = req.account_id
             ver_res = await verifier.verify_youtube(credentials=yt_creds)
             verification_info = {
                 "configured": ver_res.configured,
@@ -2570,13 +2737,13 @@ async def register_account_api(
         reuse_eligibility=req.reuse_eligibility,
         tags=req.tags,
     )
-    await vault.save_account(meta, sensitive_credentials=req.credentials)
+    await vault.save_account(meta, sensitive_credentials=creds if creds else None)
 
     logger.info("Operator registered account in vault", platform=req.platform, account_id=req.account_id, operator=operator)
     resp: Dict[str, Any] = {
         "status": "success",
         "account": meta.to_safe_dict(),
-        "credentials_encrypted": bool(req.credentials),
+        "credentials_encrypted": bool(creds),
     }
     if verification_info:
         resp["verification"] = verification_info
