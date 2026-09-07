@@ -280,6 +280,13 @@ class AnalyzeBriefRequest(BaseModel):
     filename: Optional[str] = "brief.txt"
 
 
+class ImportBriefRequest(BaseModel):
+    mode: str = Field("text", description="'text' or 'url'")
+    text: Optional[str] = None
+    url: Optional[str] = None
+    filename: Optional[str] = "guidelines.txt"
+
+
 class OverrideRequirementsRequest(BaseModel):
     requirements: Dict[str, Any]
     field_path: str
@@ -1569,7 +1576,84 @@ async def upload_campaign_brief_api(
     }
 
 
+@app.post("/api/campaigns/import-brief")
+async def import_campaign_brief_api(
+    req: ImportBriefRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Imports campaign guidelines from pasted text or a Google Doc / web guidelines URL."""
+    import uuid
+    import re
+    from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
+
+    text_content = ""
+    source_filename = req.filename or "guidelines.txt"
+
+    if req.mode == "url":
+        if not req.url or not req.url.strip():
+            raise HTTPException(status_code=400, detail="URL is required for URL import mode")
+        clean_url = req.url.strip()
+
+        # Handle Google Docs export link
+        doc_match = re.search(r'docs\.google\.com/document/d/([a-zA-Z0-9_-]+)', clean_url)
+        fetch_url = clean_url
+        if doc_match:
+            doc_id = doc_match.group(1)
+            fetch_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+                resp = await client.get(fetch_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to fetch document (HTTP {resp.status_code}). If this document is private or requires login, please copy the text and paste it into the 'Paste Guidelines' tab.",
+                    )
+                body_text = resp.text
+                if "accounts.google.com" in body_text or ("<!DOCTYPE html>" in body_text and "Page not found" in body_text):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This Google Doc is not public. Please set sharing to 'Anyone with the link can view', or simply copy and paste the text into the 'Paste Guidelines' tab.",
+                    )
+                text_content = body_text.strip()
+                if not text_content:
+                    raise HTTPException(status_code=400, detail="Imported document appears to be empty.")
+                source_filename = f"google_doc_{doc_id if doc_match else 'imported'}.txt"
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not read from URL ({str(e)}). Please copy and paste the text into the 'Paste Guidelines' tab.",
+            )
+    else:
+        # Direct text paste mode
+        if not req.text or not req.text.strip():
+            raise HTTPException(status_code=400, detail="Guidelines text cannot be empty. Please paste your campaign rules or notes.")
+        text_content = req.text.strip()
+        source_filename = req.filename or "pasted_guidelines.txt"
+
+    content_bytes = text_content.encode("utf-8")
+    storage_key = f"campaigns/briefs/{uuid.uuid4().hex[:12]}_{source_filename}"
+    await storage.upload_bytes(content_bytes, storage_key)
+
+    engine = CampaignBriefIntelligenceEngine()
+    requirements = await engine.analyze_document_bytes(content_bytes, source_filename)
+
+    return {
+        "status": "success",
+        "brief_storage_key": storage_key,
+        "filename": source_filename,
+        "size_bytes": len(content_bytes),
+        "format": "txt",
+        "raw_text": text_content,
+        "requirements": requirements.model_dump(),
+    }
+
+
 @app.post("/api/campaigns/analyze-brief")
+
 async def analyze_campaign_brief_api(
     req: AnalyzeBriefRequest,
     operator: str = Depends(get_current_operator),

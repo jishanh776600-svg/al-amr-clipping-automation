@@ -314,3 +314,50 @@ async def test_zero_secret_leakage_in_campaign_workflow(ui_test_env, setup_test_
         assert "access_token" not in resp_text
         assert "AL_AMR_MASTER_KEY" not in resp_text
         assert "test_csec" not in resp_text
+
+
+@pytest.mark.asyncio
+async def test_import_brief_pasted_text_and_url_modes(ui_test_env):
+    """Validates importing campaign guidelines from pasted text and URL handling."""
+    storage = ui_test_env["storage"]
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Pasted guidelines text
+        pasted_text = (
+            "You can clip any short form content from Parlay Capital's pages:\n"
+            "TikTok: https://www.tiktok.com/@parlaycapital\n"
+            "Instagram: https://www.instagram.com/parlaycapital/reels/\n"
+            "YouTube: https://www.youtube.com/@ParlayCapital\n"
+            "Turn these into ranking videos, meme pages, edited clips.\n"
+            "Required: 3 clips, 30-60s duration, 9:16 vertical. #shorts #parlay\n"
+            "CTA: Check out Parlay Capital for updates"
+        )
+        resp_text = await client.post(
+            "/api/campaigns/import-brief",
+            json={
+                "mode": "text",
+                "text": pasted_text,
+                "filename": "parlay_guidelines.txt"
+            }
+        )
+        assert resp_text.status_code == 200
+        data = resp_text.json()
+        assert data["status"] == "success"
+        assert data["filename"] == "parlay_guidelines.txt"
+        assert "requirements" in data
+        assert await storage.exists(data["brief_storage_key"])
+
+        # 2. Empty text rejected
+        resp_empty = await client.post(
+            "/api/campaigns/import-brief",
+            json={"mode": "text", "text": "   "}
+        )
+        assert resp_empty.status_code == 400
+
+        # 3. Missing URL in url mode rejected
+        resp_nourl = await client.post(
+            "/api/campaigns/import-brief",
+            json={"mode": "url", "url": ""}
+        )
+        assert resp_nourl.status_code == 400
+

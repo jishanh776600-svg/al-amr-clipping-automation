@@ -2383,14 +2383,111 @@ window.AlAmrModals = {
         this.currentBriefStorageKey = null;
         const input = document.getElementById("campaign-brief-file-input");
         if (input) input.value = "";
+        const pasteInput = document.getElementById("brief-paste-input");
+        if (pasteInput) pasteInput.value = "";
+        const urlInput = document.getElementById("brief-url-input");
+        if (urlInput) urlInput.value = "";
 
-        const dropzone = document.getElementById("campaign-brief-dropzone");
         const chip = document.getElementById("campaign-brief-selected");
         const panel = document.getElementById("campaign-requirements-panel");
-        if (dropzone) dropzone.classList.remove("hidden");
         if (chip) chip.classList.add("hidden");
         if (panel) panel.classList.add("hidden");
     },
+
+    setBriefInputMode(mode) {
+        this.briefInputMode = mode;
+        ["upload", "paste", "url"].forEach(m => {
+            const btn = document.getElementById(`brief-mode-btn-${m}`);
+            const panel = document.getElementById(`brief-panel-${m}`);
+            if (btn) {
+                if (m === mode) {
+                    btn.className = "flex-1 py-1 px-2 rounded font-bold text-center transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
+                } else {
+                    btn.className = "flex-1 py-1 px-2 rounded font-bold text-center transition text-slate-400 hover:text-white border border-transparent";
+                }
+            }
+            if (panel) {
+                if (m === mode) panel.classList.remove("hidden");
+                else panel.classList.add("hidden");
+            }
+        });
+    },
+
+    async parsePastedGuidelines() {
+        const textarea = document.getElementById("brief-paste-input");
+        const text = textarea ? textarea.value.trim() : "";
+        if (!text) {
+            alert("Please paste your campaign guidelines or rules first.");
+            return;
+        }
+
+        window.AlAmrShellInstance.showToast("Analyzing pasted campaign guidelines...", "info");
+        try {
+            const nameInput = document.getElementById("campaign-name-input");
+            const campName = (nameInput && nameInput.value.trim()) || "Campaign";
+            const res = await AlAmrAPI.importBrief({
+                mode: "text",
+                text: text,
+                filename: `${campName.replace(/[^a-zA-Z0-9_]/g, '_')}_guidelines.txt`
+            });
+
+            this.currentBriefStorageKey = res.brief_storage_key;
+            this.currentBriefFilename = res.filename;
+
+            const chip = document.getElementById("campaign-brief-selected");
+            const badge = document.getElementById("campaign-brief-badge");
+            const name = document.getElementById("campaign-brief-name");
+            const size = document.getElementById("campaign-brief-size");
+            if (badge) badge.textContent = "PASTED";
+            if (name) name.textContent = res.filename;
+            if (size) size.textContent = `(${res.size_bytes} chars)`;
+            if (chip) chip.classList.remove("hidden");
+
+            if (res.requirements) {
+                this.displayExtractedRequirements(res.requirements, res.brief_storage_key);
+                window.AlAmrShellInstance.showToast("✓ Guidelines analyzed and rules extracted!", "success");
+            }
+        } catch (err) {
+            alert(`Guidelines analysis failed: ${err.message}`);
+        }
+    },
+
+    async importBriefFromUrl() {
+        const urlInput = document.getElementById("brief-url-input");
+        const url = urlInput ? urlInput.value.trim() : "";
+        if (!url) {
+            alert("Please enter a Google Doc link or guidelines webpage URL.");
+            return;
+        }
+
+        window.AlAmrShellInstance.showToast("Fetching and analyzing document from URL...", "info");
+        try {
+            const res = await AlAmrAPI.importBrief({
+                mode: "url",
+                url: url
+            });
+
+            this.currentBriefStorageKey = res.brief_storage_key;
+            this.currentBriefFilename = res.filename;
+
+            const chip = document.getElementById("campaign-brief-selected");
+            const badge = document.getElementById("campaign-brief-badge");
+            const name = document.getElementById("campaign-brief-name");
+            const size = document.getElementById("campaign-brief-size");
+            if (badge) badge.textContent = "URL";
+            if (name) name.textContent = res.filename;
+            if (size) size.textContent = `(${res.size_bytes} bytes)`;
+            if (chip) chip.classList.remove("hidden");
+
+            if (res.requirements) {
+                this.displayExtractedRequirements(res.requirements, res.brief_storage_key);
+                window.AlAmrShellInstance.showToast("✓ Document imported & guidelines extracted!", "success");
+            }
+        } catch (err) {
+            alert(err.message);
+        }
+    },
+
 
     displayExtractedRequirements(reqs, storageKey) {
         this.currentRequirements = reqs;
@@ -3101,6 +3198,19 @@ window.StudioWorkspace = {
             overlay.style.display = this.safeZoneVisible ? "flex" : "none";
         }
     },
+
+    setBriefInputMode(mode) {
+        if (window.AlAmrModals) window.AlAmrModals.setBriefInputMode(mode);
+    },
+
+    async parsePastedGuidelines() {
+        if (window.AlAmrModals) await window.AlAmrModals.parsePastedGuidelines();
+    },
+
+    async importBriefFromUrl() {
+        if (window.AlAmrModals) await window.AlAmrModals.importBriefFromUrl();
+    },
+
 
     newCampaign() {
         if (this.pollTimer) {

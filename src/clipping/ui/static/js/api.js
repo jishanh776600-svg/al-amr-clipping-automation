@@ -127,6 +127,14 @@ class AlAmrAPI {
         });
     }
 
+    static async importBrief({ mode = "text", text = null, url = null, filename = "guidelines.txt" }) {
+        return this.request("/api/campaigns/import-brief", {
+            method: "POST",
+            body: JSON.stringify({ mode, text, url, filename })
+        });
+    }
+
+
     static async analyzeBrief({ brief_storage_key = null, raw_text = null, filename = "brief.txt" }) {
         return this.request("/api/campaigns/analyze-brief", {
             method: "POST",

@@ -174,27 +174,68 @@
                             <input id="campaign-name-input" type="text" value="Autonomous AI Tech Summit" placeholder="e.g. Q3 Tech Summit - Autonomous Media Engine" class="w-full bg-surface2 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none">
                         </div>
 
-                        <!-- Campaign Brief Dropzone -->
-                        <div>
-                            <label class="block text-xs font-mono text-slate-300 mb-1 font-bold">Campaign Brief Document (PDF, TXT, MD):</label>
-                            <input type="file" id="campaign-brief-file-input" accept=".pdf,.txt,.md" class="hidden" onchange="AlAmrModals.onBriefFileSelected(event)">
-                            
-                            <div id="campaign-brief-dropzone" onclick="document.getElementById('campaign-brief-file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 rounded-xl p-5 text-center cursor-pointer transition bg-surface2/40 flex flex-col items-center justify-center gap-2">
-                                <div class="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-lg">📄</div>
-                                <div class="text-xs text-slate-200 font-bold font-mono">Click to upload Campaign Brief <span class="text-slate-500 font-normal">or drag & drop</span></div>
-                                <div class="text-[11px] text-slate-500 font-mono">Supports PDF, TXT, Markdown (Auto-extracts clip counts, rules, hashtags & CTA)</div>
+                        <!-- Campaign Brief / Guidelines Intake -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <label class="block text-xs font-mono text-slate-300 font-bold">Campaign Guidelines & Brief:</label>
+                                <span class="text-[10px] font-mono text-slate-500">Google Docs, Paste, or File</span>
                             </div>
 
-                            <!-- Selected File Chip -->
+                            <!-- Mode Switcher -->
+                            <div class="flex items-center gap-1.5 p-1 bg-surface2/90 rounded-lg border border-slate-700 font-mono text-xs">
+                                <button type="button" id="brief-mode-btn-upload" onclick="StudioWorkspace.setBriefInputMode('upload')" class="flex-1 py-1 px-2 rounded font-bold text-center transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                    📁 Upload File
+                                </button>
+                                <button type="button" id="brief-mode-btn-paste" onclick="StudioWorkspace.setBriefInputMode('paste')" class="flex-1 py-1 px-2 rounded font-bold text-center transition text-slate-400 hover:text-white border border-transparent">
+                                    📝 Paste Guidelines
+                                </button>
+                                <button type="button" id="brief-mode-btn-url" onclick="StudioWorkspace.setBriefInputMode('url')" class="flex-1 py-1 px-2 rounded font-bold text-center transition text-slate-400 hover:text-white border border-transparent">
+                                    🔗 Google Doc / URL
+                                </button>
+                            </div>
+
+                            <!-- Panel 1: File Upload Dropzone -->
+                            <div id="brief-panel-upload" class="space-y-2">
+                                <input type="file" id="campaign-brief-file-input" accept=".pdf,.txt,.md" class="hidden" onchange="AlAmrModals.onBriefFileSelected(event)">
+                                <div id="campaign-brief-dropzone" onclick="document.getElementById('campaign-brief-file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-emerald-500/70 rounded-xl p-4 text-center cursor-pointer transition bg-surface2/40 flex flex-col items-center justify-center gap-1.5">
+                                    <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-sm">📄</div>
+                                    <div class="text-xs text-slate-200 font-bold font-mono">Click to upload Campaign Brief <span class="text-slate-500 font-normal">or drag & drop</span></div>
+                                    <div class="text-[10px] text-slate-500 font-mono">Supports PDF, TXT, Markdown (Auto-extracts clip counts, rules, hashtags & CTA)</div>
+                                </div>
+                            </div>
+
+                            <!-- Panel 2: Paste Raw Guidelines -->
+                            <div id="brief-panel-paste" class="hidden space-y-2">
+                                <textarea id="brief-paste-input" rows="4" placeholder="Paste guidelines, rules, payout terms, hashtags, or campaign instructions here (e.g. copied directly from Google Docs, Whop, Discord, or Notion)..." class="w-full bg-surface2 border border-slate-700 rounded-lg p-3 text-xs text-slate-200 font-mono focus:border-emerald-500 outline-none resize-y"></textarea>
+                                <button type="button" onclick="StudioWorkspace.parsePastedGuidelines()" class="w-full py-2 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-300 font-mono text-xs font-bold transition flex items-center justify-center gap-2">
+                                    <span>⚡ PARSE GUIDELINES & EXTRACT RULES</span>
+                                </button>
+                            </div>
+
+                            <!-- Panel 3: Google Doc / Web URL -->
+                            <div id="brief-panel-url" class="hidden space-y-2">
+                                <div class="flex gap-2">
+                                    <input type="url" id="brief-url-input" placeholder="https://docs.google.com/document/d/... or webpage URL" class="flex-1 bg-surface2 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:border-cyan-500 outline-none">
+                                    <button type="button" onclick="StudioWorkspace.importBriefFromUrl()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs font-bold transition flex-shrink-0">
+                                        IMPORT
+                                    </button>
+                                </div>
+                                <div class="text-[11px] text-slate-500 font-mono">
+                                    Auto-extracts text from public Google Docs & web guidelines. (If the document requires Google login, please copy the text and use the <span class="text-cyan-400 cursor-pointer underline" onclick="StudioWorkspace.setBriefInputMode('paste')">Paste Guidelines</span> tab).
+                                </div>
+                            </div>
+
+                            <!-- Selected / Active Brief Chip -->
                             <div id="campaign-brief-selected" class="hidden mt-2 p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 flex items-center justify-between font-mono">
                                 <div class="flex items-center gap-2">
                                     <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold" id="campaign-brief-badge">PDF</span>
                                     <span id="campaign-brief-name" class="text-slate-200 font-bold truncate max-w-[280px]">brief.pdf</span>
                                     <span id="campaign-brief-size" class="text-slate-400 text-[10px]">(0 KB)</span>
                                 </div>
-                                <button type="button" onclick="AlAmrModals.clearBriefFile(event)" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-0.5 rounded border border-rose-500/30 hover:border-rose-500">✕ Remove</button>
+                                <button type="button" onclick="AlAmrModals.clearBriefFile(event)" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-0.5 rounded border border-rose-500/30 hover:border-rose-500">✕ Clear</button>
                             </div>
                         </div>
+
 
                         <!-- Extracted Requirements Panel -->
                         <div id="campaign-requirements-panel" class="p-3.5 rounded-xl bg-surface2/90 border border-emerald-500/40 space-y-3 font-mono">
