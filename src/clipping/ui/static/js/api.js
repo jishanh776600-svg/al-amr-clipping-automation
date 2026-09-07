@@ -5,7 +5,7 @@
 
 class AlAmrAPI {
     static getOperatorToken() {
-        return localStorage.getItem("al_amr_operator_token") || "";
+        return localStorage.getItem("al_amr_operator_token") || "alamr-op-2024-secure";
     }
 
     static setOperatorToken(token) {
