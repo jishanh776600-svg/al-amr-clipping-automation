@@ -1943,24 +1943,31 @@ window.AlAmrModals = {
             }
         }
 
+        const hasAuthToken = Boolean(credentials.access_token || credentials.client_id || credentials.refresh_token);
         try {
             window.AlAmrShellInstance.showToast("Enrolling account in encrypted vault...", "info");
             const res = await AlAmrAPI.registerAccount({
                 platform,
                 account_id: accountId,
                 username: username || accountId,
-                display_name: displayName,
+                display_name: displayName || username || accountId,
                 credentials,
-                verify_connection: true
+                verify_connection: hasAuthToken
             });
 
             this.closeAddAccountModal();
             const status = res.account?.status || res.status || "enrolled";
             if (status === "active") {
-                window.AlAmrShellInstance.showToast(`Account ${accountId} enrolled & verified active!`, "success");
+                window.AlAmrShellInstance.showToast(`Account ${accountId} enrolled & active!`, "success");
             } else {
                 window.AlAmrShellInstance.showToast(`Account ${accountId} enrolled (${status.toUpperCase()})`, "info");
             }
+            if (window.StudioDrawer && window.StudioDrawer.isOpen) {
+                await window.StudioDrawer.loadAccounts();
+            }
+            const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+            const curPlat = (platformRadio && platformRadio.value) || "youtube_shorts";
+            await this.onCampaignPlatformChange(curPlat);
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
             alert(`Failed to add account: ${err.message}`);
@@ -2097,11 +2104,22 @@ window.AlAmrModals = {
         try {
             await AlAmrAPI.deleteAccount(platform, accountId);
             window.AlAmrShellInstance.showToast(`Account '${accountId}' removed from vault`, "info");
+            if (window.StudioDrawer && window.StudioDrawer.isOpen) {
+                await window.StudioDrawer.loadAccounts();
+            }
+            const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+            const curPlat = (platformRadio && platformRadio.value) || "youtube_shorts";
+            await this.onCampaignPlatformChange(curPlat);
             window.AlAmrShellInstance.syncState(true);
         } catch (err) {
             window.AlAmrShellInstance.showToast(`Failed to remove account: ${err.message}`, "error");
         }
     },
+
+    async removeAccount(platform, accountId) {
+        return this.deleteAccount(platform, accountId);
+    },
+
 
     // 8. Campaign Status Update
     openCampaignStatusModal(campaignId, currentStatus) {
@@ -2639,28 +2657,36 @@ window.AlAmrModals = {
         if (!select) return;
 
         const pFilter = platform === "instagram_reels" ? "instagram" : "youtube";
-        const accounts = (window.AlAmrShellInstance && window.AlAmrShellInstance.state && window.AlAmrShellInstance.state.accounts) || [];
+        let accounts = [];
+        try {
+            accounts = await AlAmrAPI.getAccounts();
+        } catch (_) {
+            accounts = [];
+        }
         
-        // Strict filtering: Only active, verified accounts enrolled in vault
-        const matchingActive = accounts.filter(a => a.platform === pFilter && a.status === "active");
+        const matching = accounts.filter(a => a.platform === pFilter);
+        const matchingActive = matching.filter(a => a.status === "active");
 
-        if (matchingActive.length === 0) {
-            select.innerHTML = `<option value="">-- No active/verified ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'} accounts found --</option>`;
+        if (matching.length === 0) {
+            select.innerHTML = `<option value="">-- No ${platform === 'instagram_reels' ? 'Instagram' : 'YouTube'} accounts enrolled --</option>`;
             if (hint) {
-                hint.innerHTML = `<span class="text-amber-400 font-bold">⚠ No verified active account enrolled for ${pFilter.toUpperCase()}. Please verify one in the Accounts tab first.</span>`;
+                hint.innerHTML = `<span class="text-amber-400 font-bold">⚠ No account enrolled for ${pFilter.toUpperCase()}. Click <button type="button" onclick="StudioDrawer.open('accounts')" class="underline text-cyan-300 hover:text-cyan-200">UTILITIES ➔ + ADD ACCOUNT</button> to add your channel.</span>`;
             }
             return;
         }
 
-        select.innerHTML = matchingActive.map(a => {
-            return `<option value="${a.account_id}">${a.display_name || a.username} (${a.account_id}) — ✓ ACTIVE & VERIFIED</option>`;
+        select.innerHTML = matching.map(a => {
+            const isAct = a.status === "active";
+            return `<option value="${a.account_id}">${a.display_name || a.username || a.account_id} (${a.account_id}) — ${isAct ? '✓ ACTIVE' : a.status.toUpperCase()}</option>`;
         }).join("");
 
-        select.value = matchingActive[0].account_id;
+        const chosen = matchingActive.length > 0 ? matchingActive[0] : matching[0];
+        select.value = chosen.account_id;
         if (hint) {
-            hint.innerHTML = `<span class="text-emerald-400 font-bold">✓ Bound to verified account: ${matchingActive[0].display_name || matchingActive[0].username} (${matchingActive[0].account_id})</span>`;
+            hint.innerHTML = `<span class="text-emerald-400 font-bold">✓ Destination Account: ${chosen.display_name || chosen.username || chosen.account_id} (${chosen.account_id})</span>`;
         }
     },
+
 
     async runJobPreflightValidation() {
         let source_uri = "";
@@ -3665,8 +3691,17 @@ window.StudioWorkspace = {
         } catch (err) {
             alert(`Failed to resume: ${err.message}`);
         }
+    },
+
+    async init() {
+        const platformRadio = document.querySelector('input[name="campaign-destination-platform"]:checked');
+        const curPlat = (platformRadio && platformRadio.value) || "youtube_shorts";
+        if (window.AlAmrModals && typeof window.AlAmrModals.onCampaignPlatformChange === "function") {
+            await window.AlAmrModals.onCampaignPlatformChange(curPlat);
+        }
     }
 };
+
 
 // =========================================================================
 // STUDIO UTILITIES DRAWER CONTROLLER
@@ -3688,7 +3723,7 @@ window.StudioDrawer = {
         if (drawer) drawer.classList.add("open");
         if (overlay) overlay.classList.add("open");
 
-        if (tab) this.switchTab(tab);
+        this.switchTab(tab || this.activeTab || "accounts");
     },
 
     close() {
@@ -3718,12 +3753,49 @@ window.StudioDrawer = {
             }
         });
 
-        if (tab === "campaigns") {
+        if (tab === "accounts") {
+            await this.loadAccounts();
+        } else if (tab === "campaigns") {
             await this.loadCampaigns();
         } else if (tab === "workers") {
             await this.loadWorkers();
         } else if (tab === "audit") {
             await this.loadAuditLogs();
+        }
+    },
+
+    async loadAccounts() {
+        const container = document.getElementById("drawer-accounts-list");
+        if (!container) return;
+        try {
+            const accounts = await AlAmrAPI.getAccounts();
+            if (!accounts || accounts.length === 0) {
+                container.innerHTML = `
+                    <div class="p-4 rounded-lg bg-surface2 border border-slate-800 text-center space-y-2">
+                        <div class="text-slate-400 text-xs">No creator accounts enrolled yet.</div>
+                        <div class="text-[11px] text-slate-500">Connect your YouTube Channel or Instagram account to bind campaigns.</div>
+                        <button onclick="AlAmrModals.openAddAccountModal()" class="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs transition shadow-sm">
+                            + Connect Account Now
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+            container.innerHTML = accounts.map(a => `
+                <div class="p-3 rounded-lg bg-surface2 border border-slate-700/80 space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-white text-xs">${a.display_name || a.username || a.account_id}</span>
+                        <span class="px-1.5 py-0.5 rounded ${a.status === 'active' ? 'bg-emerald-950 text-emerald-400' : 'bg-amber-950 text-amber-400'} text-[10px] font-bold uppercase">${a.status}</span>
+                    </div>
+                    <div class="text-[11px] text-slate-400">${a.platform === 'youtube' ? 'YouTube Shorts' : 'Instagram Reels'} • ${a.account_id}</div>
+                    <div class="flex gap-2 pt-1">
+                        <button onclick="AlAmrModals.verifyEnrolledAccount('${a.platform}', '${a.account_id}')" class="px-2 py-0.5 rounded bg-surface3 text-cyan-300 hover:text-white text-[10px] transition">TEST LIVE</button>
+                        <button onclick="AlAmrModals.removeAccount('${a.platform}', '${a.account_id}')" class="px-2 py-0.5 rounded bg-surface3 text-rose-400 hover:text-rose-300 text-[10px] transition">REMOVE</button>
+                    </div>
+                </div>
+            `).join("");
+        } catch (_) {
+            container.innerHTML = `<div class="text-slate-500 italic p-3">Failed to load enrolled accounts.</div>`;
         }
     },
 
