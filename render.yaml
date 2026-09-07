@@ -1,34 +1,29 @@
 # ==============================================================================
-# RENDER BLUEPRINT // AL AMR CLIPPING AUTONOMOUS PRODUCTION DEPLOYMENT
+# RENDER BLUEPRINT // AL AMR CLIPPING FREE TIER DEPLOYMENT
 # ==============================================================================
-# Architecture:
-# 1. Web Service: Control Room UI, API, Media Streaming, Telegram Webhook
-# 2. Background Worker: 24/7 Autonomous Clipping Execution, Task Queue Polling
-# 3. Persistent Disk: Checkpoints, Uploads, Rendered Video Masters, Encrypted Vault
+# 100% Free Tier:
+# - Plan: free (No credit card or payment info required)
+# - Unified Web Service: FastApi + Studio UI + In-process Worker
+# - Ephemeral container storage: /tmp/project_vault
 # ==============================================================================
 
 services:
   # ----------------------------------------------------------------------------
-  # 1. PRODUCTION WEB SERVICE (Control Room UI + API + Telegram Webhook)
+  # 1. PRODUCTION WEB SERVICE (Control Room UI + API + In-Process Processing)
   # ----------------------------------------------------------------------------
   - type: web
     name: al-amr-clipping-automation
     runtime: docker
     dockerfilePath: Dockerfile
-    plan: starter
+    plan: free
     healthCheckPath: /healthz
-    numInstances: 1
-    disk:
-      name: al-amr-storage
-      mountPath: /var/data
-      sizeGB: 10
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: STORAGE_DRIVER
         value: local
       - key: LOCAL_STORAGE_ROOT
-        value: /var/data/project_vault
+        value: /tmp/project_vault
       - key: ENABLE_IN_PROCESS_WORKER
         value: "true"
       - key: AL_AMR_MASTER_KEY
@@ -38,30 +33,3 @@ services:
       - key: TELEGRAM_SECRET_TOKEN
         generateValue: true
 
-  # ----------------------------------------------------------------------------
-  # 2. PRODUCTION BACKGROUND WORKER (Autonomous Execution & Task Queue Poller)
-  # ----------------------------------------------------------------------------
-  - type: worker
-    name: al-amr-clipping-worker
-    runtime: docker
-    dockerfilePath: Dockerfile
-    dockerCommand: "python -m clipping.cli.worker_daemon --poll-interval 5"
-    plan: starter
-    numInstances: 1
-    envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: STORAGE_DRIVER
-        value: local
-      - key: LOCAL_STORAGE_ROOT
-        value: /var/data/project_vault
-      - key: AL_AMR_MASTER_KEY
-        fromService:
-          type: web
-          name: al-amr-clipping-automation
-          envVarKey: AL_AMR_MASTER_KEY
-      - key: OPERATOR_TOKEN
-        fromService:
-          type: web
-          name: al-amr-clipping-automation
-          envVarKey: OPERATOR_TOKEN
