@@ -368,7 +368,7 @@ window.AlAmrViews = {
                         <div class="pipeline-step complete"><span>01</span><span>INGEST</span><span>✓</span></div>
                         <div class="pipeline-step complete"><span>02</span><span>TRANSCRIBE</span><span>✓</span></div>
                         <div class="pipeline-step complete"><span>03</span><span>UNDERSTAND</span><span>✓</span></div>
-                        <div class="pipeline-step complete"><span>04</span><span>DISCOVER</span><span>✓</span></div>
+                        <div class="pipeline-step complete"><span>04</span><span>MOMENTS</span><span>✓</span></div>
                         <div class="pipeline-step complete"><span>05</span><span>REFRAME</span><span>✓</span></div>
                         <div class="pipeline-step complete"><span>06</span><span>RENDER</span><span>✓</span></div>
                         <div class="pipeline-step complete"><span>07</span><span>QA</span><span>✓</span></div>
@@ -392,8 +392,8 @@ window.AlAmrViews = {
                         <button onclick="AlAmrModals.togglePublishLock()" class="px-3 py-2 text-xs font-mono font-bold rounded bg-surface2 hover:bg-surface3 border border-slate-700 text-slate-200 transition text-left">
                             ${isPubLocked ? '🔓 UNLOCK PUB' : '🔒 LOCK PUB'}
                         </button>
-                        <button onclick="AlAmrModals.openLaunchDiscoveryModal()" class="col-span-2 px-3 py-2 text-xs font-mono font-bold rounded bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 transition text-center flex items-center justify-center gap-1.5">
-                            <span>🚀</span><span>LAUNCH CAMPAIGN DISCOVERY</span>
+                        <button onclick="window.AlAmrShellInstance.switchWorkspaceMode('intake')" class="col-span-2 px-3 py-2 text-xs font-mono font-bold rounded bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 transition text-center flex items-center justify-center gap-1.5">
+                            <span>🎬</span><span>+ NEW CAMPAIGN PRODUCTION</span>
                         </button>
                     </div>
                 </div>
@@ -510,7 +510,7 @@ window.AlAmrViews = {
             { id: "01_INGESTION", label: "01 INGEST" },
             { id: "02_TRANSCRIPTION", label: "02 TRANSCRIBE" },
             { id: "03_UNDERSTANDING", label: "03 UNDERSTAND" },
-            { id: "04_DISCOVERY", label: "04 DISCOVERY" },
+            { id: "04_DISCOVERY", label: "04 MOMENTS" },
             { id: "05_REFRAME", label: "05 REFRAME" },
             { id: "06_RENDER", label: "06 RENDER" },
             { id: "07_QA", label: "07 QA" },
@@ -792,13 +792,10 @@ window.AlAmrViews = {
             container.innerHTML = `
                 <div class="tech-card">
                     <div class="tech-card-header">
-                        <div class="tech-card-title">DISCOVERED & ACTIVE CAMPAIGNS (${filtered.length}/${campaigns.length})</div>
+                        <div class="tech-card-title">PRODUCTION CAMPAIGNS (${filtered.length}/${campaigns.length})</div>
                         <div class="flex items-center gap-2">
                             <button onclick="AlAmrModals.openCreateCampaignModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 shadow-md shadow-emerald-950">
                                 <span>🎬</span><span>+ START CAMPAIGN</span>
-                            </button>
-                            <button onclick="AlAmrModals.openLaunchDiscoveryModal()" class="px-3 py-1.5 text-xs font-mono font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5">
-                                <span>🚀</span><span>LAUNCH DISCOVERY</span>
                             </button>
                         </div>
                     </div>
@@ -812,7 +809,6 @@ window.AlAmrViews = {
                             <select onchange="AlAmrViews.setFilter('campaigns', 'status', this.value)" class="w-full bg-surface2 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 outline-none">
                                 <option value="all" ${filter.status === 'all' ? 'selected' : ''}>All Statuses</option>
                                 <option value="active" ${filter.status === 'active' ? 'selected' : ''}>Active</option>
-                                <option value="discovered" ${filter.status === 'discovered' ? 'selected' : ''}>Discovered</option>
                                 <option value="paused" ${filter.status === 'paused' ? 'selected' : ''}>Paused</option>
                                 <option value="completed" ${filter.status === 'completed' ? 'selected' : ''}>Completed</option>
                             </select>
@@ -1460,7 +1456,7 @@ window.AlAmrViews = {
                     </div>
                     <div class="space-y-2 text-xs font-mono">
                         <div class="p-2 rounded bg-surface2 flex justify-between items-center">
-                            <div><span class="font-bold text-white">campaign_discovery</span><div class="text-[10px] text-slate-500">Autonomous crawl & brief extraction</div></div>
+                            <div><span class="font-bold text-white">brief_intelligence</span><div class="text-[10px] text-slate-500">Campaign brief parsing & requirements extraction</div></div>
                             <span class="status-pill operational">READY</span>
                         </div>
                         <div class="p-2 rounded bg-surface2 flex justify-between items-center">
@@ -1633,42 +1629,15 @@ window.AlAmrModals = {
         }
     },
 
-    // 5. Campaign Discovery Launcher
+    // 5. Campaign Intake Routing
     openLaunchDiscoveryModal() {
-        const modal = document.getElementById("modal-launch-discovery");
-        if (modal) modal.classList.remove("hidden");
-    },
-
-    closeLaunchDiscoveryModal() {
-        const modal = document.getElementById("modal-launch-discovery");
-        if (modal) modal.classList.add("hidden");
-    },
-
-    async submitLaunchDiscovery() {
-        const sourceInput = document.getElementById("discovery-source-input");
-        const platformSelect = document.getElementById("discovery-platform-select");
-        const prioritySelect = document.getElementById("discovery-priority-select");
-        const nicheInput = document.getElementById("discovery-niche-input");
-
-        const source = sourceInput ? sourceInput.value.trim() : "";
-        const platform = platformSelect ? platformSelect.value : "youtube_shorts";
-        const priority = prioritySelect ? prioritySelect.value : "normal";
-        const niche = nicheInput ? nicheInput.value.trim() : null;
-
-        if (!source) {
-            alert("Discovery source URL is required.");
-            return;
-        }
-
-        try {
-            const res = await AlAmrAPI.launchCampaignDiscovery({ source, platform, priority, niche });
-            this.closeLaunchDiscoveryModal();
-            window.AlAmrShellInstance.showToast(`Campaign discovery enqueued: ${res.task_id}`, "success");
-            window.AlAmrShellInstance.syncState(true);
-        } catch (err) {
-            alert(`Discovery launch failed: ${err.message}`);
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.switchWorkspaceMode("intake");
+            window.AlAmrShellInstance.showToast("Campaigns are operator-selected: Select/create campaign, upload brief, and supply source video.", "info");
         }
     },
+    closeLaunchDiscoveryModal() {},
+    async submitLaunchDiscovery() {},
 
     // 6. Task Inspection Drawer & Lifecycle
     async openTaskDetail(taskId) {

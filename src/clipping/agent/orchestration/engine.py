@@ -79,6 +79,7 @@ class AutonomousOrchestrationEngine:
         worker: Optional[Any] = None,
         telemetry_engine: Optional[CloudTelemetryEngine] = None,
         event_system: Optional[AgentEventSystem] = None,
+        allow_legacy_discovery: bool = False,
     ):
         self.storage = storage_driver
         self.control_repo = control_repository
@@ -90,11 +91,16 @@ class AutonomousOrchestrationEngine:
         self.vault = credential_vault or EncryptedCredentialVault(storage_driver)
         self.evaluator = evaluator or CampaignEvaluator(preferred_cpm=2.0, min_viable_cpm=1.0, max_target_cpm=5.0)
         self.source_registry = source_registry or CampaignSourceRegistry()
-        self.discovery = discovery_capability or CampaignDiscoveryCapability(
-            repository=self.campaign_repo,
-            source_registry=self.source_registry,
-            evaluator=self.evaluator,
-        )
+        self.allow_legacy_discovery = allow_legacy_discovery or (discovery_capability is not None)
+        # In production, discovery is disabled: campaigns are operator-selected
+        if self.allow_legacy_discovery:
+            self.discovery = discovery_capability or CampaignDiscoveryCapability(
+                repository=self.campaign_repo,
+                source_registry=self.source_registry,
+                evaluator=self.evaluator,
+            )
+        else:
+            self.discovery = None
         self.account_service = account_service or AccountLifecycleService(
             vault=self.vault,
             policy=self.policy,
@@ -146,7 +152,7 @@ class AutonomousOrchestrationEngine:
 
     async def run_orchestration_cycle(
         self,
-        source_name: Optional[str] = "whop",
+        source_name: Optional[str] = None,
         max_campaigns_to_process: int = 5,
         target_campaign_id: Optional[str] = None,
         dry_run: bool = False,
@@ -155,7 +161,7 @@ class AutonomousOrchestrationEngine:
         Executes a single end-to-end autonomous orchestration cycle:
         1. Master Control safety pre-flight check (emergency stop, automation pause).
         2. Platform reconciliation & stale upload recovery.
-        3. Whop-first campaign discovery.
+        3. Operator Campaign verification (waits for operator input if none exist).
         4. Economic intelligence & multi-factor evaluation ($2 CPM preferred).
         5. Autonomous opportunity ranking and selection.
         6. Autonomous creator account assignment & provisioning.
@@ -209,8 +215,25 @@ class AutonomousOrchestrationEngine:
                     logger.warning("Reconciliation phase encountered transient warning", error=str(e))
                     summary.errors.append(f"Reconciliation warning: {str(e)}")
 
-            # 3. Whop-First Campaign Discovery Phase
-            if self.discovery and not target_campaign_id:
+            # 3. Operator Campaign Verification Phase
+            active_campaigns = await self.campaign_repo.list_campaigns(status=CampaignStatus.ACTIVE)
+            if target_campaign_id:
+                active_campaigns = [c for c in active_campaigns if c.campaign_id == target_campaign_id]
+
+            # In production: if no operator-submitted campaigns exist, wait idle (CAMPAIGN_INPUT_REQUIRED)
+            if not active_campaigns and not (self.allow_legacy_discovery and self.discovery and not target_campaign_id):
+                logger.info(
+                    "CAMPAIGN INPUT REQUIRED: No active operator campaigns in repository; engine idle waiting for operator input",
+                    cycle_id=cycle_id,
+                )
+                summary.status = "campaign_input_required"
+                summary.completed_at = datetime.now(timezone.utc)
+                summary.duration_seconds = (summary.completed_at - started_at).total_seconds()
+                await self.orchestration_repo.save_cycle_summary(summary)
+                return summary
+
+            # Legacy Discovery Phase (Strictly isolated to explicit legacy test suites)
+            if self.allow_legacy_discovery and self.discovery and not target_campaign_id and not active_campaigns:
                 disc_context = CapabilityContext(
                     task_id=f"disc_{cycle_id}",
                     inputs={"source": source_name or "whop"},
@@ -229,10 +252,10 @@ class AutonomousOrchestrationEngine:
                     logger.error("Campaign discovery encountered error", error=str(e))
                     summary.errors.append(f"Discovery error: {str(e)}")
 
+                active_campaigns = await self.campaign_repo.list_campaigns(status=CampaignStatus.ACTIVE)
+
             # 4. Campaign Intelligence & Economic Evaluation
             vault_accounts = await self.vault.list_accounts()
-            active_campaigns = await self.campaign_repo.list_campaigns(status=CampaignStatus.ACTIVE)
-
             if target_campaign_id:
                 active_campaigns = [c for c in active_campaigns if c.campaign_id == target_campaign_id]
 

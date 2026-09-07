@@ -263,10 +263,9 @@ async def test_telegram_escalation_notifier_formatting_and_dispatch():
     )
 
     msg = notifier.format_alert_message(record)
-    assert "*AL AMR CLIPPING — OPERATOR ESCALATION*" in msg
-    assert "esc_test_captcha_001" in msg
-    assert "CRITICAL" in msg
-    assert "CAPTCHA_CHALLENGE" in msg
+    assert "PRODUCTION ACTION REQUIRED" in msg
+    assert "camp_whop_alpha" in msg
+    assert "Source Access" in msg
 
     sent = await notifier.notify(record)
     assert sent is True
@@ -297,8 +296,8 @@ async def test_agent_task_repository_auto_notifies_escalation(local_storage):
     )
 
     assert record.escalation_id.startswith("esc_")
-    assert len(mock_transport.sent_messages) == 1
-    assert "PLATFORM_BLOCKED" in mock_transport.sent_messages[0]["text"]
+    assert "PRODUCTION ACTION REQUIRED" in mock_transport.sent_messages[0]["text"]
+    assert "camp_blocked" in mock_transport.sent_messages[0]["text"]
 
 
 @pytest.mark.anyio

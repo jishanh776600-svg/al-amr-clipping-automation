@@ -1449,7 +1449,14 @@ async def launch_campaign_discovery_api(
     operator: str = Depends(get_current_operator),
     storage: StorageDriver = Depends(get_storage_driver),
 ) -> Dict[str, Any]:
-    """Enqueues an autonomous campaign discovery task into the Cloud Task Queue."""
+    """Rejects autonomous campaign discovery in production (operator-selected architecture)."""
+    env = os.getenv("ENVIRONMENT") or get_settings().ENVIRONMENT
+    if env == "production":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Autonomous campaign discovery has been removed in production. All production campaigns are operator-selected. Please select/create a campaign, upload the campaign brief, and provide a video source in Mission Control.",
+        )
+
     import uuid
     from clipping.agent.cloud.queue import CloudTaskQueue
     from clipping.agent.cloud.telemetry import CloudTelemetryEngine, TelemetryEventType
@@ -1504,7 +1511,7 @@ async def launch_campaign_discovery_api(
         capability_name="campaign_discovery",
         metadata={"platform": req.platform, "source": req.source, "priority": req.priority, "operator": operator},
     )
-    logger.info("Operator launched campaign discovery task", task_id=task.task_id, operator=operator)
+    logger.info("Operator launched campaign discovery task (test harness)", task_id=task.task_id, operator=operator)
     return {
         "status": "success",
         "task_id": task.task_id,

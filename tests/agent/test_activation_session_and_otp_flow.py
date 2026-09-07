@@ -142,9 +142,8 @@ async def test_05_telegram_notification_formatting_and_no_secrets(activation_man
     assert len(transport.sent_messages) == 1
 
     msg_text = transport.sent_messages[0]["text"]
-    assert "youtube" in msg_text.lower()
-    assert session.session_id in msg_text
-    assert "MFA_REQUIRED" in msg_text
+    assert "PRODUCTION ACTION REQUIRED" in msg_text
+    assert "verification" in msg_text.lower()
 
 
 @pytest.mark.anyio

@@ -239,14 +239,6 @@ class AlAmrAPI {
         });
     }
 
-    static async launchCampaignDiscovery(data) {
-        return this.request("/api/campaigns/discover", {
-            method: "POST",
-            body: JSON.stringify(data)
-        });
-    }
-
-
     // 8. Account & Vault Management
     static async listAccounts() {
         return this.request("/api/accounts");

@@ -157,6 +157,12 @@ async def run_orchestrator(args: argparse.Namespace, storage_driver: Optional[St
                 target_campaign_id=args.target_campaign,
                 dry_run=is_dry_run,
             )
+            if summary.status == "campaign_input_required":
+                logger.info("Orchestrator idle: CAMPAIGN_INPUT_REQUIRED")
+                print("\n[i] CAMPAIGN INPUT REQUIRED: No active operator campaigns in repository.")
+                print("    Open Mission Control to select a campaign, upload the brief, and supply the video source.\n")
+                return 0
+
             logger.info(
                 "Autonomous cycle completed",
                 cycle_id=summary.cycle_id,
@@ -232,7 +238,7 @@ def main() -> None:
     parser.add_argument("--skip-preflight", action="store_true", help="Skip preflight checks (not recommended)")
     parser.add_argument("--interval", type=int, default=300, help="Interval in seconds between cycles in continuous mode (default: 300)")
     parser.add_argument("--target-campaign", type=str, default=None, help="Target a specific campaign ID")
-    parser.add_argument("--source", type=str, default="whop", help="Campaign discovery source (default: whop)")
+    parser.add_argument("--source", type=str, default=None, help="Campaign source identifier (default: None)")
     parser.add_argument("--max-campaigns", type=int, default=5, help="Max campaigns to evaluate per cycle (default: 5)")
     parser.add_argument("--json", action="store_true", help="Output report in raw JSON format (preflight mode)")
     parser.add_argument("--strict", action="store_true", help="Fail with non-zero exit code on any warning (preflight mode)")

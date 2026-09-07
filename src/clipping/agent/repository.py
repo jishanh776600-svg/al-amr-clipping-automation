@@ -153,7 +153,7 @@ class AgentTaskRepository:
         )
         await self.save_escalation(record)
 
-        # Dispatch real-time operator alert via Telegram if configured
+        # Dispatch real-time operator alert via Telegram if configured (production tasks only)
         notifier = self.escalation_notifier
         if notifier is None:
             try:
@@ -162,7 +162,16 @@ class AgentTaskRepository:
             except Exception:
                 notifier = None
 
-        if notifier and getattr(notifier, "is_configured", False):
+        what_happened_lower = (context.what_happened or "").lower()
+        is_discovery = (
+            effective_task_id.startswith("disc_")
+            or "campaign discovery" in what_happened_lower
+            or "whop" in what_happened_lower
+            or "marketplace" in what_happened_lower
+            or "creator rewards" in what_happened_lower
+        )
+
+        if notifier and getattr(notifier, "is_configured", False) and not is_discovery:
             try:
                 await notifier.notify(record)
             except Exception as ex:
@@ -212,6 +221,31 @@ class AgentTaskRepository:
             logger.error("Failed to list escalations", error=str(e))
             return []
 
+    async def resolve_escalation(
+        self,
+        escalation_id: str,
+        action: str,
+        notes: Optional[str] = None,
+        operator_id: Optional[str] = None,
+    ) -> Optional[EscalationRecord]:
+        """Marks an escalation as resolved, updates durable records and status index."""
+        rec = await self.get_escalation(escalation_id)
+        if not rec:
+            return None
+
+        # Clean old status pointer
+        old_ptr = f"escalations/by_status/{rec.status.value}/{rec.escalation_id}.json"
+        try:
+            await self.storage.delete(old_ptr)
+        except Exception:
+            pass
+
+        resolved = rec.resolve(operator=operator_id or "operator", action=action, notes=notes)
+        await self.save_escalation(resolved)
+        logger.info("Resolved escalation record", escalation_id=escalation_id, action=action)
+        return resolved
+
 
 # Convenient alias
 TaskRepository = AgentTaskRepository
+

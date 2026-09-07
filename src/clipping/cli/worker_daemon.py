@@ -16,6 +16,7 @@ from typing import Optional
 from clipping.agent.capabilities.clipping_adapter import MediaClippingCapability
 from clipping.agent.capabilities.registry import CapabilityRegistry
 from clipping.agent.cloud.worker import CloudAgentWorker
+from clipping.agent.models import AgentTask
 from clipping.agent.state import TaskState
 from clipping.approval.dispatcher import TelegramApprovalDispatcher
 from clipping.approval.repository import ApprovalRepository
@@ -24,6 +25,7 @@ from clipping.approval.service import ApprovalService
 from clipping.approval.transport import HttpTelegramTransport, MockTelegramTransport
 from clipping.config.settings import Settings, get_settings
 from clipping.logging.logger import get_logger
+from clipping.storage.base import StorageDriver
 from clipping.storage.factory import create_storage_driver
 
 logger = get_logger("clipping.cli.worker_daemon")
@@ -32,11 +34,11 @@ logger = get_logger("clipping.cli.worker_daemon")
 class WorkerDaemon:
     """Production 24/7 background worker for Render deployment."""
 
-    def __init__(self, poll_interval: float = 3.0):
+    def __init__(self, poll_interval: float = 3.0, storage_driver: Optional[StorageDriver] = None):
         self.poll_interval = poll_interval
         self._running = False
         self.settings = get_settings()
-        self.storage = create_storage_driver(self.settings)
+        self.storage = storage_driver or create_storage_driver(self.settings)
 
         # 1. Initialize Cloud Agent Worker
         worker_id = os.getenv("RENDER_INSTANCE_ID", os.getenv("WORKER_ID", f"worker_{os.getpid()}"))
@@ -73,35 +75,40 @@ class WorkerDaemon:
         logger.info("WorkerDaemon received shutdown signal")
         self._running = False
 
+    async def step_once(self) -> Optional[AgentTask]:
+        """Executes a single polling iteration: processes next operator task or remains idle."""
+        task = await self.worker.run_next_task()
+        if task:
+            logger.info(
+                "WorkerDaemon processed task",
+                task_id=task.task_id,
+                status=task.status.value,
+            )
+        else:
+            logger.debug("WorkerDaemon idle; waiting for operator-created production tasks")
+
+        if self.dispatcher:
+            try:
+                decisions = await self.dispatcher.poll_and_process_once(limit=25)
+                if decisions > 0:
+                    logger.info("WorkerDaemon processed Telegram updates", count=decisions)
+            except Exception as te:
+                logger.warning("Telegram poll error in background worker", error=str(te))
+
+        return task
+
     async def run(self) -> None:
         """Main continuous execution loop."""
         self._running = True
         logger.info(
-            "WorkerDaemon started",
+            "WorkerDaemon started (operator-driven production worker)",
             poll_interval=self.poll_interval,
             storage=self.storage.__class__.__name__,
         )
 
         while self._running:
             try:
-                # A. Execute next pending task from queue
-                task = await self.worker.run_next_task()
-                if task:
-                    logger.info(
-                        "WorkerDaemon processed task",
-                        task_id=task.task_id,
-                        status=task.status.value,
-                    )
-
-                # B. Poll Telegram updates if dispatcher active
-                if self.dispatcher:
-                    try:
-                        decisions = await self.dispatcher.poll_and_process_once(limit=25)
-                        if decisions > 0:
-                            logger.info("WorkerDaemon processed Telegram updates", count=decisions)
-                    except Exception as te:
-                        logger.warning("Telegram poll error in background worker", error=str(te))
-
+                await self.step_once()
                 # Sleep before next poll
                 await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
