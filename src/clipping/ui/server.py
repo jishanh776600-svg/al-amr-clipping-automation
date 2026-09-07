@@ -1585,6 +1585,7 @@ async def import_campaign_brief_api(
     """Imports campaign guidelines from pasted text or a Google Doc / web guidelines URL."""
     import uuid
     import re
+    import httpx
     from clipping.document.brief_engine import CampaignBriefIntelligenceEngine
 
     text_content = ""
