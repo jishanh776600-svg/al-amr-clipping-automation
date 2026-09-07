@@ -3432,7 +3432,21 @@ async def serve_index():
     index_file = STATIC_DIR / "index.html"
     if not index_file.exists():
         return HTMLResponse("<h1>AL AMR Clipping Automation Console</h1><p>Static index.html not found</p>", status_code=200)
-    return FileResponse(str(index_file))
+
+    # Auto-inject the operator token so user never has to manually enter it via AUTH button
+    settings = get_settings()
+    token = settings.OPERATOR_TOKEN.get_secret_value() if settings.OPERATOR_TOKEN else ""
+    html_content = index_file.read_text(encoding="utf-8")
+    auto_auth_script = f"""<script>
+// Auto-injected by server: set operator token on every page load
+(function() {{
+    var t = {json.dumps(token)};
+    if (t) {{ localStorage.setItem('al_amr_operator_token', t); }}
+}})();
+</script>"""
+    # Inject just before </head>
+    html_content = html_content.replace("</head>", auto_auth_script + "\n</head>", 1)
+    return HTMLResponse(content=html_content, status_code=200)
 
 
 if __name__ == "__main__":
