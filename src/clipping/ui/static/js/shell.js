@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AL AMR CLIPPING // Global Shell, Navigation Router & Control Action Controller
  */
 
@@ -99,17 +99,32 @@ class AlAmrShell {
         let path = window.location.pathname.replace(/^\//, "");
         const hash = window.location.hash.replace(/^#/, "");
 
-        let target = hash || path || "overview";
-        if (target === "dashboard") target = "overview";
+        let target = hash || path || "intake";
+        if (target === "dashboard" || target === "overview") target = "intake";
 
-        const validViews = [
-            "overview", "agent", "campaigns", "accounts", "clipping",
-            "approvals", "publishing", "tasks", "workers", "escalations",
-            "activity", "system"
-        ];
-
-        if (!validViews.includes(target)) {
-            target = "overview";
+        // Map operational SPA routes to Studio Workspace modes or Drawer tabs
+        if (target === "clipping") target = "production";
+        else if (target === "approvals") target = "review";
+        else if (target === "publishing") target = "publishing";
+        else if (target === "intake" || target === "production" || target === "review") {
+            // Already standard studio mode
+        } else if (["accounts", "campaigns", "workers", "tasks", "escalations", "activity", "system"].includes(target)) {
+            // Utilities drawer tab
+            if (window.StudioDrawer) {
+                const tabMap = {
+                    accounts: "accounts",
+                    campaigns: "campaigns",
+                    workers: "workers",
+                    tasks: "workers",
+                    escalations: "audit",
+                    activity: "audit",
+                    system: "audit"
+                };
+                window.StudioDrawer.open(tabMap[target] || "accounts");
+            }
+            return;
+        } else {
+            target = "intake";
         }
 
         this.switchView(target, false);
@@ -119,37 +134,17 @@ class AlAmrShell {
         if (this.currentView === viewName) return;
         window.location.hash = viewName;
         this.switchView(viewName, true);
-
-        // Auto-close mobile sidebar if open
-        const sidebar = document.getElementById("app-sidebar");
-        const overlay = document.getElementById("sidebar-overlay");
-        if (sidebar && overlay) {
-            sidebar.classList.remove("open");
-            overlay.classList.remove("active");
-        }
     }
 
     switchView(viewName, pushHistory = true) {
         this.currentView = viewName;
 
-        // Update active nav item in sidebar
-        document.querySelectorAll("[data-nav-target]").forEach((el) => {
-            const target = el.getAttribute("data-nav-target");
-            if (target === viewName || (viewName === "overview" && target === "dashboard")) {
-                el.classList.add("active");
-            } else {
-                el.classList.remove("active");
-            }
-        });
-
-        // Update page title / breadcrumb
-        const titleEl = document.getElementById("view-header-title");
-        if (titleEl) {
-            const formatted = viewName.toUpperCase();
-            titleEl.textContent = formatted === "OVERVIEW" ? "MISSION OVERVIEW" : formatted;
+        // Switch Studio Workspace mode if it's an intake/production/review/publishing mode
+        if (window.StudioWorkspace && ["intake", "production", "review", "publishing"].includes(viewName)) {
+            window.StudioWorkspace.switchMode(viewName);
         }
 
-        // Hide all view panels and show the target view
+        // Hide legacy view panels if any exist
         document.querySelectorAll(".view-panel").forEach((panel) => {
             if (panel.id === `view-${viewName}`) {
                 panel.classList.remove("hidden");
@@ -158,7 +153,7 @@ class AlAmrShell {
             }
         });
 
-        // Trigger view-specific render
+        // Trigger view-specific render if registered
         if (window.AlAmrViews && typeof window.AlAmrViews[viewName] === "function") {
             window.AlAmrViews[viewName](this.lastState);
         }

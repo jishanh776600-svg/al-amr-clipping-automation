@@ -419,6 +419,27 @@ class AlAmrAPI {
             body: JSON.stringify({})
         });
     }
+
+    static async getPipelineCampaignStatus(campaignId) {
+        return this.request(`/api/pipeline/campaigns/${encodeURIComponent(campaignId)}/status`);
+    }
+
+    static async publishPipelineArtifact(campaignId, artifactId, targetPlatforms = null, targetAccountId = null) {
+        return this.request(`/api/pipeline/campaigns/${encodeURIComponent(campaignId)}/publish`, {
+            method: "POST",
+            body: JSON.stringify({
+                artifact_id: artifactId,
+                target_platforms: targetPlatforms,
+                target_account_id: targetAccountId
+            })
+        });
+    }
+
+    static async resumePipelineCampaign(campaignId) {
+        return this.request(`/api/pipeline/campaigns/${encodeURIComponent(campaignId)}/resume`, {
+            method: "POST"
+        });
+    }
 }
 
 window.AlAmrAPI = AlAmrAPI;

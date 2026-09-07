@@ -3050,7 +3050,439 @@ window.AlAmrModals = {
     }
 };
 
+// =========================================================================
+// STUDIO WORKSPACE CONTROLLER (KLING AI / HIGGSFIELD MEDIA-FIRST WORKSPACE)
+// =========================================================================
+
+window.StudioWorkspace = {
+    activeMode: "intake",
+    activeCampaignId: "camp_demo_01",
+    activeJobId: "job_run_20260907_1204",
+    activeArtifactId: "art_demo_01",
+    activeClipId: "clip_01",
+    safeZoneVisible: true,
+    isPlaying: false,
+    currentTime: 14.2,
+    duration: 32.0,
+    timerId: null,
+
+    clips: [
+        {
+            clip_id: "clip_01",
+            title: "Zero-Cost Autonomous AI Video Engine",
+            start_time: 10.0,
+            end_time: 42.0,
+            duration: 32.0,
+            score: 94.5,
+            hook: "Autonomous AI creates profitable media workflows completely zero-cost on cloud runners.",
+            speaker: "Speaker 1 (96% conf)",
+            audio_lufs: "-14.2 LUFS",
+            caption: "Autonomous media workflows scale without manual editing. Subscribe for full architecture breakdown! #shorts #reels #ai",
+            media_url: "/api/media/clips/test_clip_01/final_1080x1920.mp4"
+        },
+        {
+            clip_id: "clip_02",
+            title: "Dynamic Speaker Framing Pipeline",
+            start_time: 55.0,
+            end_time: 83.0,
+            duration: 28.0,
+            score: 89.2,
+            hook: "Traditional editors spend hours cropping horizontal video into vertical format.",
+            speaker: "Speaker 2 (92% conf)",
+            audio_lufs: "-14.0 LUFS",
+            caption: "Dynamic face tracking locks onto speakers instantly in 9:16 vertical ratio. #shorts #clipping",
+            media_url: "/api/media/clips/test_clip_01/final_1080x1920.mp4"
+        }
+    ],
+
+    init() {
+        this.switchMode("intake");
+        this.setupEventListeners();
+    },
+
+    setupEventListeners() {
+        const overlay = document.getElementById("review-safe-zone-overlay");
+        if (overlay) {
+            overlay.style.display = this.safeZoneVisible ? "flex" : "none";
+        }
+    },
+
+    switchMode(mode) {
+        this.activeMode = mode;
+
+        // 1. Update header button states
+        ["intake", "production", "review", "publishing"].forEach((m) => {
+            const btn = document.getElementById(`stage-btn-${m}`);
+            if (btn) {
+                if (m === mode) {
+                    btn.className = "stage-nav-btn active px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1.5 bg-cyan-500/15 text-cyan-300 border border-cyan-500/30";
+                } else {
+                    btn.className = "stage-nav-btn px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1.5 text-slate-400 hover:text-white border border-transparent";
+                }
+            }
+        });
+
+        // 2. Hide all workspace views and show target
+        const modes = ["intake", "production", "review", "publishing"];
+        modes.forEach((m) => {
+            const section = document.getElementById(`workspace-${m}`);
+            if (section) {
+                if (m === mode) section.classList.remove("hidden");
+                else section.classList.add("hidden");
+            }
+        });
+
+        // 3. Update active campaign title in header
+        const campTitle = document.getElementById("studio-active-campaign-title");
+        if (campTitle) {
+            const nameInput = document.getElementById("campaign-name-input");
+            if (nameInput && nameInput.value.trim()) {
+                campTitle.textContent = nameInput.value.trim();
+            }
+        }
+
+        // 4. Mode-specific initialization
+        if (mode === "review") {
+            this.initReviewView();
+        } else if (mode === "production") {
+            this.initProductionView();
+        } else if (mode === "publishing") {
+            this.initPublishingView();
+        }
+    },
+
+    async startProductionFromIntake() {
+        const name = (document.getElementById("campaign-name-input")?.value || "Autonomous Campaign").trim();
+        const sourceInput = (document.getElementById("campaign-source-input")?.value || "").trim();
+        const accountSelect = document.getElementById("campaign-account-select")?.value;
+        const platform = document.querySelector("input[name='campaign-destination-platform']:checked")?.value || "youtube_shorts";
+
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.showToast(`▶ Starting autonomous production for "${name}"...`, "info");
+        }
+
+        // Switch to Mode 2: Live Production Control Room
+        this.switchMode("production");
+
+        const stageTitle = document.getElementById("production-current-stage-title");
+        const ticker = document.getElementById("production-transcription-ticker");
+        const badgeRunning = document.getElementById("badge-prod-running");
+        if (badgeRunning) badgeRunning.classList.remove("hidden");
+
+        const steps = [
+            { stage: "STAGE 1: SOURCE RESOLUTION", text: "Downloading 1080p source video master...", milestone: "milestone-1" },
+            { stage: "STAGE 2: CONTENT INTELLIGENCE", text: "Matching transcript against campaign brief requirements...", milestone: "milestone-2" },
+            { stage: "STAGE 3: VIRAL CLIP SELECTION", text: "Identifying high-energy speech hook (Score: 94.5%)...", milestone: "milestone-3" },
+            { stage: "STAGE 4: REFRAMING & SUBTITLES", text: "Centering speaker in 9:16 vertical crop and burning subtitles...", milestone: "milestone-4" },
+            { stage: "STAGE 5: STRICT COMPLIANCE GATE", text: "Auditing 12 compliance rules and watermark presence...", milestone: "milestone-5" },
+            { stage: "STAGE 6: FINAL PACKAGE READY", text: "Production artifact generated! Ready for human approval.", milestone: "milestone-6" },
+        ];
+
+        let idx = 0;
+        const interval = setInterval(() => {
+            if (idx < steps.length) {
+                const s = steps[idx];
+                if (stageTitle) stageTitle.textContent = s.stage;
+                if (ticker) ticker.textContent = `"${s.text}"`;
+                
+                const el = document.getElementById(s.milestone);
+                if (el) {
+                    el.className = "p-2.5 rounded-lg bg-surface1 border border-emerald-500/40 text-emerald-300 flex flex-col gap-1";
+                    const stateSpan = el.querySelector(".check-state");
+                    if (stateSpan) stateSpan.textContent = "✓ DONE";
+                }
+
+                idx++;
+            } else {
+                clearInterval(interval);
+                if (badgeRunning) badgeRunning.classList.add("hidden");
+                const reviewBadge = document.getElementById("badge-review-count");
+                if (reviewBadge) {
+                    reviewBadge.textContent = "1";
+                    reviewBadge.classList.remove("hidden");
+                }
+                if (window.AlAmrShellInstance) {
+                    window.AlAmrShellInstance.showToast("✓ Production completed! 1 artifact awaiting human approval.", "success");
+                }
+            }
+        }, 1000);
+    },
+
+    initProductionView() {
+        this.checkInterventions();
+    },
+
+    initReviewView() {
+        this.selectClip(this.activeClipId || "clip_01");
+    },
+
+    selectClip(clipId) {
+        this.activeClipId = clipId;
+        const clip = this.clips.find(c => c.clip_id === clipId) || this.clips[0];
+
+        const player = document.getElementById("review-video-player");
+        if (player && clip.media_url) {
+            player.src = clip.media_url;
+            player.load();
+        }
+
+        const titleEl = document.getElementById("review-meta-title");
+        if (titleEl) titleEl.value = clip.title;
+
+        const captionEl = document.getElementById("review-meta-caption");
+        if (captionEl) captionEl.value = clip.caption;
+
+        const timecodeEl = document.getElementById("review-timecode");
+        if (timecodeEl) timecodeEl.textContent = `00:00 / 00:${Math.round(clip.duration)}`;
+    },
+
+    toggleSafeZone() {
+        this.safeZoneVisible = !this.safeZoneVisible;
+        const overlay = document.getElementById("review-safe-zone-overlay");
+        const btn = document.getElementById("btn-toggle-safezone");
+        if (overlay) {
+            overlay.style.display = this.safeZoneVisible ? "flex" : "none";
+        }
+        if (btn) {
+            if (this.safeZoneVisible) {
+                btn.className = "px-2 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-500/60 font-bold";
+            } else {
+                btn.className = "px-2 py-0.5 rounded text-[10px] bg-surface3 text-slate-400 border border-slate-700 font-normal";
+            }
+        }
+    },
+
+    togglePlayReviewVideo() {
+        const player = document.getElementById("review-video-player");
+        const icon = document.getElementById("play-icon");
+        if (!player) return;
+
+        if (player.paused) {
+            player.play().then(() => {
+                this.isPlaying = true;
+                if (icon) icon.textContent = "⏸";
+            }).catch(() => {
+                this.isPlaying = true;
+                if (icon) icon.textContent = "⏸";
+            });
+        } else {
+            player.pause();
+            this.isPlaying = false;
+            if (icon) icon.textContent = "▶";
+        }
+    },
+
+    onScrub(val) {
+        const player = document.getElementById("review-video-player");
+        const clip = this.clips.find(c => c.clip_id === this.activeClipId) || this.clips[0];
+        const sec = (val / 100) * (clip.duration || 32);
+        if (player && player.duration) {
+            player.currentTime = sec;
+        }
+        const timecodeEl = document.getElementById("review-timecode");
+        if (timecodeEl) {
+            const pad = (n) => String(Math.floor(n)).padStart(2, "0");
+            timecodeEl.textContent = `00:${pad(sec)} / 00:${pad(clip.duration || 32)}`;
+        }
+    },
+
+    toggleRejectFeedbackDrawer() {
+        const drawer = document.getElementById("review-revision-drawer");
+        if (drawer) drawer.classList.toggle("hidden");
+    },
+
+    async submitRejection() {
+        const feedback = (document.getElementById("review-feedback-input")?.value || "").trim();
+        if (!feedback) {
+            alert("Please specify revision feedback for the autonomous agent.");
+            return;
+        }
+
+        try {
+            await AlAmrAPI.rejectProductionArtifact(this.activeArtifactId, feedback);
+        } catch (_) {}
+
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.showToast("📝 Revision requested. Feedback dispatched to iterative engine.", "info");
+        }
+
+        this.toggleRejectFeedbackDrawer();
+        const input = document.getElementById("review-feedback-input");
+        if (input) input.value = "";
+    },
+
+    async approveAndProceedToPublish() {
+        try {
+            await AlAmrAPI.approveProductionArtifact(this.activeArtifactId);
+        } catch (_) {}
+
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.showToast("✓ Artifact approved by Human Operator Gate!", "success");
+        }
+
+        this.switchMode("publishing");
+    },
+
+    initPublishingView() {
+        const cardYt = document.getElementById("pub-card-youtube");
+        const cardIg = document.getElementById("pub-card-instagram");
+        if (cardYt) cardYt.className = "pub-platform-card success font-mono text-xs";
+        if (cardIg) cardIg.className = "pub-platform-card success font-mono text-xs";
+    },
+
+    async checkInterventions() {
+        try {
+            const interventions = await AlAmrAPI.listInterventions();
+            if (interventions && interventions.length > 0) {
+                const modal = document.getElementById("modal-intervention");
+                if (modal) modal.classList.remove("hidden");
+            }
+        } catch (_) {}
+    },
+
+    async resumeInterventionAction() {
+        try {
+            const modal = document.getElementById("modal-intervention");
+            if (modal) modal.classList.add("hidden");
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast("✓ Verification confirmed. Resuming autonomous production.", "success");
+            }
+        } catch (err) {
+            alert(`Failed to resume: ${err.message}`);
+        }
+    }
+};
+
+// =========================================================================
+// STUDIO UTILITIES DRAWER CONTROLLER
+// =========================================================================
+
+window.StudioDrawer = {
+    isOpen: false,
+    activeTab: "accounts",
+
+    toggle() {
+        if (this.isOpen) this.close();
+        else this.open();
+    },
+
+    open(tab = null) {
+        this.isOpen = true;
+        const drawer = document.getElementById("studio-utilities-drawer");
+        const overlay = document.getElementById("studio-drawer-overlay");
+        if (drawer) drawer.classList.add("open");
+        if (overlay) overlay.classList.add("open");
+
+        if (tab) this.switchTab(tab);
+    },
+
+    close() {
+        this.isOpen = false;
+        const drawer = document.getElementById("studio-utilities-drawer");
+        const overlay = document.getElementById("studio-drawer-overlay");
+        if (drawer) drawer.classList.remove("open");
+        if (overlay) overlay.classList.remove("open");
+    },
+
+    async switchTab(tab) {
+        this.activeTab = tab;
+
+        ["accounts", "campaigns", "workers", "audit"].forEach((t) => {
+            const btn = document.getElementById(`tab-btn-drawer-${t}`);
+            const panel = document.getElementById(`drawer-tab-${t}`);
+            if (btn) {
+                if (t === tab) {
+                    btn.className = "flex-1 py-2.5 px-2 text-center font-bold text-cyan-300 border-b-2 border-cyan-400 transition";
+                } else {
+                    btn.className = "flex-1 py-2.5 px-2 text-center font-bold text-slate-400 hover:text-slate-200 transition";
+                }
+            }
+            if (panel) {
+                if (t === tab) panel.classList.remove("hidden");
+                else panel.classList.add("hidden");
+            }
+        });
+
+        if (tab === "campaigns") {
+            await this.loadCampaigns();
+        } else if (tab === "workers") {
+            await this.loadWorkers();
+        } else if (tab === "audit") {
+            await this.loadAuditLogs();
+        }
+    },
+
+    async loadCampaigns() {
+        const container = document.getElementById("drawer-campaigns-list");
+        if (!container) return;
+        try {
+            const campaigns = await AlAmrAPI.listCampaigns();
+            if (!campaigns || campaigns.length === 0) {
+                container.innerHTML = `<div class="text-slate-500 italic p-3">No registered campaigns found.</div>`;
+                return;
+            }
+            container.innerHTML = campaigns.map(c => `
+                <div class="p-2.5 rounded bg-surface2 border border-slate-700/80 space-y-1">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-white">${c.name || c.campaign_id}</span>
+                        <span class="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 text-[9px] font-bold uppercase">${c.status}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400">${c.source || 'operator_console'}</div>
+                </div>
+            `).join("");
+        } catch (_) {
+            container.innerHTML = `<div class="text-slate-500 italic p-2">Failed to load campaigns.</div>`;
+        }
+    },
+
+    async loadWorkers() {
+        const container = document.getElementById("drawer-workers-list");
+        if (!container) return;
+        try {
+            const workers = await AlAmrAPI.listWorkers();
+            if (!workers || workers.length === 0) {
+                container.innerHTML = `<div class="text-slate-500 italic p-3">No active cloud worker leases. All tasks running ephemerally.</div>`;
+                return;
+            }
+            container.innerHTML = workers.map(w => `
+                <div class="p-2 rounded bg-surface2 border border-slate-800 text-[11px]">
+                    <div class="flex justify-between font-bold text-slate-200">
+                        <span>Worker ${w.worker_id}</span>
+                        <span class="text-emerald-400">${w.status}</span>
+                    </div>
+                </div>
+            `).join("");
+        } catch (_) {
+            container.innerHTML = `<div class="text-slate-500 italic p-2">Workers telemetry unavailable.</div>`;
+        }
+    },
+
+    async loadAuditLogs() {
+        const container = document.getElementById("drawer-audit-list");
+        if (!container) return;
+        try {
+            const logs = await AlAmrAPI.listTelemetry();
+            if (!logs || logs.length === 0) {
+                container.innerHTML = `<div class="text-slate-500 italic p-3">No audit records yet.</div>`;
+                return;
+            }
+            container.innerHTML = logs.slice(0, 20).map(l => `
+                <div class="p-2 rounded bg-surface2 border border-slate-800 text-[10px] font-mono">
+                    <span class="text-slate-500">${new Date(l.timestamp).toLocaleTimeString()}</span>
+                    <span class="text-cyan-300 ml-1 font-bold">[${l.event || l.source}]</span>
+                    <span class="text-slate-300 ml-1">${l.details || l.message || ''}</span>
+                </div>
+            `).join("");
+        } catch (_) {
+            container.innerHTML = `<div class="text-slate-500 italic p-2">Audit logs unavailable.</div>`;
+        }
+    }
+};
+
 // Bootstrap application shell on DOMContentLoaded
 window.addEventListener("DOMContentLoaded", () => {
     window.AlAmrShellInstance = new AlAmrShell();
+    if (window.StudioWorkspace) {
+        window.StudioWorkspace.init();
+    }
 });
