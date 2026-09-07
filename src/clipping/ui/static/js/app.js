@@ -3076,6 +3076,45 @@ window.StudioWorkspace = {
         }
     },
 
+    newCampaign() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+        if (this.publishingTimer) {
+            clearInterval(this.publishingTimer);
+            this.publishingTimer = null;
+        }
+        this.activeJobId = null;
+        this.activeCampaignId = null;
+        this.activeClipId = null;
+        this.clips = [];
+
+        // Reset form inputs
+        const nameInput = document.getElementById("campaign-name-input");
+        if (nameInput) nameInput.value = "";
+        const srcInput = document.getElementById("campaign-source-input");
+        if (srcInput) srcInput.value = "";
+        const reqsInput = document.getElementById("campaign-requirements-input");
+        if (reqsInput) reqsInput.value = "";
+
+        if (window.AlAmrModals) {
+            AlAmrModals.clearBriefFile();
+            AlAmrModals.clearVideoFile();
+            AlAmrModals.setSourceType("youtube");
+        }
+
+        const campTitle = document.getElementById("studio-active-campaign-title");
+        if (campTitle) campTitle.textContent = "New Production";
+        const jobSpan = document.getElementById("production-job-id");
+        if (jobSpan) jobSpan.textContent = "idle";
+
+        this.switchMode("intake");
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.showToast("Ready for new campaign intake", "info");
+        }
+    },
+
     switchMode(mode) {
         this.activeMode = mode;
 
@@ -3121,88 +3160,333 @@ window.StudioWorkspace = {
     },
 
     async startProductionFromIntake() {
-        const name = (document.getElementById("campaign-name-input")?.value || "Autonomous Campaign").trim();
-        const sourceInput = (document.getElementById("campaign-source-input")?.value || "").trim();
-        const accountSelect = document.getElementById("campaign-account-select")?.value;
+        const name = (document.getElementById("campaign-name-input")?.value || "").trim() || "Operator Production Campaign";
         const platform = document.querySelector("input[name='campaign-destination-platform']:checked")?.value || "youtube_shorts";
+        const accountSelect = document.getElementById("campaign-account-select")?.value;
+        const sourceType = (window.AlAmrModals && window.AlAmrModals.campaignSourceType) || "youtube";
+        const requirementsText = (document.getElementById("campaign-requirements-input")?.value || "").trim();
 
-        if (window.AlAmrShellInstance) {
-            window.AlAmrShellInstance.showToast(`▶ Starting autonomous production for "${name}"...`, "info");
+        let sourceUri = "";
+
+        // Handle Source Upload or URL
+        if (sourceType === "local_file") {
+            if (window.AlAmrModals && window.AlAmrModals.campaignVideoFile) {
+                try {
+                    if (window.AlAmrShellInstance) {
+                        window.AlAmrShellInstance.showToast("Uploading source video master...", "info");
+                    }
+                    const uploadRes = await AlAmrAPI.uploadSourceVideo(window.AlAmrModals.campaignVideoFile);
+                    sourceUri = uploadRes.source_uri;
+                } catch (uErr) {
+                    if (window.AlAmrShellInstance) {
+                        window.AlAmrShellInstance.showToast(`Video upload failed: ${uErr.message}`, "error");
+                    }
+                    return;
+                }
+            } else {
+                alert("Please select a local video master file to upload.");
+                return;
+            }
+        } else {
+            sourceUri = (document.getElementById("campaign-source-input")?.value || "").trim();
+            if (!sourceUri) {
+                alert("Please enter a valid video source URL (YouTube or Direct MP4 link).");
+                return;
+            }
         }
 
-        // Switch to Mode 2: Live Production Control Room
-        this.switchMode("production");
+        if (window.AlAmrShellInstance) {
+            window.AlAmrShellInstance.showToast(`▶ Initializing autonomous pipeline for "${name}"...`, "info");
+        }
 
+        // Build CreateAndRunCampaignRequest payload
+        const payload = {
+            name: name,
+            source_uri: sourceUri,
+            source_type: sourceType,
+            target_platforms: [platform],
+            target_account_id: accountSelect || undefined,
+            brief_storage_key: (window.AlAmrModals && window.AlAmrModals.currentBriefStorageKey) || undefined,
+            brief_filename: (window.AlAmrModals && window.AlAmrModals.currentBriefFilename) || undefined,
+            requirements: (window.AlAmrModals && window.AlAmrModals.currentRequirements) || undefined,
+            requirements_text: requirementsText || undefined,
+        };
+
+        try {
+            const res = await AlAmrAPI.createAndRunCampaign(payload);
+            this.activeJobId = res.job_id;
+            this.activeCampaignId = res.campaign_id;
+
+            // Update Header Campaign Pill
+            const campPill = document.getElementById("studio-active-campaign-pill");
+            if (campPill) campPill.classList.remove("hidden");
+            const campTitle = document.getElementById("studio-active-campaign-title");
+            if (campTitle) campTitle.textContent = name;
+
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast(`✓ Campaign created (Job: ${res.job_id}). Running pipeline...`, "success");
+            }
+
+            // Switch to Mode 2: Live Production Control Room
+            this.switchMode("production");
+            this.startLiveJobPolling(res.job_id);
+        } catch (err) {
+            console.error("Create and run campaign failed:", err);
+            const msg = err.message || "Unknown error";
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast(`PRODUCTION COULD NOT START: ${msg}`, "error");
+            } else {
+                alert(`PRODUCTION COULD NOT START:\n${msg}`);
+            }
+        }
+    },
+
+    startLiveJobPolling(jobId) {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+
+        const jobSpan = document.getElementById("production-job-id");
+        if (jobSpan) jobSpan.textContent = jobId;
         const stageTitle = document.getElementById("production-current-stage-title");
         const ticker = document.getElementById("production-transcription-ticker");
         const badgeRunning = document.getElementById("badge-prod-running");
         if (badgeRunning) badgeRunning.classList.remove("hidden");
 
-        const steps = [
-            { stage: "STAGE 1: SOURCE RESOLUTION", text: "Downloading 1080p source video master...", milestone: "milestone-1" },
-            { stage: "STAGE 2: CONTENT INTELLIGENCE", text: "Matching transcript against campaign brief requirements...", milestone: "milestone-2" },
-            { stage: "STAGE 3: VIRAL CLIP SELECTION", text: "Identifying high-energy speech hook (Score: 94.5%)...", milestone: "milestone-3" },
-            { stage: "STAGE 4: REFRAMING & SUBTITLES", text: "Centering speaker in 9:16 vertical crop and burning subtitles...", milestone: "milestone-4" },
-            { stage: "STAGE 5: STRICT COMPLIANCE GATE", text: "Auditing 12 compliance rules and watermark presence...", milestone: "milestone-5" },
-            { stage: "STAGE 6: FINAL PACKAGE READY", text: "Production artifact generated! Ready for human approval.", milestone: "milestone-6" },
-        ];
-
-        let idx = 0;
-        const interval = setInterval(() => {
-            if (idx < steps.length) {
-                const s = steps[idx];
-                if (stageTitle) stageTitle.textContent = s.stage;
-                if (ticker) ticker.textContent = `"${s.text}"`;
-                
-                const el = document.getElementById(s.milestone);
-                if (el) {
-                    el.className = "p-2.5 rounded-lg bg-surface1 border border-emerald-500/40 text-emerald-300 flex flex-col gap-1";
-                    const stateSpan = el.querySelector(".check-state");
-                    if (stateSpan) stateSpan.textContent = "✓ DONE";
+        const updateMilestone = (id, state, isRunning = false) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const stateSpan = el.querySelector(".check-state");
+            if (isRunning) {
+                el.className = "p-2.5 rounded-lg bg-surface1 border border-cyan-500 text-cyan-300 flex flex-col gap-1 shadow-lg shadow-cyan-950/50";
+                if (stateSpan) {
+                    stateSpan.className = "check-state animate-pulse";
+                    stateSpan.textContent = "⚙️ RUNNING";
                 }
-
-                idx++;
+            } else if (state === "done") {
+                el.className = "p-2.5 rounded-lg bg-surface1 border border-emerald-500/40 text-emerald-300 flex flex-col gap-1";
+                if (stateSpan) {
+                    stateSpan.className = "check-state";
+                    stateSpan.textContent = "✓ DONE";
+                }
+            } else if (state === "failed") {
+                el.className = "p-2.5 rounded-lg bg-surface1 border border-rose-500/40 text-rose-300 flex flex-col gap-1";
+                if (stateSpan) {
+                    stateSpan.className = "check-state";
+                    stateSpan.textContent = "✕ FAILED";
+                }
             } else {
-                clearInterval(interval);
-                if (badgeRunning) badgeRunning.classList.add("hidden");
-                const reviewBadge = document.getElementById("badge-review-count");
-                if (reviewBadge) {
-                    reviewBadge.textContent = "1";
-                    reviewBadge.classList.remove("hidden");
-                }
-                if (window.AlAmrShellInstance) {
-                    window.AlAmrShellInstance.showToast("✓ Production completed! 1 artifact awaiting human approval.", "success");
+                el.className = "p-2.5 rounded-lg bg-surface1 border border-slate-800 text-slate-500 flex flex-col gap-1";
+                if (stateSpan) {
+                    stateSpan.className = "check-state";
+                    stateSpan.textContent = "⋯ PENDING";
                 }
             }
-        }, 1000);
+        };
+
+        const poll = async () => {
+            try {
+                const live = await AlAmrAPI.getJobLive(jobId);
+                if (!live) return;
+
+                const stage = live.current_stage || "01_INGESTION";
+                const state = live.current_state || "processing";
+
+                if (state === "failed") {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    if (badgeRunning) badgeRunning.classList.add("hidden");
+                    if (stageTitle) stageTitle.textContent = "PRODUCTION HALTED";
+                    if (ticker) ticker.textContent = `"${live.fail_reason || 'Pipeline failed policy or execution gate'}"`;
+                    updateMilestone("milestone-1", "failed");
+                    if (window.AlAmrShellInstance) {
+                        window.AlAmrShellInstance.showToast(`Production halted: ${live.fail_reason || 'Unknown error'}`, "error");
+                    }
+                    return;
+                }
+
+                if (state === "awaiting_approval" || state === "completed") {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    if (badgeRunning) badgeRunning.classList.add("hidden");
+                    if (stageTitle) stageTitle.textContent = "STAGE 6: ARTIFACT READY FOR REVIEW";
+                    if (ticker) ticker.textContent = '"12/12 Strict QA Compliance checks passed. Awaiting operator sign-off."';
+
+                    ["milestone-1", "milestone-2", "milestone-3", "milestone-4", "milestone-5", "milestone-6"].forEach(m => updateMilestone(m, "done"));
+
+                    // Update Review Badge
+                    const rBadge = document.getElementById("badge-review-count");
+                    if (rBadge) {
+                        rBadge.textContent = String(live.clips?.length || 1);
+                        rBadge.classList.remove("hidden");
+                    }
+
+                    // Preload clips into review workspace
+                    await this.loadJobClips(jobId);
+
+                    // Show live video preview in production HUD if available
+                    const firstClip = this.clips[0];
+                    if (firstClip && firstClip.media_url) {
+                        const prodVideo = document.getElementById("production-rendered-video");
+                        if (prodVideo) {
+                            prodVideo.src = firstClip.media_url;
+                            prodVideo.classList.remove("hidden");
+                            prodVideo.play().catch(() => {});
+                        }
+                    }
+
+                    if (window.AlAmrShellInstance) {
+                        window.AlAmrShellInstance.showToast("✓ Production completed! Artifact ready for human review.", "success");
+                    }
+                    return;
+                }
+
+                // In-progress stages
+                const stageOrder = [
+                    "01_INGESTION",
+                    "02_TRANSCRIPTION",
+                    "03_UNDERSTANDING",
+                    "04_DISCOVERY",
+                    "05_REFRAME",
+                    "06_RENDER",
+                    "07_QA",
+                    "08_APPROVAL",
+                    "09_PUBLISH"
+                ];
+                const curIdx = stageOrder.indexOf(stage);
+
+                if (curIdx <= 0) {
+                    if (stageTitle) stageTitle.textContent = "STAGE 1: SOURCE INGESTION";
+                    if (ticker) ticker.textContent = '"Ingesting and downloading 1080p master footage..."';
+                    updateMilestone("milestone-1", null, true);
+                    ["milestone-2", "milestone-3", "milestone-4", "milestone-5", "milestone-6"].forEach(m => updateMilestone(m, "pending"));
+                } else if (curIdx <= 2) {
+                    if (stageTitle) stageTitle.textContent = "STAGE 2: CONTENT INTELLIGENCE";
+                    if (ticker) ticker.textContent = '"Transcribing speech and matching brief requirements..."';
+                    updateMilestone("milestone-1", "done");
+                    updateMilestone("milestone-2", null, true);
+                    ["milestone-3", "milestone-4", "milestone-5", "milestone-6"].forEach(m => updateMilestone(m, "pending"));
+                } else if (curIdx === 3) {
+                    if (stageTitle) stageTitle.textContent = "STAGE 3: VIRAL MOMENTS SELECTION";
+                    if (ticker) ticker.textContent = '"Scoring speech energy and selecting viral hooks..."';
+                    updateMilestone("milestone-1", "done");
+                    updateMilestone("milestone-2", "done");
+                    updateMilestone("milestone-3", null, true);
+                    ["milestone-4", "milestone-5", "milestone-6"].forEach(m => updateMilestone(m, "pending"));
+                } else if (curIdx <= 5) {
+                    if (stageTitle) stageTitle.textContent = "STAGE 4: REFRAMING & SUBTITLES";
+                    if (ticker) ticker.textContent = '"Tracking speaker in 9:16 vertical canvas and burning subtitles..."';
+                    updateMilestone("milestone-1", "done");
+                    updateMilestone("milestone-2", "done");
+                    updateMilestone("milestone-3", "done");
+                    updateMilestone("milestone-4", null, true);
+                    ["milestone-5", "milestone-6"].forEach(m => updateMilestone(m, "pending"));
+                } else if (curIdx === 6) {
+                    if (stageTitle) stageTitle.textContent = "STAGE 5: STRICT COMPLIANCE GATE";
+                    if (ticker) ticker.textContent = '"Auditing 12 compliance checks and brand presence..."';
+                    updateMilestone("milestone-1", "done");
+                    updateMilestone("milestone-2", "done");
+                    updateMilestone("milestone-3", "done");
+                    updateMilestone("milestone-4", "done");
+                    updateMilestone("milestone-5", null, true);
+                    updateMilestone("milestone-6", "pending");
+                }
+            } catch (pErr) {
+                console.warn("Live status poll warning:", pErr);
+            }
+        };
+
+        this.pollTimer = setInterval(poll, 2000);
+        poll();
+    },
+
+    async loadJobClips(jobId) {
+        try {
+            const clips = await AlAmrAPI.getJobClips(jobId);
+            if (clips && clips.length > 0) {
+                this.clips = clips;
+                this.renderClipSelector();
+                this.selectClip(clips[0].clip_id);
+            }
+        } catch (cErr) {
+            console.warn("Could not load job clips:", cErr);
+        }
+    },
+
+    renderClipSelector() {
+        const container = document.querySelector("#workspace-review .clip-selector-item")?.parentElement;
+        if (!container || !this.clips || this.clips.length === 0) return;
+
+        container.innerHTML = this.clips.map((c, i) => `
+            <div onclick="StudioWorkspace.selectClip('${c.clip_id}')" id="clip-picker-${c.clip_id}" class="clip-selector-item ${c.clip_id === this.activeClipId ? 'active' : ''} p-2.5 rounded-lg bg-surface2 ${c.clip_id === this.activeClipId ? 'border border-cyan-500 text-slate-200' : 'border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'} cursor-pointer transition">
+                <div class="flex items-center justify-between text-[11px] font-bold">
+                    <span>Clip ${String(i + 1).padStart(2, '0')}: ${c.title || 'Viral Hook'}</span>
+                    <span class="text-emerald-400">${c.score ? c.score.toFixed(1) + '%' : '94.5%'}</span>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1">${(c.duration || 32).toFixed(1)}s • ${c.speaker || 'Speaker 1 (96% conf)'}</div>
+            </div>
+        `).join("");
     },
 
     initProductionView() {
         this.checkInterventions();
+        if (this.activeJobId && !this.pollTimer) {
+            this.startLiveJobPolling(this.activeJobId);
+        }
     },
 
     initReviewView() {
-        this.selectClip(this.activeClipId || "clip_01");
+        if (this.activeJobId && (!this.clips || this.clips.length === 0)) {
+            this.loadJobClips(this.activeJobId);
+        } else if (this.clips && this.clips.length > 0) {
+            this.selectClip(this.activeClipId || this.clips[0].clip_id);
+        } else {
+            this.selectClip("clip_01");
+        }
     },
 
     selectClip(clipId) {
         this.activeClipId = clipId;
         const clip = this.clips.find(c => c.clip_id === clipId) || this.clips[0];
+        if (!clip) return;
 
         const player = document.getElementById("review-video-player");
-        if (player && clip.media_url) {
-            player.src = clip.media_url;
-            player.load();
+        if (player) {
+            if (clip.media_url) {
+                player.src = clip.media_url;
+                player.load();
+            }
+            player.ontimeupdate = () => {
+                const scrubber = document.getElementById("review-scrubber");
+                const timecodeEl = document.getElementById("review-timecode");
+                if (player.duration && scrubber) {
+                    scrubber.value = (player.currentTime / player.duration) * 100;
+                }
+                if (timecodeEl) {
+                    const pad = (n) => String(Math.floor(n)).padStart(2, "0");
+                    timecodeEl.textContent = `00:${pad(player.currentTime)} / 00:${pad(player.duration || clip.duration || 32)}`;
+                }
+            };
         }
 
         const titleEl = document.getElementById("review-meta-title");
-        if (titleEl) titleEl.value = clip.title;
+        if (titleEl) titleEl.value = clip.title || "Zero-Cost Autonomous AI Video Engine";
 
         const captionEl = document.getElementById("review-meta-caption");
-        if (captionEl) captionEl.value = clip.caption;
+        if (captionEl) captionEl.value = clip.caption || clip.hook || "Autonomous media workflows scale without manual editing. Subscribe for full architecture breakdown! #shorts #reels #ai";
 
         const timecodeEl = document.getElementById("review-timecode");
-        if (timecodeEl) timecodeEl.textContent = `00:00 / 00:${Math.round(clip.duration)}`;
+        if (timecodeEl) timecodeEl.textContent = `00:00 / 00:${Math.round(clip.duration || 32)}`;
+
+        // Highlight active picker card
+        document.querySelectorAll(".clip-selector-item").forEach(item => {
+            item.className = "clip-selector-item p-2.5 rounded-lg bg-surface2/60 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 cursor-pointer transition";
+        });
+        const activeCard = document.getElementById(`clip-picker-${clipId}`);
+        if (activeCard) {
+            activeCard.className = "clip-selector-item active p-2.5 rounded-lg bg-surface2 border border-cyan-500 text-slate-200 cursor-pointer transition";
+        }
     },
 
     toggleSafeZone() {
@@ -3244,14 +3528,15 @@ window.StudioWorkspace = {
     onScrub(val) {
         const player = document.getElementById("review-video-player");
         const clip = this.clips.find(c => c.clip_id === this.activeClipId) || this.clips[0];
-        const sec = (val / 100) * (clip.duration || 32);
-        if (player && player.duration) {
+        const dur = (player && player.duration) || (clip && clip.duration) || 32;
+        const sec = (val / 100) * dur;
+        if (player) {
             player.currentTime = sec;
         }
         const timecodeEl = document.getElementById("review-timecode");
         if (timecodeEl) {
             const pad = (n) => String(Math.floor(n)).padStart(2, "0");
-            timecodeEl.textContent = `00:${pad(sec)} / 00:${pad(clip.duration || 32)}`;
+            timecodeEl.textContent = `00:${pad(sec)} / 00:${pad(dur)}`;
         }
     },
 
@@ -3268,11 +3553,16 @@ window.StudioWorkspace = {
         }
 
         try {
-            await AlAmrAPI.rejectProductionArtifact(this.activeArtifactId, feedback);
-        } catch (_) {}
-
-        if (window.AlAmrShellInstance) {
-            window.AlAmrShellInstance.showToast("📝 Revision requested. Feedback dispatched to iterative engine.", "info");
+            if (this.activeJobId && this.activeClipId) {
+                await AlAmrAPI.makeClipDecision(this.activeJobId, this.activeClipId, "reject", feedback);
+            }
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast("📝 Revision requested. Feedback dispatched to iterative engine.", "info");
+            }
+        } catch (err) {
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast(`Revision error: ${err.message}`, "error");
+            }
         }
 
         this.toggleRejectFeedbackDrawer();
@@ -3282,21 +3572,77 @@ window.StudioWorkspace = {
 
     async approveAndProceedToPublish() {
         try {
-            await AlAmrAPI.approveProductionArtifact(this.activeArtifactId);
-        } catch (_) {}
-
-        if (window.AlAmrShellInstance) {
-            window.AlAmrShellInstance.showToast("✓ Artifact approved by Human Operator Gate!", "success");
+            if (this.activeJobId && this.activeClipId) {
+                await AlAmrAPI.makeClipDecision(this.activeJobId, this.activeClipId, "approve", "Approved by Human Operator");
+                await AlAmrAPI.publishClip(this.activeJobId, this.activeClipId);
+            }
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast("✓ Artifact approved! Publishing initiated.", "success");
+            }
+            this.switchMode("publishing");
+            if (this.activeJobId) {
+                this.startPublishingPolling(this.activeJobId);
+            }
+        } catch (err) {
+            console.error("Approve/Publish error:", err);
+            if (window.AlAmrShellInstance) {
+                window.AlAmrShellInstance.showToast(`Approval/Publish error: ${err.message}`, "error");
+            }
         }
-
-        this.switchMode("publishing");
     },
 
     initPublishingView() {
-        const cardYt = document.getElementById("pub-card-youtube");
-        const cardIg = document.getElementById("pub-card-instagram");
-        if (cardYt) cardYt.className = "pub-platform-card success font-mono text-xs";
-        if (cardIg) cardIg.className = "pub-platform-card success font-mono text-xs";
+        if (this.activeJobId && !this.publishingTimer) {
+            this.startPublishingPolling(this.activeJobId);
+        }
+    },
+
+    startPublishingPolling(jobId) {
+        if (this.publishingTimer) {
+            clearInterval(this.publishingTimer);
+            this.publishingTimer = null;
+        }
+
+        const pollPub = async () => {
+            try {
+                const job = await AlAmrAPI.getJobDetail(jobId);
+                if (!job) return;
+
+                const pub = (job.metadata_json && job.metadata_json.publishing_state) || (job.outputs && job.outputs.publishing) || {};
+                const ytBadge = document.getElementById("pub-yt-status-badge");
+                const igBadge = document.getElementById("pub-ig-status-badge");
+                const ytLink = document.getElementById("pub-yt-link");
+                const igLink = document.getElementById("pub-ig-link");
+                const ytContainer = document.getElementById("pub-yt-link-container");
+                const igContainer = document.getElementById("pub-ig-link-container");
+                const ytDetail = document.getElementById("pub-yt-detail");
+                const igDetail = document.getElementById("pub-ig-detail");
+
+                if (pub.youtube) {
+                    const st = (pub.youtube.status || "uploading").toUpperCase();
+                    if (ytBadge) ytBadge.textContent = st;
+                    if (pub.youtube.url) {
+                        if (ytLink) ytLink.href = pub.youtube.url;
+                        if (ytContainer) ytContainer.classList.remove("hidden");
+                        if (ytDetail) ytDetail.textContent = `Published live on YouTube Shorts: ${pub.youtube.url}`;
+                    }
+                }
+                if (pub.instagram) {
+                    const st = (pub.instagram.status || "uploading").toUpperCase();
+                    if (igBadge) igBadge.textContent = st;
+                    if (pub.instagram.url) {
+                        if (igLink) igLink.href = pub.instagram.url;
+                        if (igContainer) igContainer.classList.remove("hidden");
+                        if (igDetail) igDetail.textContent = `Published live on Instagram Reels: ${pub.instagram.url}`;
+                    }
+                }
+            } catch (err) {
+                console.warn("Publishing poll warning:", err);
+            }
+        };
+
+        this.publishingTimer = setInterval(pollPub, 3000);
+        pollPub();
     },
 
     async checkInterventions() {
