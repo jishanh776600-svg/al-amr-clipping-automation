@@ -54,14 +54,18 @@ class SourceResolutionEngine:
         campaign_requirements: Optional[CampaignRequirements] = None,
         whop_discovered_urls: Optional[List[str]] = None,
         campaign_repo_urls: Optional[List[str]] = None,
+        production_mode: bool = False,
     ) -> List[SourceCandidate]:
         """
         Builds a ranked list of source candidates based on strict deterministic priority:
         1. Explicit operator-uploaded source
         2. Explicit operator-provided source URL
-        3. Valid source URL specified by campaign brief
-        4. Valid source discovered by Whop campaign discovery
-        5. Existing legitimate campaign repository source
+        3. Valid source URL specified by campaign brief (discovery/audit only)
+        4. Valid source discovered by Whop campaign discovery (discovery/audit only)
+        5. Existing legitimate campaign repository source (discovery/audit only)
+
+        In production_mode, automatic discovery and repository sources (Whop / Campaign Repo)
+        are strictly disabled. Production execution requires an operator-provided source.
         """
         candidates: List[SourceCandidate] = []
 
@@ -119,39 +123,41 @@ class SourceResolutionEngine:
                     )
 
 
-        # 4. Whop Discovered URLs
-        if whop_discovered_urls:
-            for w_url in whop_discovered_urls:
-                if w_url and w_url.strip():
-                    clean_w_url = w_url.strip()
-                    candidates.append(
-                        SourceCandidate(
-                            candidate_id=f"cand_whop_{uuid.uuid4().hex[:6]}",
-                            priority_type=SourceCandidatePriority.WHOP_DISCOVERY,
-                            priority_rank=int(SourceCandidatePriority.WHOP_DISCOVERY),
-                            uri=clean_w_url,
-                            is_valid=True,
-                            provenance={"origin": "whop_discovery", "url": clean_w_url},
-                            selection_rationale="Source URL discovered from Whop campaign terms (Priority 4)",
+        # In production_mode, automatic discovery and repository sources are disabled
+        if not production_mode:
+            # 4. Whop Discovered URLs
+            if whop_discovered_urls:
+                for w_url in whop_discovered_urls:
+                    if w_url and w_url.strip():
+                        clean_w_url = w_url.strip()
+                        candidates.append(
+                            SourceCandidate(
+                                candidate_id=f"cand_whop_{uuid.uuid4().hex[:6]}",
+                                priority_type=SourceCandidatePriority.WHOP_DISCOVERY,
+                                priority_rank=int(SourceCandidatePriority.WHOP_DISCOVERY),
+                                uri=clean_w_url,
+                                is_valid=True,
+                                provenance={"origin": "whop_discovery", "url": clean_w_url},
+                                selection_rationale="Source URL discovered from Whop campaign terms (Priority 4)",
+                            )
                         )
-                    )
 
-        # 5. Campaign Repository URLs
-        if campaign_repo_urls:
-            for r_url in campaign_repo_urls:
-                if r_url and r_url.strip():
-                    clean_r_url = r_url.strip()
-                    candidates.append(
-                        SourceCandidate(
-                            candidate_id=f"cand_repo_{uuid.uuid4().hex[:6]}",
-                            priority_type=SourceCandidatePriority.CAMPAIGN_REPOSITORY,
-                            priority_rank=int(SourceCandidatePriority.CAMPAIGN_REPOSITORY),
-                            uri=clean_r_url,
-                            is_valid=True,
-                            provenance={"origin": "campaign_repository", "url": clean_r_url},
-                            selection_rationale="Existing campaign repository source material (Priority 5)",
+            # 5. Campaign Repository URLs
+            if campaign_repo_urls:
+                for r_url in campaign_repo_urls:
+                    if r_url and r_url.strip():
+                        clean_r_url = r_url.strip()
+                        candidates.append(
+                            SourceCandidate(
+                                candidate_id=f"cand_repo_{uuid.uuid4().hex[:6]}",
+                                priority_type=SourceCandidatePriority.CAMPAIGN_REPOSITORY,
+                                priority_rank=int(SourceCandidatePriority.CAMPAIGN_REPOSITORY),
+                                uri=clean_r_url,
+                                is_valid=True,
+                                provenance={"origin": "campaign_repository", "url": clean_r_url},
+                                selection_rationale="Existing campaign repository source material (Priority 5)",
+                            )
                         )
-                    )
 
         # Sort candidates deterministically by priority rank
         candidates.sort(key=lambda c: c.priority_rank)
@@ -219,17 +225,38 @@ class SourceResolutionEngine:
         whop_discovered_urls: Optional[List[str]] = None,
         campaign_repo_urls: Optional[List[str]] = None,
         working_dir: Optional[str] = None,
+        production_mode: bool = False,
     ) -> SourceResolutionResult:
         """
         Main entrypoint: builds candidate hierarchy, evaluates restrictions,
         probes/downloads winning candidate, and returns a verified SourceResolutionResult.
         """
+        # In production_mode, automatic discovery and repository sources are prohibited
+        if production_mode:
+            has_upload = bool(operator_uploaded_path and operator_uploaded_path.strip())
+            has_url = bool(operator_source_url and operator_source_url.strip())
+            if not has_upload and not has_url:
+                return SourceResolutionResult(
+                    source_type="none",
+                    original_uri="",
+                    resolved_uri="",
+                    source_access_status=SourceAccessStatus.RESTRICTED,
+                    failure_reason=(
+                        "No valid operator-provided source. Production execution requires an explicit operator "
+                        "YouTube URL, direct video URL, or uploaded local file. Automatic Whop and repository "
+                        "source discovery is disabled."
+                    ),
+                    extraction_method="rule_enforcement",
+                    selection_rationale="Production mode strictly requires an operator-provided source. Automatic source discovery is disabled.",
+                )
+
         ranked_candidates = self.build_candidate_list(
             operator_uploaded_path=operator_uploaded_path,
             operator_source_url=operator_source_url,
             campaign_requirements=campaign_requirements,
             whop_discovered_urls=whop_discovered_urls,
             campaign_repo_urls=campaign_repo_urls,
+            production_mode=production_mode,
         )
 
         if not ranked_candidates:

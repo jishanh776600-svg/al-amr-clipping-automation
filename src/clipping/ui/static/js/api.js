@@ -378,6 +378,47 @@ class AlAmrAPI {
             body: JSON.stringify({ source_uri: sourceUri, campaign_id: campaignId })
         });
     }
+
+    // 12. Autonomous Production & Review Queue
+    static async listProductionArtifacts(campaignId = null, reviewStatus = null) {
+        let url = "/api/production/artifacts";
+        const params = [];
+        if (campaignId) params.push(`campaign_id=${encodeURIComponent(campaignId)}`);
+        if (reviewStatus) params.push(`review_status=${encodeURIComponent(reviewStatus)}`);
+        if (params.length > 0) url += `?${params.join("&")}`;
+        return this.request(url);
+    }
+
+    static async getProductionArtifact(artifactId) {
+        return this.request(`/api/production/artifacts/${encodeURIComponent(artifactId)}`);
+    }
+
+    static async approveProductionArtifact(artifactId) {
+        return this.request(`/api/production/artifacts/${encodeURIComponent(artifactId)}/approve`, {
+            method: "POST",
+            body: JSON.stringify({})
+        });
+    }
+
+    static async rejectProductionArtifact(artifactId, feedback, requestedChanges = null) {
+        return this.request(`/api/production/artifacts/${encodeURIComponent(artifactId)}/reject`, {
+            method: "POST",
+            body: JSON.stringify({ feedback, requested_changes: requestedChanges })
+        });
+    }
+
+    static async listInterventions(campaignId = null) {
+        let url = "/api/production/interventions";
+        if (campaignId) url += `?campaign_id=${encodeURIComponent(campaignId)}`;
+        return this.request(url);
+    }
+
+    static async resumeIntervention(interventionId) {
+        return this.request(`/api/production/interventions/${encodeURIComponent(interventionId)}/resume`, {
+            method: "POST",
+            body: JSON.stringify({})
+        });
+    }
 }
 
 window.AlAmrAPI = AlAmrAPI;

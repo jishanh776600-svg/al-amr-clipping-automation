@@ -82,6 +82,14 @@ from clipping.contracts.source import (
     SourceCandidate,
     SourceResolutionResult,
 )
+from clipping.contracts.production import (
+    ProductionStatus,
+    ReviewStatus,
+    ProductionComplianceResult,
+    ProductionArtifact,
+    OperatorInterventionRecord,
+    RevisionRecord,
+)
 
 
 __all__ = [
@@ -149,5 +157,11 @@ __all__ = [
     "SourceAccessStatus",
     "SourceCandidate",
     "SourceResolutionResult",
+    "ProductionStatus",
+    "ReviewStatus",
+    "ProductionComplianceResult",
+    "ProductionArtifact",
+    "OperatorInterventionRecord",
+    "RevisionRecord",
 ]
 

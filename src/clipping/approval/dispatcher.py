@@ -123,6 +123,94 @@ class TelegramApprovalDispatcher:
                 )
             return False
 
+    async def _handle_production_callback(self, cb: Dict[str, Any]) -> bool:
+        data = cb.get("data", "")
+        if data.startswith("art:"):
+            parts = data.split(":")
+            if len(parts) >= 3:
+                action = parts[1]
+                artifact_id = parts[2]
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.telegram_review import TelegramReviewSystem
+                repo = ProductionRepository(storage_driver=self.storage)
+                review_sys = TelegramReviewSystem(repository=repo, transport=self.transport)
+                op_id = str(cb.get("from", {}).get("id", "telegram_operator"))
+                chat_id = cb.get("message", {}).get("chat", {}).get("id")
+
+                if action == "A":
+                    res = await review_sys.approve_artifact(artifact_id, operator_id=op_id)
+                    if cb.get("id"):
+                        await self.transport.answer_callback_query(cb["id"], text="✅ Clip APPROVED for publishing.")
+                    if chat_id:
+                        if res:
+                            await self.transport.send_message(chat_id, text=f"✅ Clip `{artifact_id}` has been APPROVED. Ready for publishing.")
+                        else:
+                            await self.transport.send_message(chat_id, text=f"⚠️ Cannot approve `{artifact_id}`: Blocker exists or artifact not found.")
+                    return True
+                elif action == "R":
+                    await review_sys.reject_artifact_for_revision(artifact_id, operator_id=op_id, feedback="Operator requested revision via Telegram")
+                    if cb.get("id"):
+                        await self.transport.answer_callback_query(cb["id"], text="❌ Clip marked for revision.")
+                    if chat_id:
+                        await self.transport.send_message(chat_id, text=f"📝 Clip `{artifact_id}` marked for REVISION. To add specific feedback, send: `/reject {artifact_id} <details>`")
+                    return True
+        elif data.startswith("res:"):
+            parts = data.split(":")
+            if len(parts) >= 2:
+                inter_id = parts[1]
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.challenge_escalation import ChallengeEscalationManager
+                repo = ProductionRepository(storage_driver=self.storage)
+                escalator = ChallengeEscalationManager(repository=repo, transport=self.transport)
+                chat_id = cb.get("message", {}).get("chat", {}).get("id")
+                await escalator.resume(inter_id, chat_id=chat_id)
+                if cb.get("id"):
+                    await self.transport.answer_callback_query(cb["id"], text="▶️ Checkpoint resumed.")
+                return True
+        return False
+
+    async def _handle_production_command(self, user_id: Optional[int], chat_id: Optional[int], text: str) -> bool:
+        clean = text.strip()
+        if clean.lower().startswith("/approve"):
+            parts = clean.split(maxsplit=1)
+            if len(parts) >= 2:
+                art_id = parts[1].strip()
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.telegram_review import TelegramReviewSystem
+                repo = ProductionRepository(storage_driver=self.storage)
+                review_sys = TelegramReviewSystem(repository=repo, transport=self.transport)
+                res = await review_sys.approve_artifact(art_id, operator_id=str(user_id or "telegram_operator"))
+                if chat_id:
+                    if res:
+                        await self.transport.send_message(chat_id, text=f"✅ Clip `{art_id}` APPROVED. Status is now READY FOR PUBLISHING.")
+                    else:
+                        await self.transport.send_message(chat_id, text=f"❌ Could not approve `{art_id}`. Check ID or compliance blockers.")
+                return True
+        elif clean.lower().startswith("/reject"):
+            parts = clean.split(maxsplit=2)
+            if len(parts) >= 2:
+                art_id = parts[1].strip()
+                fb = parts[2].strip() if len(parts) > 2 else "Changes requested by operator"
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.telegram_review import TelegramReviewSystem
+                repo = ProductionRepository(storage_driver=self.storage)
+                review_sys = TelegramReviewSystem(repository=repo, transport=self.transport)
+                await review_sys.reject_artifact_for_revision(art_id, operator_id=str(user_id or "telegram_operator"), feedback=fb)
+                if chat_id:
+                    await self.transport.send_message(chat_id, text=f"📝 Clip `{art_id}` marked REVISION REQUIRED with feedback: '{fb}'.")
+                return True
+        elif clean.lower().startswith("/resume"):
+            parts = clean.split(maxsplit=1)
+            if len(parts) >= 2:
+                inter_id = parts[1].strip()
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.challenge_escalation import ChallengeEscalationManager
+                repo = ProductionRepository(storage_driver=self.storage)
+                escalator = ChallengeEscalationManager(repository=repo, transport=self.transport)
+                await escalator.resume(inter_id, chat_id=chat_id)
+                return True
+        return False
+
     async def poll_and_process_once(self, limit: int = 100) -> int:
         """Polls up to limit updates, processes any callback queries or operator OTP messages, and checkpoints offset."""
         current_offset = await self.get_current_offset()
@@ -142,18 +230,28 @@ class TelegramApprovalDispatcher:
 
             if "callback_query" in update:
                 cb = update["callback_query"]
-                result = await self.service.handle_callback_query(cb)
-                logger.info("Processed callback query", result=result)
-                processed_callbacks += 1
+                cb_data = cb.get("data", "")
+                if cb_data.startswith("art:") or cb_data.startswith("res:"):
+                    handled = await self._handle_production_callback(cb)
+                    if handled:
+                        processed_callbacks += 1
+                else:
+                    result = await self.service.handle_callback_query(cb)
+                    logger.info("Processed callback query", result=result)
+                    processed_callbacks += 1
             elif "message" in update:
                 msg = update["message"]
                 text = msg.get("text", "")
                 user_id = msg.get("from", {}).get("id")
                 chat_id = msg.get("chat", {}).get("id")
                 if text:
-                    handled = await self._handle_otp_message(user_id=user_id, chat_id=chat_id, text=text)
-                    if handled:
+                    prod_handled = await self._handle_production_command(user_id=user_id, chat_id=chat_id, text=text)
+                    if prod_handled:
                         processed_callbacks += 1
+                    else:
+                        handled = await self._handle_otp_message(user_id=user_id, chat_id=chat_id, text=text)
+                        if handled:
+                            processed_callbacks += 1
 
         if highest_update_id > 0:
             # Checkpoint next offset (highest_update_id + 1)

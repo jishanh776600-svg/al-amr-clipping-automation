@@ -48,7 +48,7 @@ class SourceResolutionResult(BaseModel):
 
     source_type: str = Field(..., description="Detected type: youtube, direct_url, gdrive, local_file, custom")
     original_uri: str = Field(..., description="Original URI as entered or extracted")
-    resolved_uri: str = Field(..., description="Sanitized, canonical URI or storage reference")
+    resolved_uri: str = Field(default="", description="Sanitized, canonical URI or storage reference")
     local_storage_path: Optional[str] = Field(default=None, description="Local cached or working file path")
     title: Optional[str] = Field(default=None, description="Video title if retrievable")
     duration: Optional[float] = Field(default=None, description="Duration in seconds")

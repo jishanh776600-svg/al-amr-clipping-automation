@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -90,7 +90,9 @@ class BrandingRequirements(BaseModel):
     """5. Branding, watermark, and caption requirements."""
     required_logo: Optional[str] = None
     watermark_requirements: Optional[str] = None
-    required_watermark: Optional[str] = None
+    required_watermark: Optional[Union[str, bool]] = None
+    watermark_position: Optional[str] = None
+    watermark_asset_url: Optional[str] = None
     branding_rules: List[str] = Field(default_factory=list)
     caption_subtitle_requirements: Optional[str] = None
     watermark_modality: RequirementModality = RequirementModality.UNKNOWN
@@ -100,12 +102,14 @@ class TextRequirements(BaseModel):
     """6. Text, hashtags, and CTA requirements."""
     required_hashtags: List[str] = Field(default_factory=list)
     prohibited_hashtags: List[str] = Field(default_factory=list)
+    prohibited_words: List[str] = Field(default_factory=list)
     caption_requirements: Optional[str] = None
     title_requirements: Optional[str] = None
     call_to_action: Optional[str] = None
     cta_modality: RequirementModality = RequirementModality.UNKNOWN
     required_keywords: List[str] = Field(default_factory=list)
     mention_handles: List[str] = Field(default_factory=list)
+    subtitles_required: bool = False
 
 
 class PlatformRequirements(BaseModel):

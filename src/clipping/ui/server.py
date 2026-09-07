@@ -263,6 +263,15 @@ class CreateAndRunCampaignRequest(BaseModel):
     payout_budget: float = Field(default=500.0, ge=0.0)
 
 
+class RejectArtifactRequest(BaseModel):
+    feedback: str = Field(..., min_length=1, max_length=2000)
+    requested_changes: Optional[List[str]] = Field(default=None)
+
+
+class ResumeInterventionRequest(BaseModel):
+    notes: Optional[str] = Field(default=None)
+
+
 
 
 # --- READ ENDPOINTS ---
@@ -1885,6 +1894,35 @@ async def create_and_run_campaign_api(
                 storage=storage,
             )
             logger.info("Background pipeline finished execution", job_id=job_id, return_code=code)
+
+            # Produce production artifacts, evaluate strict compliance, and dispatch Telegram review package
+            try:
+                from clipping.production.repository import ProductionRepository
+                from clipping.production.engine import AutonomousProductionEngine
+                from clipping.production.telegram_review import TelegramReviewSystem
+                from clipping.approval.transport import HttpTelegramTransport, MockTelegramTransport
+
+                prod_repo = ProductionRepository(storage_driver=storage)
+                token = get_settings().TELEGRAM_BOT_TOKEN.get_secret_value() if get_settings().TELEGRAM_BOT_TOKEN else ""
+                t_transport = HttpTelegramTransport(bot_token=token) if token else MockTelegramTransport()
+                prod_engine = AutonomousProductionEngine(
+                    repository=prod_repo,
+                    telegram_review=TelegramReviewSystem(repository=prod_repo, transport=t_transport),
+                )
+                chat_ids = get_settings().get_allowed_telegram_chat_ids()
+                chat_id = chat_ids[0] if chat_ids else None
+
+                await prod_engine.produce_campaign_clips(
+                    campaign_id=campaign_id,
+                    source_result=source_res,
+                    requirements=active_requirements,
+                    target_account=acc_meta,
+                    target_platform=primary_platform_str,
+                    campaign_name=req.name,
+                    chat_id=chat_id,
+                )
+            except Exception as pe:
+                logger.warning("Production engine clip synthesis encountered non-fatal error", error=str(pe))
         except Exception as e:
             logger.exception("Background pipeline runner unhandled error", job_id=job_id, error=str(e))
             from clipping.agent.campaign.failures import ExecutionFailureClassifier
@@ -1922,6 +1960,126 @@ async def create_and_run_campaign_api(
         "message": f"Campaign '{req.name}' created and autonomous clipping pipeline started.",
     }
 
+
+
+
+# --- PRODUCTION QUEUE, COMPLIANCE & HUMAN APPROVAL ENDPOINTS ---
+
+@app.get("/api/production/artifacts")
+async def list_production_artifacts_api(
+    campaign_id: Optional[str] = None,
+    review_status: Optional[str] = None,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists production artifacts for human review and queue tracking."""
+    from clipping.production.repository import ProductionRepository
+    from clipping.contracts.production import ReviewStatus
+    repo = ProductionRepository(storage_driver=storage)
+    r_status = None
+    if review_status:
+        try:
+            r_status = ReviewStatus(review_status.upper())
+        except ValueError:
+            pass
+    artifacts = await repo.list_artifacts(campaign_id=campaign_id, review_status=r_status)
+    return [a.model_dump(mode="json") for a in artifacts]
+
+
+@app.get("/api/production/artifacts/{artifact_id}")
+async def get_production_artifact_api(
+    artifact_id: str,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Retrieves full artifact details including compliance checks and revision history."""
+    from clipping.production.repository import ProductionRepository
+    repo = ProductionRepository(storage_driver=storage)
+    art = await repo.get_artifact(artifact_id)
+    if not art:
+        raise HTTPException(status_code=404, detail=f"Production artifact '{artifact_id}' not found")
+    revisions = await repo.list_revisions_for_artifact(artifact_id)
+    data = art.model_dump(mode="json")
+    data["revisions"] = [r.model_dump(mode="json") for r in revisions]
+    return data
+
+
+@app.post("/api/production/artifacts/{artifact_id}/approve")
+async def approve_production_artifact_api(
+    artifact_id: str,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Human operator explicit approval gate: transitions artifact to APPROVED for publishing."""
+    from clipping.production.repository import ProductionRepository
+    from clipping.production.telegram_review import TelegramReviewSystem
+    repo = ProductionRepository(storage_driver=storage)
+    review_sys = TelegramReviewSystem(repository=repo)
+    updated = await review_sys.approve_artifact(artifact_id, operator_id=operator)
+    if not updated:
+        art = await repo.get_artifact(artifact_id)
+        if art and art.compliance_result and not art.compliance_result.is_compliant:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve artifact with compliance blockers: {'; '.join(art.compliance_result.blockers)}",
+            )
+        raise HTTPException(status_code=404, detail=f"Production artifact '{artifact_id}' not found")
+    return {"status": "success", "artifact": updated.model_dump(mode="json")}
+
+
+@app.post("/api/production/artifacts/{artifact_id}/reject")
+async def reject_production_artifact_api(
+    artifact_id: str,
+    req: RejectArtifactRequest,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Operator rejection: triggers immutable revision loop and stores feedback."""
+    from clipping.production.repository import ProductionRepository
+    from clipping.production.telegram_review import TelegramReviewSystem
+    repo = ProductionRepository(storage_driver=storage)
+    review_sys = TelegramReviewSystem(repository=repo)
+    updated, rev = await review_sys.reject_artifact_for_revision(
+        artifact_id=artifact_id,
+        operator_id=operator,
+        feedback=req.feedback,
+        requested_changes=req.requested_changes,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Production artifact '{artifact_id}' not found")
+    return {
+        "status": "revision_required",
+        "artifact": updated.model_dump(mode="json"),
+        "revision": rev.model_dump(mode="json") if rev else None,
+    }
+
+
+@app.get("/api/production/interventions")
+async def list_interventions_api(
+    campaign_id: Optional[str] = None,
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> List[Dict[str, Any]]:
+    """Lists pending human escalation and challenge checkpoints."""
+    from clipping.production.repository import ProductionRepository
+    repo = ProductionRepository(storage_driver=storage)
+    interventions = await repo.list_pending_interventions(campaign_id=campaign_id)
+    return [i.model_dump(mode="json") for i in interventions]
+
+
+@app.post("/api/production/interventions/{intervention_id}/resume")
+async def resume_intervention_api(
+    intervention_id: str,
+    req: Optional[ResumeInterventionRequest] = None,
+    operator: str = Depends(get_current_operator),
+    storage: StorageDriver = Depends(get_storage_driver),
+) -> Dict[str, Any]:
+    """Resumes paused execution from preserved checkpoint after operator human verification."""
+    from clipping.production.repository import ProductionRepository
+    from clipping.production.challenge_escalation import ChallengeEscalationManager
+    repo = ProductionRepository(storage_driver=storage)
+    escalator = ChallengeEscalationManager(repository=repo)
+    resumed = await escalator.resume(intervention_id)
+    if not resumed:
+        raise HTTPException(status_code=404, detail=f"Intervention '{intervention_id}' not found")
+    return {"status": "resumed", "intervention": resumed.model_dump(mode="json")}
 
 
 @app.get("/api/accounts")

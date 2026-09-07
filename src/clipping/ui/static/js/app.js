@@ -2918,6 +2918,135 @@ window.AlAmrModals = {
         } catch (err) {
             window.AlAmrShellInstance.showToast(`Publishing failed: ${err.message}`, "error");
         }
+    },
+
+    // 15. Production Artifact Inspector & Human Approval Gate
+    activeInspectorArtifactId: null,
+
+    async openArtifactInspector(artifactId) {
+        this.activeInspectorArtifactId = artifactId;
+        const modal = document.getElementById("modal-artifact-inspector");
+        if (!modal) return;
+
+        try {
+            const art = await AlAmrAPI.getProductionArtifact(artifactId);
+            document.getElementById("inspector-artifact-id").textContent = art.artifact_id;
+            document.getElementById("inspector-campaign-id").textContent = art.campaign_id;
+            document.getElementById("inspector-duration").textContent = `${art.duration.toFixed(1)}s`;
+            document.getElementById("inspector-resolution").textContent = art.resolution || "1080x1920";
+            document.getElementById("inspector-aspect").textContent = art.aspect_ratio || "9:16";
+            document.getElementById("inspector-timeline").textContent = `${art.selected_start_time.toFixed(1)}s → ${art.selected_end_time.toFixed(1)}s`;
+            document.getElementById("inspector-branding").textContent = (art.branding_status || "not_required").toUpperCase();
+            document.getElementById("inspector-revision").textContent = `v${art.revision_count || 0}`;
+
+            const badge = document.getElementById("inspector-status-badge");
+            badge.textContent = art.review_status;
+            if (art.review_status === "APPROVED") {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-900/60 text-emerald-200 border border-emerald-500/40";
+            } else if (art.review_status === "REVISION_REQUIRED") {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-900/60 text-rose-200 border border-rose-500/40";
+            } else {
+                badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-900/60 text-amber-200 border border-amber-500/40";
+            }
+
+            document.getElementById("inspector-title").textContent = art.title || "--";
+            document.getElementById("inspector-caption").textContent = art.caption || "--";
+
+            // Hashtags
+            const tagsCont = document.getElementById("inspector-hashtags");
+            tagsCont.innerHTML = "";
+            (art.hashtags || []).forEach(t => {
+                const span = document.createElement("span");
+                span.className = "px-1.5 py-0.5 rounded bg-cyan-900/40 border border-cyan-500/30 text-cyan-300 text-[10px]";
+                span.textContent = t;
+                tagsCont.appendChild(span);
+            });
+
+            // Compliance checklist
+            const checkList = document.getElementById("inspector-compliance-checklist");
+            checkList.innerHTML = "";
+            const comp = art.compliance_result || {};
+            const checks = comp.checks || {};
+            Object.keys(checks).forEach(k => {
+                const item = checks[k];
+                const passed = item.status === "PASS";
+                const div = document.createElement("div");
+                div.className = `p-1 rounded ${passed ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/30' : 'bg-rose-950/40 text-rose-300 border border-rose-500/30'}`;
+                div.textContent = `${passed ? '✓' : '✕'} ${k.toUpperCase()}`;
+                checkList.appendChild(div);
+            });
+
+            // Blockers
+            const blockersCont = document.getElementById("inspector-blockers-list");
+            if (comp.blockers && comp.blockers.length > 0) {
+                blockersCont.classList.remove("hidden");
+                blockersCont.innerHTML = comp.blockers.map(b => `<div>• ${b}</div>`).join('');
+                document.getElementById("inspector-compliance-badge").textContent = `BLOCKED (${comp.blockers.length} issues)`;
+                document.getElementById("inspector-compliance-badge").className = "text-[10px] font-bold text-rose-400";
+            } else {
+                blockersCont.classList.add("hidden");
+                document.getElementById("inspector-compliance-badge").textContent = "PASSED (100%)";
+                document.getElementById("inspector-compliance-badge").className = "text-[10px] font-bold text-emerald-400";
+            }
+
+            // Video player
+            const player = document.getElementById("inspector-video");
+            if (art.local_output_path) {
+                player.src = `/api/clips/stream?path=${encodeURIComponent(art.local_output_path)}`;
+            } else {
+                player.src = "";
+            }
+
+            modal.classList.remove("hidden");
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Failed to inspect artifact: ${err.message}`, "error");
+        }
+    },
+
+    closeArtifactInspectorModal() {
+        const modal = document.getElementById("modal-artifact-inspector");
+        if (modal) modal.classList.add("hidden");
+        const player = document.getElementById("inspector-video");
+        if (player) {
+            player.pause();
+            player.src = "";
+        }
+        this.activeInspectorArtifactId = null;
+    },
+
+    toggleRejectDrawer() {
+        const drawer = document.getElementById("inspector-reject-drawer");
+        if (drawer) drawer.classList.toggle("hidden");
+    },
+
+    async submitArtifactApproval() {
+        if (!this.activeInspectorArtifactId) return;
+        try {
+            const res = await AlAmrAPI.approveProductionArtifact(this.activeInspectorArtifactId);
+            window.AlAmrShellInstance.showToast(`✅ Artifact ${this.activeInspectorArtifactId} APPROVED for publishing!`, "success");
+            this.openArtifactInspector(this.activeInspectorArtifactId);
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Approval failed: ${err.message}`, "error");
+        }
+    },
+
+    async submitArtifactRejection() {
+        if (!this.activeInspectorArtifactId) return;
+        const feedback = document.getElementById("inspector-reject-feedback").value.trim();
+        if (!feedback) {
+            alert("Please provide revision feedback describing required changes.");
+            return;
+        }
+        try {
+            await AlAmrAPI.rejectProductionArtifact(this.activeInspectorArtifactId, feedback);
+            window.AlAmrShellInstance.showToast(`📝 Artifact marked for revision. Feedback logged.`, "info");
+            this.toggleRejectDrawer();
+            this.openArtifactInspector(this.activeInspectorArtifactId);
+            window.AlAmrShellInstance.syncState(true);
+        } catch (err) {
+            window.AlAmrShellInstance.showToast(`Rejection failed: ${err.message}`, "error");
+        }
     }
 };
 

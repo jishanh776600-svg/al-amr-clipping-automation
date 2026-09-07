@@ -1078,6 +1078,124 @@
         </div>
     </div>
 
+    <!-- ARTIFACT INSPECTOR & REVIEW MODAL -->
+    <div id="modal-artifact-inspector" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto">
+        <div class="tech-card w-full max-w-4xl bg-surface1 border-cyan-500/50 shadow-2xl my-8">
+            <div class="tech-card-header border-b border-slate-700 pb-3 flex items-center justify-between">
+                <div>
+                    <div class="tech-card-title text-cyanAccent flex items-center gap-2">
+                        <span>🎬 PRODUCTION ARTIFACT INSPECTOR</span>
+                        <span id="inspector-status-badge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-900/60 text-amber-200 border border-amber-500/40">PENDING_APPROVAL</span>
+                    </div>
+                    <div class="text-[10px] font-mono text-slate-400 mt-0.5">
+                        Artifact ID: <span id="inspector-artifact-id" class="text-slate-200 font-bold">--</span> | Campaign: <span id="inspector-campaign-id" class="text-cyan-300">--</span>
+                    </div>
+                </div>
+                <button onclick="AlAmrModals.closeArtifactInspectorModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5 p-4 text-xs font-mono">
+                <!-- LEFT COLUMN: MEDIA & TECHNICAL ATTRIBUTES -->
+                <div class="space-y-4">
+                    <div class="rounded overflow-hidden bg-black border border-slate-700 aspect-[9/16] max-h-[380px] mx-auto flex items-center justify-center">
+                        <video id="inspector-video" controls class="w-full h-full object-contain"></video>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2 text-center text-[10px]">
+                        <div class="p-2 rounded bg-surface2 border border-slate-700">
+                            <span class="text-slate-400 block">DURATION</span>
+                            <span id="inspector-duration" class="text-white font-bold text-xs">--</span>
+                        </div>
+                        <div class="p-2 rounded bg-surface2 border border-slate-700">
+                            <span class="text-slate-400 block">RESOLUTION</span>
+                            <span id="inspector-resolution" class="text-white font-bold text-xs">1080x1920</span>
+                        </div>
+                        <div class="p-2 rounded bg-surface2 border border-slate-700">
+                            <span class="text-slate-400 block">ASPECT</span>
+                            <span id="inspector-aspect" class="text-white font-bold text-xs">9:16</span>
+                        </div>
+                    </div>
+
+                    <div class="p-2.5 rounded bg-surface2 border border-slate-700 space-y-1 text-[11px]">
+                        <div class="flex justify-between text-slate-400">
+                            <span>SEGMENT WINDOW:</span>
+                            <span id="inspector-timeline" class="text-slate-200">--</span>
+                        </div>
+                        <div class="flex justify-between text-slate-400">
+                            <span>BRANDING / WATERMARK:</span>
+                            <span id="inspector-branding" class="text-emerald-400 font-bold">--</span>
+                        </div>
+                        <div class="flex justify-between text-slate-400">
+                            <span>REVISION NUMBER:</span>
+                            <span id="inspector-revision" class="text-cyan-300">v0 (Original)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN: COMPLIANCE, METADATA & APPROVAL -->
+                <div class="space-y-4 flex flex-col justify-between">
+                    <div class="space-y-3">
+                        <!-- Strict Compliance Checkbox Matrix -->
+                        <div class="p-3 rounded bg-surface2 border border-slate-700 space-y-2">
+                            <div class="flex items-center justify-between border-b border-slate-700/60 pb-1">
+                                <span class="text-cyan-400 font-bold uppercase text-[11px]">STRICT COMPLIANCE GATE</span>
+                                <span id="inspector-compliance-badge" class="text-[10px] font-bold text-emerald-400">PASSED (100%)</span>
+                            </div>
+                            <div id="inspector-compliance-checklist" class="grid grid-cols-2 gap-1.5 text-[10px]">
+                                <!-- Dynamically populated checks -->
+                            </div>
+                            <div id="inspector-blockers-list" class="hidden p-2 rounded bg-rose-950/60 border border-rose-500/50 text-[10px] text-rose-300 space-y-1"></div>
+                        </div>
+
+                        <!-- Metadata Fields -->
+                        <div class="space-y-2">
+                            <div>
+                                <label class="block text-slate-400 text-[10px]">TITLE:</label>
+                                <div id="inspector-title" class="p-2 rounded bg-surface2 border border-slate-700 text-slate-200 text-xs font-semibold select-all">--</div>
+                            </div>
+                            <div>
+                                <label class="block text-slate-400 text-[10px]">INSTAGRAM CAPTION & CTA:</label>
+                                <div id="inspector-caption" class="p-2 rounded bg-surface2 border border-slate-700 text-slate-300 text-[11px] max-h-24 overflow-y-auto whitespace-pre-wrap select-all">--</div>
+                            </div>
+                            <div>
+                                <label class="block text-slate-400 text-[10px]">HASHTAGS:</label>
+                                <div id="inspector-hashtags" class="flex flex-wrap gap-1 mt-1"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- HUMAN APPROVAL GATE ACTIONS -->
+                    <div class="pt-3 border-t border-slate-700 space-y-2.5">
+                        <div class="text-[10px] text-amber-400 font-bold flex items-center gap-1.5">
+                            <span>🛡️ HUMAN APPROVAL GATE:</span>
+                            <span class="text-slate-400 font-normal">Publishing strictly blocked until explicitly approved.</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="btn-inspector-approve" onclick="AlAmrModals.submitArtifactApproval()" class="flex-1 py-2 px-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950">
+                                <span>✓</span>
+                                <span>APPROVE FOR PUBLISHING</span>
+                            </button>
+                            <button type="button" id="btn-inspector-reject" onclick="AlAmrModals.toggleRejectDrawer()" class="py-2 px-3 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-200 font-bold border border-rose-500/50 transition">
+                                <span>✕</span>
+                                <span>REQUEST REVISION</span>
+                            </button>
+                        </div>
+
+                        <!-- Operator Rejection Drawer -->
+                        <div id="inspector-reject-drawer" class="hidden p-2.5 rounded bg-surface2 border border-rose-500/40 space-y-2 mt-2">
+                            <label class="block text-[10px] text-rose-300 font-bold">REVISION FEEDBACK & CORRECTIONS:</label>
+                            <textarea id="inspector-reject-feedback" rows="2" placeholder="Describe required changes (e.g. adjust hook, trim 5s, fix watermark)..." class="w-full bg-surface1 border border-slate-700 rounded p-2 text-xs text-slate-200 font-mono outline-none focus:border-rose-500"></textarea>
+                            <div class="flex justify-end gap-2">
+                                <button type="button" onclick="AlAmrModals.toggleRejectDrawer()" class="px-2.5 py-1 rounded bg-surface3 text-slate-400 hover:text-white text-[10px]">Cancel</button>
+                                <button type="button" onclick="AlAmrModals.submitArtifactRejection()" class="px-3 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px]">SUBMIT REVISION</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 5. TOAST NOTIFICATION CONTAINER -->
     <div id="toast-container"></div>
 
