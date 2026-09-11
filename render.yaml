@@ -32,5 +32,27 @@ services:
         value: "1"
       - key: AL_AMR_MASTER_KEY
         generateValue: true
+      - key: AUTOCLIP_DISPATCH_MODE
+        value: auto
+      - key: GITHUB_REPOSITORY
+        value: jishanh776600-svg/al-amr-clipping-automation
+      - key: GITHUB_WORKFLOW
+        value: worker.yml
+      - key: GITHUB_REF
+        value: main
+      - key: GITHUB_PAT
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_DRIVE_REFRESH_TOKEN
+        sync: false
+      - key: GOOGLE_DRIVE_ROOT_FOLDER_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
 
 

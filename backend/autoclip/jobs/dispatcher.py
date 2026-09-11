@@ -30,7 +30,17 @@ def get_dispatch_mode() -> str:
 
 
 def is_github_dispatch_enabled() -> bool:
-    return get_dispatch_mode() == "github"
+    mode = get_dispatch_mode()
+    if mode == "github":
+        return True
+    if mode == "auto":
+        token = (
+            os.environ.get("GITHUB_PAT")
+            or os.environ.get("GH_TOKEN")
+            or os.environ.get("GITHUB_TOKEN")
+        )
+        return bool(token)
+    return False
 
 
 async def dispatch_job_to_github(
@@ -65,12 +75,16 @@ async def dispatch_job_to_github(
     callback_token = (
         os.environ.get("AL_AMR_MASTER_KEY")
         or os.environ.get("WORKER_CALLBACK_SECRET")
+        or os.environ.get("AUTOCLIP_API_KEY")
+        or os.environ.get("OPERATOR_TOKEN")
         or ""
     )
 
     source_url = source.url or ""
     if not source_url:
         source_url = f"{public_api_url}/api/sources/{source.id}/file"
+        if callback_token:
+            source_url += f"?token={callback_token}"
 
     brief_data = campaign_brief if campaign_brief is not None else job.settings.get("campaign", {})
     publish_targets = job.settings.get("publish_targets", [])

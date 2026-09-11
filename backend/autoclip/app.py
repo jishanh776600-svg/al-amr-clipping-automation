@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, db, paths
 from .api import api_router
-from .api.auth import PUBLIC_PREFIXES, get_configured_api_key
+from .api.auth import PUBLIC_PREFIXES, get_configured_api_key, get_valid_api_keys, is_valid_token
 from .health import check_liveness, check_readiness
 from .jobs.events import broker
 from .jobs.queue import queue
@@ -81,11 +81,14 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        configured_key = get_configured_api_key()
-        if configured_key:
+        if get_valid_api_keys():
             path = request.url.path
-            # Check if this path requires authentication (only /api routes, excluding public ones)
-            if path.startswith("/api") and not any(path == p or path.startswith(f"{p}/") for p in PUBLIC_PREFIXES):
+            # Check if this path requires authentication (only /api routes, excluding public ones and worker-callback which verifies payload)
+            if (
+                path.startswith("/api")
+                and not any(path == p or path.startswith(f"{p}/") for p in PUBLIC_PREFIXES)
+                and not path.endswith("/worker-callback")
+            ):
                 auth_header = request.headers.get("Authorization")
                 api_key_header = request.headers.get("X-API-Key")
                 token = None
@@ -93,8 +96,10 @@ def create_app() -> FastAPI:
                     token = auth_header[7:].strip()
                 elif api_key_header:
                     token = api_key_header.strip()
+                elif request.query_params.get("token"):
+                    token = request.query_params.get("token")
 
-                if not token or not hmac.compare_digest(token, configured_key):
+                if not is_valid_token(token):
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Unauthorized. Valid Bearer token or X-API-Key required."},

@@ -79,8 +79,13 @@ def send_callback(
     if exports is not None:
         payload["exports"] = exports
 
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["X-API-Key"] = token
+
     try:
-        resp = httpx.post(callback_url, json=payload, timeout=20.0)
+        resp = httpx.post(callback_url, json=payload, headers=headers, timeout=20.0)
         log.info("Callback to %s reported (HTTP %s): stage=%s, progress=%s", callback_url, resp.status_code, stage, progress)
     except Exception as exc:
         log.warning("Callback to %s failed: %s", callback_url, exc)
@@ -139,7 +144,11 @@ async def async_main() -> None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
                 tmp_path = Path(tmp.name)
             log.info("Downloading direct stream to %s...", tmp_path)
-            with httpx.stream("GET", source_url, timeout=120.0) as r:
+            dl_headers: dict[str, str] = {}
+            if args.callback_token:
+                dl_headers["Authorization"] = f"Bearer {args.callback_token}"
+                dl_headers["X-API-Key"] = args.callback_token
+            with httpx.stream("GET", source_url, headers=dl_headers, timeout=120.0) as r:
                 r.raise_for_status()
                 with open(tmp_path, "wb") as f:
                     for chunk in r.iter_bytes(chunk_size=1024 * 1024):

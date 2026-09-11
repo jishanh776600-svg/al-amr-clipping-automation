@@ -16,6 +16,7 @@ from ..db.models import Job, new_id
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
 from ..jobs.events import Event, broker
 from ..jobs.queue import queue
+from .auth import is_valid_token
 from .schemas import JobCreateIn, JobOut, JobSettingsIn, WorkerCallbackIn
 
 log = logging.getLogger(__name__)
@@ -212,11 +213,7 @@ async def worker_callback(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    expected_token = (
-        os.environ.get("AL_AMR_MASTER_KEY")
-        or os.environ.get("WORKER_CALLBACK_SECRET")
-    )
-    if expected_token and payload.token != expected_token:
+    if not is_valid_token(payload.token):
         raise HTTPException(status_code=401, detail="Unauthorized worker callback.")
 
     update_kwargs: dict[str, Any] = {}

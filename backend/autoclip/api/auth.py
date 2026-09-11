@@ -33,9 +33,30 @@ PUBLIC_PREFIXES = (
 )
 
 
+def get_valid_api_keys() -> list[str]:
+    """Return all configured server secrets."""
+    keys: list[str] = []
+    for var in (ENV_API_KEY, ENV_OPERATOR_TOKEN, "AL_AMR_MASTER_KEY", "WORKER_CALLBACK_SECRET"):
+        val = os.environ.get(var)
+        if val and val.strip():
+            keys.append(val.strip())
+    return keys
+
+
 def get_configured_api_key() -> str | None:
-    """Return the configured server secret, or None if unauthenticated."""
-    return os.environ.get(ENV_API_KEY) or os.environ.get(ENV_OPERATOR_TOKEN) or None
+    """Return the primary configured server secret, or None if unauthenticated."""
+    keys = get_valid_api_keys()
+    return keys[0] if keys else None
+
+
+def is_valid_token(token: str | None) -> bool:
+    """Validate token against all configured server secrets."""
+    keys = get_valid_api_keys()
+    if not keys:
+        return True  # Permissive mode
+    if not token:
+        return False
+    return any(hmac.compare_digest(token, k) for k in keys)
 
 
 async def require_auth(
@@ -43,8 +64,8 @@ async def require_auth(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
 ) -> None:
     """FastAPI dependency to guard endpoints."""
-    configured_key = get_configured_api_key()
-    if not configured_key:
+    keys = get_valid_api_keys()
+    if not keys:
         return  # Permissive mode: no authentication required
 
     # Allow public endpoints
@@ -57,12 +78,13 @@ async def require_auth(
     if credentials and credentials.credentials:
         token = credentials.credentials
     else:
-        # Fallback to X-API-Key header
-        token = request.headers.get("X-API-Key")
+        # Fallback to X-API-Key header or query parameter 'token'
+        token = request.headers.get("X-API-Key") or request.query_params.get("token")
 
-    if not token or not hmac.compare_digest(token, configured_key):
+    if not is_valid_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized. A valid Bearer token or X-API-Key is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
