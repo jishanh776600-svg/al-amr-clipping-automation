@@ -174,7 +174,7 @@ async def detect(
             for start_idx in range(0, total_w, step):
                 end_idx = min(total_w - 1, start_idx + max_w - 1)
                 if end_idx > start_idx:
-                    seg_text = " ".join(w.word for w in transcript.words[start_idx : end_idx + 1])
+                    seg_text = " ".join(w.text for w in transcript.words[start_idx : end_idx + 1])
                     candidates.append(
                         ClipCandidate(
                             start_word_index=start_idx,
