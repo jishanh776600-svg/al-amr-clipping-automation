@@ -145,7 +145,10 @@ async def async_main() -> None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
                 tmp_path = Path(tmp.name)
             log.info("Downloading direct stream to %s...", tmp_path)
-            dl_headers: dict[str, str] = {}
+            dl_headers: dict[str, str] = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+            }
             if args.callback_token:
                 dl_headers["Authorization"] = f"Bearer {args.callback_token}"
                 dl_headers["X-API-Key"] = args.callback_token
