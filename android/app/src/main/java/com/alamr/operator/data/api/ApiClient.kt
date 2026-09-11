@@ -39,17 +39,35 @@ object ApiClient {
     }
 
     fun configure(baseUrl: String, apiKey: String?) {
-        val normalized = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        if (normalized != currentBaseUrl || apiKey != currentApiKey || apiServiceInstance == null) {
-            currentBaseUrl = normalized
-            currentApiKey = apiKey
+        try {
+            var url = baseUrl.trim()
+            if (url.isBlank()) {
+                url = "https://al-amr-clipping-automation.onrender.com"
+            }
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                url = "https://$url"
+            }
+            val normalized = if (url.endsWith("/")) url else "$url/"
+            if (normalized != currentBaseUrl || apiKey != currentApiKey || apiServiceInstance == null) {
+                currentBaseUrl = normalized
+                currentApiKey = apiKey
 
+                val retrofit = Retrofit.Builder()
+                    .baseUrl(currentBaseUrl)
+                    .client(client)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+
+                apiServiceInstance = retrofit.create(AlAmrApiService::class.java)
+            }
+        } catch (_: Exception) {
+            // Safe fallback to avoid startup crashes
+            currentBaseUrl = "https://al-amr-clipping-automation.onrender.com/"
             val retrofit = Retrofit.Builder()
                 .baseUrl(currentBaseUrl)
                 .client(client)
                 .addConverterFactory(GsonConverterFactory.create())
                 .build()
-
             apiServiceInstance = retrofit.create(AlAmrApiService::class.java)
         }
     }
