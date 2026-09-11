@@ -143,9 +143,27 @@ def _migration_v3(conn: sqlite3.Connection) -> None:
     conn.executescript(_V3)
 
 
+_V4 = """
+ALTER TABLE exports ADD COLUMN drive_file_id TEXT;
+ALTER TABLE exports ADD COLUMN drive_web_view_link TEXT;
+ALTER TABLE exports ADD COLUMN drive_storage_key TEXT;
+ALTER TABLE jobs ADD COLUMN dispatch_mode TEXT NOT NULL DEFAULT 'local';
+ALTER TABLE jobs ADD COLUMN github_run_id TEXT;
+"""
+
+
+def _migration_v4(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V4)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
-MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [_migration_v1, _migration_v2, _migration_v3]
+MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
+    _migration_v1,
+    _migration_v2,
+    _migration_v3,
+    _migration_v4,
+]
 
 SCHEMA_VERSION = len(MIGRATIONS)
 

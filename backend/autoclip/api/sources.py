@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from starlette.responses import FileResponse
 
 from ..config import load as load_settings
 from ..db import store
@@ -36,6 +37,18 @@ async def get_source(source_id: str) -> SourceOut:
     if source is None:
         raise HTTPException(status_code=404, detail="Source not found.")
     return SourceOut.of(source)
+
+
+@router.get("/{source_id}/file")
+async def get_source_file(source_id: str):
+    """Serve source media file for remote workers or local preview."""
+    source = await asyncio.to_thread(store.get_source, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    path = Path(source.path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Source file not found on server disk.")
+    return FileResponse(path, filename=path.name)
 
 
 @router.post("/url", response_model=SourceOut, status_code=201)

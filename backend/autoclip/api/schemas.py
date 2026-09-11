@@ -122,6 +122,8 @@ class JobOut(BaseModel):
     progress: float
     error: str | None = None
     provider: str
+    dispatch_mode: str = "local"
+    github_run_id: str | None = None
     created_at: str
     updated_at: str
     started_at: str | None = None
@@ -138,6 +140,8 @@ class JobOut(BaseModel):
             progress=job.progress,
             error=job.error,
             provider=job.provider,
+            dispatch_mode=job.dispatch_mode,
+            github_run_id=job.github_run_id,
             created_at=job.created_at,
             updated_at=job.updated_at,
             started_at=job.started_at,
@@ -162,6 +166,9 @@ class ExportOut(BaseModel):
     created_at: str
     download_url: str
     stream_url: str = ""
+    drive_file_id: str | None = None
+    drive_web_view_link: str | None = None
+    drive_storage_key: str | None = None
 
     @classmethod
     def of(cls, export: models.Export) -> ExportOut:
@@ -174,6 +181,9 @@ class ExportOut(BaseModel):
             created_at=export.created_at,
             download_url=f"/api/exports/{export.id}/download",
             stream_url=f"/api/exports/{export.id}/stream",
+            drive_file_id=export.drive_file_id,
+            drive_web_view_link=export.drive_web_view_link,
+            drive_storage_key=export.drive_storage_key,
         )
 
 
@@ -304,3 +314,16 @@ class SystemOut(BaseModel):
     gpu_name: str | None
     compute_type: str
     diarization_available: bool
+
+
+class WorkerCallbackIn(BaseModel):
+    token: str | None = None
+    status: str | None = None
+    stage: str | None = None
+    progress: float | None = None
+    error: str | None = None
+    github_run_id: str | None = None
+    clips: list[dict[str, Any]] | None = None
+    evaluations: list[dict[str, Any]] | None = None
+    exports: list[dict[str, Any]] | None = None
+

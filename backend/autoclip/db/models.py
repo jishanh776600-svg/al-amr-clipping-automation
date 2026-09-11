@@ -76,6 +76,8 @@ class Job:
     error: str | None = None
     provider: str = ""
     settings: dict[str, Any] = field(default_factory=dict)
+    dispatch_mode: str = "local"
+    github_run_id: str | None = None
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
     started_at: str | None = None
@@ -83,6 +85,7 @@ class Job:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Job:
+        keys = row.keys()
         return cls(
             id=row["id"],
             source_id=row["source_id"],
@@ -92,6 +95,8 @@ class Job:
             error=row["error"],
             provider=row["provider"],
             settings=json.loads(row["settings_json"] or "{}"),
+            dispatch_mode=row["dispatch_mode"] if "dispatch_mode" in keys else "local",
+            github_run_id=row["github_run_id"] if "github_run_id" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             started_at=row["started_at"],
@@ -194,10 +199,14 @@ class Export:
     ratio: str = "9:16"
     style: str = "bold_pop"
     size_bytes: int = 0
+    drive_file_id: str | None = None
+    drive_web_view_link: str | None = None
+    drive_storage_key: str | None = None
     created_at: str = field(default_factory=utcnow)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Export:
+        keys = row.keys()
         return cls(
             id=row["id"],
             clip_id=row["clip_id"],
@@ -205,6 +214,9 @@ class Export:
             ratio=row["ratio"],
             style=row["style"],
             size_bytes=row["size_bytes"],
+            drive_file_id=row["drive_file_id"] if "drive_file_id" in keys else None,
+            drive_web_view_link=row["drive_web_view_link"] if "drive_web_view_link" in keys else None,
+            drive_storage_key=row["drive_storage_key"] if "drive_storage_key" in keys else None,
             created_at=row["created_at"],
         )
 

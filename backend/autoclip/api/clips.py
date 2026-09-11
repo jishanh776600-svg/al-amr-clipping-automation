@@ -6,13 +6,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from .. import paths
 from ..config import load as load_settings
 from ..db import store
 from ..db.models import Export, new_id
+from ..storage.drive import GoogleDriveStorage
 from ..pipeline import captions as captions_module
 from ..pipeline import export as export_module
 from ..pipeline.reframe.croppath import CropPath, centre_crop
@@ -246,34 +247,71 @@ async def export_clip(clip_id: str, payload: ExportRequestIn) -> ExportOut:
 
 
 @router.get("/exports/{export_id}/download")
-async def download_export(export_id: str) -> FileResponse:
+async def download_export(export_id: str, request: Request):
     record = await asyncio.to_thread(store.get_export, export_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Export not found.")
 
     path = Path(record.path)
-    if not path.exists():
-        raise HTTPException(status_code=410, detail="The exported file has been moved or deleted.")
+    if path.exists():
+        return FileResponse(path, media_type="video/mp4", filename=path.name)
 
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    if record.drive_file_id:
+        drive_storage = GoogleDriveStorage()
+        if drive_storage.is_configured:
+            content_iter, status_code, headers = drive_storage.stream_range(record.drive_file_id)
+            headers["Content-Disposition"] = f'attachment; filename="export_{record.id}.mp4"'
+            return StreamingResponse(
+                content_iter,
+                status_code=status_code,
+                headers=headers,
+                media_type="video/mp4",
+            )
+        if record.drive_web_view_link:
+            return RedirectResponse(record.drive_web_view_link)
+
+    raise HTTPException(
+        status_code=410,
+        detail="The exported file is not present locally or on Google Drive.",
+    )
 
 
 @router.get("/exports/{export_id}/stream")
-async def stream_export(export_id: str) -> FileResponse:
+async def stream_export(export_id: str, request: Request):
     """Stream an exported MP4 inline with full Range header support for video players."""
     record = await asyncio.to_thread(store.get_export, export_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Export not found.")
 
     path = Path(record.path)
-    if not path.exists():
-        raise HTTPException(status_code=410, detail="The exported file has been moved or deleted.")
+    if path.exists():
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            content_disposition_type="inline",
+            filename=path.name,
+        )
 
-    return FileResponse(
-        path,
-        media_type="video/mp4",
-        content_disposition_type="inline",
-        filename=path.name,
+    if record.drive_file_id:
+        drive_storage = GoogleDriveStorage()
+        if drive_storage.is_configured:
+            range_header = request.headers.get("Range")
+            content_iter, status_code, headers = drive_storage.stream_range(
+                record.drive_file_id,
+                range_header=range_header,
+            )
+            return StreamingResponse(
+                content_iter,
+                status_code=status_code,
+                headers=headers,
+                media_type="video/mp4",
+            )
+        if record.drive_web_view_link:
+            return RedirectResponse(record.drive_web_view_link)
+
+    raise HTTPException(
+        status_code=410,
+        detail="The exported file is not present locally or on Google Drive.",
     )
 
 

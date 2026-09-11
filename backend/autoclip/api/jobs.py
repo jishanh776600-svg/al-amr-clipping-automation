@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import load as load_settings
-from ..db import store
+from ..db import models, store
 from ..db.models import Job, new_id
-from ..jobs.events import broker
+from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
+from ..jobs.events import Event, broker
 from ..jobs.queue import queue
-from .schemas import JobCreateIn, JobOut, JobSettingsIn
+from .schemas import JobCreateIn, JobOut, JobSettingsIn, WorkerCallbackIn
 
 log = logging.getLogger(__name__)
 
@@ -62,14 +65,25 @@ async def create_job(payload: JobCreateIn) -> JobOut:
     if payload.campaign is not None:
         job_settings["campaign"] = payload.campaign.model_dump(mode="json")
 
+    dispatch_mode = "github" if is_github_dispatch_enabled() else "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
         provider=settings.active_provider,
         settings=job_settings,
+        dispatch_mode=dispatch_mode,
     )
     await asyncio.to_thread(store.create_job, job)
-    queue.notify()
+
+    if dispatch_mode == "github":
+        try:
+            await dispatch_job_to_github(job, source)
+        except Exception as exc:
+            log.exception("Failed to dispatch job %s to GitHub: %s", job.id, exc)
+            failed_job = await asyncio.to_thread(store.get_job, job.id)
+            return JobOut.of(failed_job or job, source)
+    else:
+        queue.notify()
 
     return JobOut.of(job, source)
 
@@ -151,8 +165,31 @@ async def retry_job(job_id: str) -> JobOut:
             detail=f"Only failed or cancelled jobs can be retried (this one is {job.status}).",
         )
 
-    await asyncio.to_thread(store.update_job, job_id, status="queued", error=None, progress=0.0)
-    queue.notify()
+    if job.dispatch_mode == "github" or is_github_dispatch_enabled():
+        await asyncio.to_thread(
+            store.update_job,
+            job_id,
+            status="queued",
+            error=None,
+            progress=0.0,
+            dispatch_mode="github",
+        )
+        source = await asyncio.to_thread(store.get_source, job.source_id)
+        if source:
+            try:
+                await dispatch_job_to_github(job, source)
+            except Exception as exc:
+                log.exception("Failed to redispatch job %s to GitHub: %s", job_id, exc)
+    else:
+        await asyncio.to_thread(
+            store.update_job,
+            job_id,
+            status="queued",
+            error=None,
+            progress=0.0,
+            dispatch_mode="local",
+        )
+        queue.notify()
 
     updated = await asyncio.to_thread(store.get_job, job_id)
     return JobOut.of(updated or job)
@@ -163,3 +200,129 @@ async def job_clips(job_id: str):
     from .clips import list_clips_for_job
 
     return await list_clips_for_job(job_id)
+
+
+@router.post("/{job_id}/worker-callback", response_model=JobOut)
+async def worker_callback(
+    job_id: str,
+    payload: WorkerCallbackIn,
+) -> JobOut:
+    """Receive live execution and completion updates from on-demand worker."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    expected_token = (
+        os.environ.get("AL_AMR_MASTER_KEY")
+        or os.environ.get("WORKER_CALLBACK_SECRET")
+    )
+    if expected_token and payload.token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized worker callback.")
+
+    update_kwargs: dict[str, Any] = {}
+    if payload.status is not None:
+        update_kwargs["status"] = payload.status
+        if payload.status == "running" and not job.started_at:
+            update_kwargs["started_at"] = store.utcnow()
+        elif payload.status in ("done", "failed"):
+            update_kwargs["finished_at"] = store.utcnow()
+    if payload.stage is not None:
+        update_kwargs["current_stage"] = payload.stage
+    if payload.progress is not None:
+        update_kwargs["progress"] = payload.progress
+    if payload.error is not None:
+        update_kwargs["error"] = payload.error
+    if payload.github_run_id is not None:
+        update_kwargs["github_run_id"] = payload.github_run_id
+
+    if update_kwargs:
+        await asyncio.to_thread(store.update_job, job_id, **update_kwargs)
+
+    # Ingest clips if reported
+    if payload.clips:
+        for c in payload.clips:
+            clip_row = models.Clip(
+                id=c.get("id", new_id()),
+                job_id=job_id,
+                start_s=float(c.get("start_s", 0.0)),
+                end_s=float(c.get("end_s", 0.0)),
+                rank=int(c.get("rank", 0)),
+                start_word=int(c.get("start_word", 0)),
+                end_word=int(c.get("end_word", 0)),
+                title=str(c.get("title", "")),
+                hook=str(c.get("hook", "")),
+                score=int(c.get("score", 0)),
+                reason=str(c.get("reason", "")),
+                status=c.get("status", "candidate"),
+            )
+            existing = await asyncio.to_thread(store.get_clip, clip_row.id)
+            if not existing:
+                await asyncio.to_thread(store.create_clip, clip_row)
+
+    # Ingest evaluations if reported
+    if payload.evaluations:
+        for ev in payload.evaluations:
+            eval_row = models.CampaignEvaluationRow(
+                clip_id=ev["clip_id"],
+                campaign_id=ev.get("campaign_id", ""),
+                approved=bool(ev.get("approved", True)),
+                final_score=float(ev.get("final_score", 0.0)),
+                hook_score=float(ev.get("hook_score", 0.0)),
+                cta_score=float(ev.get("cta_score", 0.0)),
+                viral_score=float(ev.get("viral_score", 0.0)),
+                density_score=float(ev.get("density_score", 0.0)),
+                hard_failures=ev.get("hard_failures", []),
+                soft_warnings=ev.get("soft_warnings", []),
+                rule_results=ev.get("rule_results", {}),
+            )
+            existing_eval = await asyncio.to_thread(store.get_campaign_evaluation, eval_row.clip_id)
+            if not existing_eval:
+                await asyncio.to_thread(store.create_campaign_evaluation, eval_row)
+
+    # Ingest exports if reported
+    if payload.exports:
+        for exp in payload.exports:
+            exp_row = models.Export(
+                id=exp.get("id", new_id()),
+                clip_id=exp["clip_id"],
+                path=exp.get("path", ""),
+                ratio=exp.get("ratio", "9:16"),
+                style=exp.get("style", "bold_pop"),
+                size_bytes=int(exp.get("size_bytes", 0)),
+                drive_file_id=exp.get("drive_file_id"),
+                drive_web_view_link=exp.get("drive_web_view_link"),
+                drive_storage_key=exp.get("drive_storage_key"),
+            )
+            existing_exp = await asyncio.to_thread(store.get_export, exp_row.id)
+            if not existing_exp:
+                await asyncio.to_thread(store.create_export, exp_row)
+            else:
+                await asyncio.to_thread(
+                    store.update_export_drive_info,
+                    exp_row.id,
+                    drive_file_id=exp_row.drive_file_id,
+                    drive_web_view_link=exp_row.drive_web_view_link,
+                    drive_storage_key=exp_row.drive_storage_key,
+                )
+
+    # Broadcast real-time SSE event to all connected clients
+    event_type = "progress"
+    if payload.status == "done":
+        event_type = "completed"
+    elif payload.status == "failed":
+        event_type = "failed"
+
+    event_data = {
+        "stage": payload.stage or job.current_stage,
+        "progress": payload.progress if payload.progress is not None else job.progress,
+    }
+    if payload.error:
+        event_data["error"] = payload.error
+    if payload.github_run_id:
+        event_data["github_run_id"] = payload.github_run_id
+
+    broker.publish(Event(type=event_type, job_id=job_id, data=event_data))
+
+    updated_job = await asyncio.to_thread(store.get_job, job_id)
+    source = await asyncio.to_thread(store.get_source, job.source_id)
+    return JobOut.of(updated_job or job, source)

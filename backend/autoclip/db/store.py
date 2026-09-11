@@ -84,8 +84,8 @@ def create_job(job: Job) -> Job:
             """
             INSERT INTO jobs (id, source_id, status, current_stage, progress, error,
                               provider, settings_json, created_at, updated_at,
-                              started_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              started_at, finished_at, dispatch_mode, github_run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -100,6 +100,8 @@ def create_job(job: Job) -> Job:
                 job.updated_at,
                 job.started_at,
                 job.finished_at,
+                job.dispatch_mode,
+                job.github_run_id,
             ),
         )
     return job
@@ -145,6 +147,8 @@ def update_job(
     status: JobStatus | None = None,
     current_stage: str | None = None,
     progress: float | None = None,
+    dispatch_mode: str | None = None,
+    github_run_id: str | None | _Unset = UNSET,
     error: str | None | _Unset = UNSET,
     started_at: str | None | _Unset = UNSET,
     finished_at: str | None | _Unset = UNSET,
@@ -161,6 +165,7 @@ def update_job(
         ("status", status),
         ("current_stage", current_stage),
         ("progress", progress),
+        ("dispatch_mode", dispatch_mode),
     ):
         if value is not None:
             fields[name] = value
@@ -169,6 +174,7 @@ def update_job(
         ("error", error),
         ("started_at", started_at),
         ("finished_at", finished_at),
+        ("github_run_id", github_run_id),
     ):
         if not isinstance(value, _Unset):
             fields[name] = value
@@ -182,10 +188,10 @@ def update_job(
 
 
 def next_queued_job() -> Job | None:
-    """Return the oldest queued job — the FIFO the worker pulls from."""
+    """Return the oldest queued local job — the FIFO the worker pulls from."""
     with connection() as conn:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
+            "SELECT * FROM jobs WHERE status = 'queued' AND (dispatch_mode = 'local' OR dispatch_mode IS NULL) ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
     return Job.from_row(row) if row else None
 
@@ -233,6 +239,34 @@ def get_transcript(job_id: str) -> Transcript | None:
 # --------------------------------------------------------------------------
 # Clips
 # --------------------------------------------------------------------------
+
+
+def create_clip(clip: Clip) -> Clip:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO clips (id, job_id, rank, start_s, end_s, start_word, end_word,
+                               title, hook, score, reason, status, user_trimmed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                clip.id,
+                clip.job_id,
+                clip.rank,
+                clip.start_s,
+                clip.end_s,
+                clip.start_word,
+                clip.end_word,
+                clip.title,
+                clip.hook,
+                clip.score,
+                clip.reason,
+                clip.status,
+                int(clip.user_trimmed),
+                clip.created_at,
+            ),
+        )
+    return clip
 
 
 def replace_clips(job_id: str, clips: list[Clip]) -> list[Clip]:
@@ -284,6 +318,9 @@ def list_clips(job_id: str) -> list[Clip]:
             "SELECT * FROM clips WHERE job_id = ? ORDER BY rank ASC", (job_id,)
         ).fetchall()
     return [Clip.from_row(r) for r in rows]
+
+
+list_clips_for_job = list_clips
 
 
 def update_clip(
@@ -365,8 +402,9 @@ def create_export(export: Export) -> Export:
     with connection() as conn:
         conn.execute(
             """
-            INSERT INTO exports (id, clip_id, path, ratio, style, size_bytes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO exports (id, clip_id, path, ratio, style, size_bytes, created_at,
+                                 drive_file_id, drive_web_view_link, drive_storage_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 export.id,
@@ -376,9 +414,30 @@ def create_export(export: Export) -> Export:
                 export.style,
                 export.size_bytes,
                 export.created_at,
+                export.drive_file_id,
+                export.drive_web_view_link,
+                export.drive_storage_key,
             ),
         )
     return export
+
+
+def update_export_drive_info(
+    export_id: str,
+    *,
+    drive_file_id: str | None = None,
+    drive_web_view_link: str | None = None,
+    drive_storage_key: str | None = None,
+) -> None:
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE exports
+            SET drive_file_id = ?, drive_web_view_link = ?, drive_storage_key = ?
+            WHERE id = ?
+            """,
+            (drive_file_id, drive_web_view_link, drive_storage_key, export_id),
+        )
 
 
 def get_export(export_id: str) -> Export | None:

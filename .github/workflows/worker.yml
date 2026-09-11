@@ -1,0 +1,108 @@
+name: AL AMR On-Demand Clipping Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Unique Job ID to process"
+        required: true
+        type: string
+      source_url:
+        description: "URL or path of source video to ingest"
+        required: true
+        type: string
+      campaign_brief:
+        description: "Campaign Brief JSON string"
+        required: false
+        default: "{}"
+        type: string
+      callback_url:
+        description: "Control plane callback endpoint"
+        required: false
+        default: ""
+        type: string
+      callback_token:
+        description: "Auth token for callback"
+        required: false
+        default: ""
+        type: string
+      publish_targets:
+        description: "Publish destinations JSON array"
+        required: false
+        default: "[]"
+        type: string
+      whisper_model:
+        description: "Faster-Whisper model name"
+        required: false
+        default: "base"
+        type: string
+      max_clips:
+        description: "Maximum clips to generate"
+        required: false
+        default: "3"
+        type: string
+
+concurrency:
+  group: worker-${{ github.event.inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  process-job:
+    name: Execute AL AMR Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install System Multimedia Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            libsm6 \
+            libxext6 \
+            libgl1 \
+            fonts-dejavu-core \
+            fonts-freefont-ttf
+
+      - name: Install AL AMR Python Dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e .
+          python -m pip install google-api-python-client google-auth
+
+      - name: Run AL AMR Worker Runner
+        env:
+          GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+          GOOGLE_DRIVE_CLIENT_ID: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python -m autoclip.jobs.worker_runner \
+            --job-id "${{ github.event.inputs.job_id }}" \
+            --source-url "${{ github.event.inputs.source_url }}" \
+            --campaign-brief '${{ github.event.inputs.campaign_brief }}' \
+            --callback-url "${{ github.event.inputs.callback_url }}" \
+            --callback-token "${{ github.event.inputs.callback_token }}" \
+            --publish-targets '${{ github.event.inputs.publish_targets }}' \
+            --whisper-model "${{ github.event.inputs.whisper_model }}" \
+            --max-clips "${{ github.event.inputs.max_clips }}"
+
