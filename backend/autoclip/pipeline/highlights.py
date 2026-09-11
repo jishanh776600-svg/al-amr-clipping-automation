@@ -165,6 +165,30 @@ async def detect(
     candidates = [c for group in results for c in group]
 
     if not candidates:
+        total_w = len(transcript.words)
+        if total_w > 0:
+            log.info("No LLM candidates found; generating speech segment fallback candidates from %d words.", total_w)
+            min_w = max(4, int(config.min_duration_s * 1.5))
+            max_w = min(total_w, int(config.max_duration_s * 3.0))
+            step = max(min_w, 10)
+            for start_idx in range(0, total_w, step):
+                end_idx = min(total_w - 1, start_idx + max_w - 1)
+                if end_idx > start_idx:
+                    seg_text = " ".join(w.word for w in transcript.words[start_idx : end_idx + 1])
+                    candidates.append(
+                        ClipCandidate(
+                            start_word_index=start_idx,
+                            end_word_index=end_idx,
+                            title=seg_text[:40].strip() + "...",
+                            hook=seg_text[:60].strip(),
+                            score=85,
+                            reason="Speech density highlight",
+                        )
+                    )
+                if len(candidates) >= config.max_clips:
+                    break
+
+    if not candidates:
         raise HighlightError(
             "No clips were found. This can mean the video genuinely has no "
             "self-contained highlights, or that the model struggled with the "

@@ -305,6 +305,11 @@ class PipelineRunner:
             config.max_duration_s = campaign.maximum_duration
             config.max_clips = max(config.max_clips, campaign.maximum_candidates * 2)
 
+        total_duration = transcript.words[-1].end if transcript.words else 0.0
+        if total_duration > 0 and config.min_duration_s >= total_duration:
+            config.min_duration_s = max(3.0, total_duration * 0.4)
+            config.max_duration_s = max(config.min_duration_s + 1.0, total_duration)
+
         self._emit(stage, 0.0, f"Finding highlights with {provider.name}")
         clips = await highlights.detect(
             transcript,
