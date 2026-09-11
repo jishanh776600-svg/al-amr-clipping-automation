@@ -20,8 +20,9 @@ from typing import Any
 
 import httpx
 
+from .. import db, paths
 from ..config import load as load_settings
-from ..db import schema, store
+from ..db import store
 from ..db.models import Job, Source, new_id
 from ..pipeline import ingest
 from ..pipeline.runner import PipelineRunner
@@ -99,9 +100,9 @@ async def async_main() -> None:
     )
     log.info("AL AMR Worker Runner started for job %s", args.job_id)
 
-    # 1. Initialize DB schema
-    conn = store.connection()
-    schema.migrate(conn)
+    # 1. Initialize layout and DB schema
+    paths.ensure_layout()
+    db.init()
 
     def report(**kw):
         send_callback(args.callback_url, args.callback_token, **kw)
