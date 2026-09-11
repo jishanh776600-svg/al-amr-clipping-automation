@@ -110,7 +110,7 @@ def build_crop_path(
         observations = sample_faces(
             video, start_s=start_s, end_s=end_s, sample_fps=config.sample_fps
         )
-    except FaceDetectionUnavailable as exc:
+    except (FaceDetectionUnavailable, Exception) as exc:
         log.warning("Face detection unavailable (%s); using a centre crop.", exc)
         return centre_crop(
             source_w,

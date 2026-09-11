@@ -122,16 +122,19 @@ def sample_faces(
 
     observations: list[FaceObservation] = []
 
-    with FaceLandmarker.create_from_options(options) as landmarker:
-        for timestamp, frame, width, height in _iter_frames(cv2, video, start_s, end_s, sample_fps):
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            # VIDEO mode demands monotonically increasing integer milliseconds.
-            result = landmarker.detect_for_video(image, int(timestamp * 1000))
+    try:
+        with FaceLandmarker.create_from_options(options) as landmarker:
+            for timestamp, frame, width, height in _iter_frames(cv2, video, start_s, end_s, sample_fps):
+                image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+                # VIDEO mode demands monotonically increasing integer milliseconds.
+                result = landmarker.detect_for_video(image, int(timestamp * 1000))
 
-            for landmarks in result.face_landmarks or []:
-                observation = _to_observation(landmarks, timestamp, width, height)
-                if observation is not None:
-                    observations.append(observation)
+                for landmarks in result.face_landmarks or []:
+                    observation = _to_observation(landmarks, timestamp, width, height)
+                    if observation is not None:
+                        observations.append(observation)
+    except Exception as exc:
+        raise FaceDetectionUnavailable(f"MediaPipe FaceLandmarker failed: {exc}") from exc
 
     log.info("Sampled %d face observations from %s.", len(observations), video.name)
     return observations

@@ -70,6 +70,8 @@ jobs:
             libsm6 \
             libxext6 \
             libgl1 \
+            libegl1 \
+            libgles2 \
             fonts-dejavu-core \
             fonts-freefont-ttf
 
