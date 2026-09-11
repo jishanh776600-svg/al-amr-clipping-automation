@@ -50,6 +50,7 @@ secrets/
 *.srt
 *.jpg
 *.png
+!tests/test_media/*
 
 # Testing & Linting
 .pytest_cache/
