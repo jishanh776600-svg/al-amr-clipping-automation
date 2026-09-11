@@ -64,3 +64,20 @@ Thumbs.db
 
 # Other unbundled subprojects
 android_pdf_translator/
+evaluation/
+runtime_output/
+node_modules/
+frontend/dist/
+frontend/node_modules/
+android/.gradle/
+android/app/build/
+*.db
+*.db-wal
+*.db-shm
+*.apk
+*.task
+/data/
+/media/
+/work/
+/exports/
+/models/

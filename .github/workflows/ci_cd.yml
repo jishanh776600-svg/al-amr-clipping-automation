@@ -1,0 +1,84 @@
+name: AL AMR Production CI/CD & Verification
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-and-verify:
+    name: Unit & Pipeline Regression Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Web Operator Console Bundle
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build -- --outDir ../backend/autoclip/static
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install System Multimedia Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            fonts-liberation \
+            libgl1 \
+            libglib2.0-0
+
+      - name: Install Python Package & Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-asyncio
+
+      - name: Run Pytest Regression Suite
+        run: |
+          pytest -v tests/
+
+  docker-build-and-smoke-test:
+    name: Production Docker Build & Health Verification
+    needs: test-and-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: autoclip:latest
+
+      - name: Smoke Test Container Runtime & Health Probes
+        run: |
+          docker run -d --name autoclip-smoke -p 8000:8000 -e OPERATOR_TOKEN=test-token autoclip:latest
+          sleep 10
+          docker logs autoclip-smoke
+          curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/ready
+          docker stop autoclip-smoke

@@ -1,35 +1,36 @@
 # ==============================================================================
-# RENDER BLUEPRINT // AL AMR CLIPPING FREE TIER DEPLOYMENT
+# RENDER BLUEPRINT // AL AMR CLIPPING AUTONOMOUS PRODUCTION DEPLOYMENT
 # ==============================================================================
-# 100% Free Tier:
-# - Plan: free (No credit card or payment info required)
-# - Unified Web Service: FastApi + Studio UI + In-process Worker
-# - Ephemeral container storage: /tmp/project_vault
+# AutoClip Remote Production Web Service:
+# - FastAPI backend + Web Operator Console + In-Process JobQueue Worker
+# - Healthcheck endpoint: /health
+# - Persistent storage mount: /data
 # ==============================================================================
 
 services:
   # ----------------------------------------------------------------------------
-  # 1. PRODUCTION WEB SERVICE (Control Room UI + API + In-Process Processing)
+  # 1. PRODUCTION WEB SERVICE (Operator Console + API + Pipeline Worker)
   # ----------------------------------------------------------------------------
   - type: web
     name: al-amr-clipping-automation
     runtime: docker
     dockerfilePath: Dockerfile
-    plan: free
-    healthCheckPath: /healthz
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: autoclip-data
+      mountPath: /data
+      sizeGB: 10
     envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: STORAGE_DRIVER
-        value: local
-      - key: LOCAL_STORAGE_ROOT
-        value: /tmp/project_vault
-      - key: ENABLE_IN_PROCESS_WORKER
-        value: "true"
-      - key: AL_AMR_MASTER_KEY
-        generateValue: true
+      - key: AUTOCLIP_HOME
+        value: /data
       - key: OPERATOR_TOKEN
         value: alamr-op-2024-secure
-      - key: TELEGRAM_SECRET_TOKEN
+      - key: AUTOCLIP_API_KEY
+        value: alamr-op-2024-secure
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: AL_AMR_MASTER_KEY
         generateValue: true
+
 

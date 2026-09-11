@@ -1,0 +1,63 @@
+name: autoclip
+
+services:
+  autoclip:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: base
+    image: autoclip:latest
+    ports:
+      # Bound to loopback: AutoClip has no authentication, so it must not be
+      # reachable from the network by default. Change to "8000:8000" only on a
+      # network you trust.
+      - '127.0.0.1:8000:8000'
+    volumes:
+      - autoclip-data:/data
+      # Drop source files here to ingest them without uploading through the UI.
+      - ./media:/media:ro
+    environment:
+      AUTOCLIP_HOME: /data
+      AUTOCLIP_API_KEY: ${AUTOCLIP_API_KEY:-}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
+      AUTOCLIP_COOKIES_FILE: ${AUTOCLIP_COOKIES_FILE:-}
+      AUTOCLIP_OPENAI_BASE_URL: ${AUTOCLIP_OPENAI_BASE_URL:-}
+      AUTOCLIP_OPENAI_MODEL: ${AUTOCLIP_OPENAI_MODEL:-}
+      AUTOCLIP_OLLAMA_BASE_URL: ${AUTOCLIP_OLLAMA_BASE_URL:-}
+      AUTOCLIP_OLLAMA_MODEL: ${AUTOCLIP_OLLAMA_MODEL:-}
+    restart: unless-stopped
+
+  # docker compose --profile gpu up
+  autoclip-gpu:
+    profiles: ['gpu']
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: gpu
+    image: autoclip:gpu
+    ports:
+      - '127.0.0.1:8000:8000'
+    volumes:
+      - autoclip-data:/data
+      - ./media:/media:ro
+    environment:
+      AUTOCLIP_HOME: /data
+      AUTOCLIP_API_KEY: ${AUTOCLIP_API_KEY:-}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
+      AUTOCLIP_COOKIES_FILE: ${AUTOCLIP_COOKIES_FILE:-}
+      AUTOCLIP_OPENAI_BASE_URL: ${AUTOCLIP_OPENAI_BASE_URL:-}
+      AUTOCLIP_OPENAI_MODEL: ${AUTOCLIP_OPENAI_MODEL:-}
+      AUTOCLIP_OLLAMA_BASE_URL: ${AUTOCLIP_OLLAMA_BASE_URL:-}
+      AUTOCLIP_OLLAMA_MODEL: ${AUTOCLIP_OLLAMA_MODEL:-}
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  autoclip-data:

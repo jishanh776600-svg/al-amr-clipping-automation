@@ -1,38 +1,85 @@
-"""Pytest configuration and shared fixtures for Phase 1."""
+"""Shared pytest fixtures.
 
-import os
+The central concern here is isolation: nothing in the test suite may touch the
+user's real ``~/.autoclip`` directory or their real OS keyring.
+"""
+
+from __future__ import annotations
+
 import sys
-import tempfile
-import pytest
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock
 
-# Ensure src and root are in sys.path
-root_path = str(Path(__file__).parent.parent)
-src_path = str(Path(__file__).parent.parent / "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-if root_path not in sys.path:
-    sys.path.insert(0, root_path)
+import pytest
 
+# The package lives under backend/ so the repo layout matches the PRD. Editable
+# installs put it on the path already; this keeps a bare `pytest` working too.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-@pytest.fixture
-def temp_vault_dir():
-    """Provides a temporary directory for local storage driver testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
+from autoclip import config, db, paths, system  # noqa: E402
 
 
-@pytest.fixture
-def in_memory_db_url():
-    """Provides an in-memory SQLite URL for state repository tests."""
-    return "sqlite+aiosqlite:///:memory:"
+@pytest.fixture(autouse=True)
+def autoclip_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Point AUTOCLIP_HOME at a throwaway directory for every test."""
+    home = tmp_path / "autoclip_home"
+    monkeypatch.setenv(paths.ENV_HOME, str(home))
+    db.reset_connections()
+    system.report.cache_clear()
+    yield home
+    db.reset_connections()
 
 
 @pytest.fixture
-def mock_google_drive_service():
-    """Creates a mock Google Drive v3 service client."""
-    service = MagicMock()
-    files_resource = MagicMock()
-    service.files.return_value = files_resource
-    return service
+def initialised_db(autoclip_home: Path) -> int:
+    """An AutoClip home with the schema migrated up to date."""
+    return db.init()
+
+
+class FakeKeyring:
+    """In-memory stand-in for the OS keyring."""
+
+    def __init__(self, *, failing: bool = False) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+        self.failing = failing
+
+    def get_password(self, service: str, key: str) -> str | None:
+        if self.failing:
+            raise RuntimeError("keyring backend unavailable")
+        return self.store.get((service, key))
+
+    def set_password(self, service: str, key: str, value: str) -> None:
+        if self.failing:
+            raise RuntimeError("keyring backend unavailable")
+        self.store[(service, key)] = value
+
+    def delete_password(self, service: str, key: str) -> None:
+        if self.failing:
+            raise RuntimeError("keyring backend unavailable")
+        self.store.pop((service, key), None)
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> FakeKeyring:
+    """Replace the keyring backend with a working in-memory one."""
+    kr = FakeKeyring()
+    monkeypatch.setattr(config, "_keyring", lambda: kr)
+    return kr
+
+
+@pytest.fixture
+def no_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate a machine with no usable keyring backend."""
+    monkeypatch.setattr(config, "_keyring", lambda: None)
+
+
+@pytest.fixture
+def failing_keyring(monkeypatch: pytest.MonkeyPatch) -> FakeKeyring:
+    """A keyring backend that is present but raises on every operation.
+
+    Distinct from `no_keyring`: this is the machine where a backend exists and
+    is broken, which must degrade to the file fallback rather than propagate.
+    """
+    kr = FakeKeyring(failing=True)
+    monkeypatch.setattr(config, "_keyring", lambda: kr)
+    return kr
