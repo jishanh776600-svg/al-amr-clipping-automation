@@ -105,6 +105,25 @@ async def dispatch_job_to_github(
         "User-Agent": "AL-AMR-AutoClip-Dispatcher/1.0",
     }
 
+    # Idempotency check: prevent duplicate active dispatches
+    current_job = store.get_job(job.id)
+    if current_job and current_job.status in ("dispatching", "running", "processing", "uploading", "publishing") and current_job.github_run_id:
+        log.warning("Job %s is already actively running on GitHub (run_id: %s); duplicate dispatch skipped.", job.id, current_job.github_run_id)
+        return {
+            "status": "already_active",
+            "job_id": job.id,
+            "github_run_id": current_job.github_run_id,
+        }
+
+    now = store.utcnow()
+    store.update_job(
+        job.id,
+        status="dispatching",
+        dispatched_at=now,
+        github_workflow=workflow,
+        dispatch_mode="github",
+    )
+
     log.info("Dispatching job %s to GitHub Actions (%s / %s)...", job.id, repo, workflow)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -117,14 +136,14 @@ async def dispatch_job_to_github(
         except Exception as exc:
             err = f"Failed to reach GitHub API: {exc}"
             log.error(err)
-            store.update_job(job.id, status="failed", error=err)
+            store.update_job(job.id, status="failed", failed_at=store.utcnow(), finished_at=store.utcnow(), error=err)
             broker.publish(Event(type="failed", job_id=job.id, data={"error": err}))
             raise RuntimeError(err) from exc
 
     if resp.status_code not in (200, 204):
         err = f"GitHub dispatch rejected with HTTP {resp.status_code}: {resp.text}"
         log.error(err)
-        store.update_job(job.id, status="failed", error=err)
+        store.update_job(job.id, status="failed", failed_at=store.utcnow(), finished_at=store.utcnow(), error=err)
         broker.publish(Event(type="failed", job_id=job.id, data={"error": err}))
         raise RuntimeError(err)
 
@@ -134,6 +153,8 @@ async def dispatch_job_to_github(
         current_stage="dispatched_to_github",
         dispatch_mode="github",
         progress=0.05,
+        started_at=now,
+        last_heartbeat_at=now,
     )
     broker.publish(
         Event(

@@ -181,6 +181,68 @@ def _migration_v5(conn: sqlite3.Connection) -> None:
     conn.executescript(_V5)
 
 
+_V6 = """
+CREATE TABLE jobs_new (
+    id                  TEXT PRIMARY KEY,
+    source_id           TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    status              TEXT NOT NULL CHECK (status IN (
+                            'queued', 'dispatching', 'running', 'processing',
+                            'uploading', 'publishing', 'done', 'failed',
+                            'cancel_requested', 'cancelled'
+                        )),
+    current_stage       TEXT NOT NULL DEFAULT '',
+    progress            REAL NOT NULL DEFAULT 0,
+    error               TEXT,
+    provider            TEXT NOT NULL DEFAULT '',
+    settings_json       TEXT NOT NULL DEFAULT '{}',
+    dispatch_mode       TEXT NOT NULL DEFAULT 'local',
+    github_run_id       TEXT,
+    attempt             INTEGER NOT NULL DEFAULT 1,
+    max_attempts        INTEGER NOT NULL DEFAULT 3,
+    last_heartbeat_at   TEXT,
+    stale_at            TEXT,
+    github_workflow     TEXT,
+    github_job_id       TEXT,
+    github_run_url      TEXT,
+    github_run_status   TEXT,
+    github_conclusion   TEXT,
+    dispatched_at       TEXT,
+    started_at          TEXT,
+    completed_at        TEXT,
+    failed_at           TEXT,
+    cancelled_at        TEXT,
+    cancel_requested_at TEXT,
+    finished_at         TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+INSERT INTO jobs_new (
+    id, source_id, status, current_stage, progress, error,
+    provider, settings_json, dispatch_mode, github_run_id,
+    created_at, updated_at, started_at, finished_at
+)
+SELECT
+    id, source_id, status, current_stage, progress, error,
+    provider, settings_json, dispatch_mode, github_run_id,
+    created_at, updated_at, started_at, finished_at
+FROM jobs;
+
+DROP TABLE jobs;
+ALTER TABLE jobs_new RENAME TO jobs;
+
+CREATE INDEX idx_jobs_source ON jobs(source_id);
+CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX idx_jobs_github_run ON jobs(github_run_id);
+"""
+
+
+def _migration_v6(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(_V6)
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -189,6 +251,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v3,
     _migration_v4,
     _migration_v5,
+    _migration_v6,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

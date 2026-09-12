@@ -124,10 +124,24 @@ class JobOut(BaseModel):
     provider: str
     dispatch_mode: str = "local"
     github_run_id: str | None = None
+    attempt: int = 1
+    max_attempts: int = 3
+    last_heartbeat_at: str | None = None
+    stale_at: str | None = None
+    github_workflow: str | None = None
+    github_job_id: str | None = None
+    github_run_url: str | None = None
+    github_run_status: str | None = None
+    github_conclusion: str | None = None
+    dispatched_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    cancelled_at: str | None = None
+    cancel_requested_at: str | None = None
+    finished_at: str | None = None
     created_at: str
     updated_at: str
-    started_at: str | None = None
-    finished_at: str | None = None
     source: SourceOut | None = None
 
     @classmethod
@@ -142,12 +156,75 @@ class JobOut(BaseModel):
             provider=job.provider,
             dispatch_mode=job.dispatch_mode,
             github_run_id=job.github_run_id,
+            attempt=getattr(job, "attempt", 1),
+            max_attempts=getattr(job, "max_attempts", 3),
+            last_heartbeat_at=getattr(job, "last_heartbeat_at", None),
+            stale_at=getattr(job, "stale_at", None),
+            github_workflow=getattr(job, "github_workflow", None),
+            github_job_id=getattr(job, "github_job_id", None),
+            github_run_url=getattr(job, "github_run_url", None),
+            github_run_status=getattr(job, "github_run_status", None),
+            github_conclusion=getattr(job, "github_conclusion", None),
+            dispatched_at=getattr(job, "dispatched_at", None),
+            started_at=job.started_at,
+            completed_at=getattr(job, "completed_at", None),
+            failed_at=getattr(job, "failed_at", None),
+            cancelled_at=getattr(job, "cancelled_at", None),
+            cancel_requested_at=getattr(job, "cancel_requested_at", None),
+            finished_at=job.finished_at,
             created_at=job.created_at,
             updated_at=job.updated_at,
-            started_at=job.started_at,
-            finished_at=job.finished_at,
             source=SourceOut.of(source) if source else None,
         )
+
+
+class WorkerCallbackResponseOut(BaseModel):
+    status: str
+    job_id: str
+    cancel_requested: bool = False
+    message: str = "ok"
+
+
+class JobManifestClipExportOut(BaseModel):
+    export_id: str
+    ratio: str
+    style: str
+    size_bytes: int
+    drive_file_id: str | None = None
+    drive_storage_key: str | None = None
+    drive_web_view_link: str | None = None
+    download_url: str
+    stream_url: str
+    publishing_records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class JobManifestClipOut(BaseModel):
+    clip_id: str
+    rank: int
+    title: str
+    hook: str
+    duration_s: float
+    start_s: float
+    end_s: float
+    score: int
+    status: str
+    campaign_evaluation: dict[str, Any] | None = None
+    exports: list[JobManifestClipExportOut] = Field(default_factory=list)
+
+
+class JobManifestOut(BaseModel):
+    job_id: str
+    status: str
+    current_stage: str
+    progress: float
+    error: str | None = None
+    dispatch_mode: str = "local"
+    attempt: int = 1
+    max_attempts: int = 3
+    github: dict[str, Any] = Field(default_factory=dict)
+    timestamps: dict[str, Any] = Field(default_factory=dict)
+    source: dict[str, Any] | None = None
+    clips: list[JobManifestClipOut] = Field(default_factory=list)
 
 
 class WordOut(BaseModel):

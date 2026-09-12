@@ -63,7 +63,24 @@ export function JobProgress() {
     <div className="pt-14">
       <div className="rise flex flex-wrap items-baseline justify-between gap-6 border-b border-ink-800 pb-6">
         <div className="min-w-0">
-          <p className="eyebrow">{job.status}</p>
+          <div className="flex items-center gap-2">
+            <p className="eyebrow">{job.status}</p>
+            {job.attempt && (
+              <span className="rounded bg-ink-800 px-2 py-0.5 text-[10px] font-mono text-ink-300">
+                Attempt {job.attempt}/{job.max_attempts ?? 3}
+              </span>
+            )}
+            {job.dispatch_mode === 'github' && job.github_run_id && (
+              <a
+                href={job.github_run_url || `https://github.com/jishanh776600-svg/al-amr-clipping-automation/actions/runs/${job.github_run_id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded bg-sky-950 px-2 py-0.5 text-[10px] font-mono text-sky-400 hover:underline"
+              >
+                GitHub Run #{job.github_run_id} ↗
+              </a>
+            )}
+          </div>
           <h1 className="mt-2 max-w-3xl truncate font-display text-[clamp(1.75rem,4vw,3rem)] leading-tight text-ink-100">
             {job.source?.title || 'Untitled'}
           </h1>
@@ -81,10 +98,15 @@ export function JobProgress() {
             {percent}
             <span className="text-2xl text-ink-600">%</span>
           </span>
-          {(job.status === 'running' || job.status === 'queued') && (
+          {(job.status === 'running' || job.status === 'queued' || job.status === 'dispatching') && (
             <button onClick={cancel} disabled={cancelling} className="btn btn-ghost">
               {cancelling ? 'Cancelling…' : 'Cancel'}
             </button>
+          )}
+          {job.status === 'cancel_requested' && (
+            <span className="rounded bg-rose-950/60 px-3 py-1.5 text-xs font-medium text-rose-400">
+              Cancellation in progress…
+            </span>
           )}
           {(job.status === 'failed' || job.status === 'cancelled') && (
             <button onClick={retry} className="btn btn-primary">
@@ -98,6 +120,12 @@ export function JobProgress() {
           )}
         </div>
       </div>
+
+      {job.stale_at && (
+        <div className="mt-6 rounded-lg border border-amber-800/40 bg-amber-950/30 p-4 text-xs text-amber-300">
+          ⚠️ <strong>Stale Worker Warning:</strong> No heartbeat received from worker recently. Automatic recovery or retry will occur if attempt limit allows.
+        </div>
+      )}
 
       {job.error && (
         <div className="mt-8 max-w-3xl">

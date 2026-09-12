@@ -132,9 +132,67 @@ This document specifies the REST and Server-Sent Events (SSE) API contract that 
   "status": "queued",
   "current_stage": "",
   "progress": 0.0,
-  "provider": "openai"
+  "provider": "openai",
+  "attempt": 1,
+  "max_attempts": 3,
+  "dispatch_mode": "github",
+  "github_run_id": "34704050513",
+  "github_run_url": "https://github.com/jishanh776600-svg/al-amr-clipping-automation/actions/runs/34704050513"
 }
 ```
+
+#### `GET /api/jobs/{id}/manifest`
+- **Description**: Returns authoritative single-endpoint forensic manifest answering *"What happened to this clip?"*.
+- **Response**: `200 OK`
+```json
+{
+  "job_id": "job_98765",
+  "status": "done",
+  "current_stage": "completed",
+  "progress": 1.0,
+  "attempt": 1,
+  "max_attempts": 3,
+  "github": {
+    "run_id": "34704050513",
+    "workflow": "worker.yml",
+    "run_url": "https://github.com/jishanh776600-svg/al-amr-clipping-automation/actions/runs/34704050513"
+  },
+  "timestamps": {
+    "created_at": "2026-09-12T16:00:00Z",
+    "started_at": "2026-09-12T16:03:00Z",
+    "completed_at": "2026-09-12T16:09:00Z"
+  },
+  "clips": [
+    {
+      "clip_id": "clip_abc",
+      "title": "Highlight Title",
+      "exports": [
+        {
+          "export_id": "exp_xyz",
+          "ratio": "9:16",
+          "drive_file_id": "1-zsBFBUGoReZiSW75Hrq-MLNr-v4jtbs",
+          "drive_web_view_link": "https://drive.google.com/file/d/1-zsBFBUGoReZiSW75Hrq-MLNr-v4jtbs/view",
+          "publishing_records": [
+            {
+              "platform": "telegram",
+              "status": "published",
+              "external_id": "145"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### `POST /api/jobs/{id}/cancel`
+- **Description**: Gracefully cancels a queued or running job. Signals remote worker and cancels active GitHub Actions workflow if present.
+- **Response**: `200 OK` (`status`: `cancelled` or `cancel_requested`).
+
+#### `POST /api/jobs/{id}/retry`
+- **Description**: Requeues a failed or cancelled job with exponential backoff and attempt tracking.
+- **Response**: `200 OK` (`status`: `queued`, incremented `attempt`).
 
 ---
 

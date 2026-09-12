@@ -83,10 +83,15 @@ def create_job(job: Job) -> Job:
     with connection() as conn:
         conn.execute(
             """
-            INSERT INTO jobs (id, source_id, status, current_stage, progress, error,
-                              provider, settings_json, created_at, updated_at,
-                              started_at, finished_at, dispatch_mode, github_run_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (
+                id, source_id, status, current_stage, progress, error,
+                provider, settings_json, dispatch_mode, github_run_id,
+                attempt, max_attempts, last_heartbeat_at, stale_at,
+                github_workflow, github_job_id, github_run_url, github_run_status, github_conclusion,
+                dispatched_at, started_at, completed_at, failed_at, cancelled_at, cancel_requested_at,
+                finished_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -97,12 +102,26 @@ def create_job(job: Job) -> Job:
                 job.error,
                 job.provider,
                 json.dumps(job.settings),
-                job.created_at,
-                job.updated_at,
-                job.started_at,
-                job.finished_at,
                 job.dispatch_mode,
                 job.github_run_id,
+                job.attempt,
+                job.max_attempts,
+                job.last_heartbeat_at,
+                job.stale_at,
+                job.github_workflow,
+                job.github_job_id,
+                job.github_run_url,
+                job.github_run_status,
+                job.github_conclusion,
+                job.dispatched_at,
+                job.started_at,
+                job.completed_at,
+                job.failed_at,
+                job.cancelled_at,
+                job.cancel_requested_at,
+                job.finished_at,
+                job.created_at,
+                job.updated_at,
             ),
         )
     return job
@@ -149,24 +168,34 @@ def update_job(
     current_stage: str | None = None,
     progress: float | None = None,
     dispatch_mode: str | None = None,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
     github_run_id: str | None | _Unset = UNSET,
     error: str | None | _Unset = UNSET,
     started_at: str | None | _Unset = UNSET,
     finished_at: str | None | _Unset = UNSET,
+    last_heartbeat_at: str | None | _Unset = UNSET,
+    stale_at: str | None | _Unset = UNSET,
+    github_workflow: str | None | _Unset = UNSET,
+    github_job_id: str | None | _Unset = UNSET,
+    github_run_url: str | None | _Unset = UNSET,
+    github_run_status: str | None | _Unset = UNSET,
+    github_conclusion: str | None | _Unset = UNSET,
+    dispatched_at: str | None | _Unset = UNSET,
+    completed_at: str | None | _Unset = UNSET,
+    failed_at: str | None | _Unset = UNSET,
+    cancelled_at: str | None | _Unset = UNSET,
+    cancel_requested_at: str | None | _Unset = UNSET,
 ) -> None:
-    """Patch the supplied fields. Omitted fields are left untouched.
-
-    Nullable fields take :data:`UNSET` as their default, so passing ``None``
-    explicitly clears them.
-
-    ``updated_at`` is always refreshed so the UI can detect staleness.
-    """
+    """Patch the supplied fields. Omitted fields are left untouched."""
     fields: dict[str, Any] = {"updated_at": utcnow()}
     for name, value in (
         ("status", status),
         ("current_stage", current_stage),
         ("progress", progress),
         ("dispatch_mode", dispatch_mode),
+        ("attempt", attempt),
+        ("max_attempts", max_attempts),
     ):
         if value is not None:
             fields[name] = value
@@ -176,6 +205,18 @@ def update_job(
         ("started_at", started_at),
         ("finished_at", finished_at),
         ("github_run_id", github_run_id),
+        ("last_heartbeat_at", last_heartbeat_at),
+        ("stale_at", stale_at),
+        ("github_workflow", github_workflow),
+        ("github_job_id", github_job_id),
+        ("github_run_url", github_run_url),
+        ("github_run_status", github_run_status),
+        ("github_conclusion", github_conclusion),
+        ("dispatched_at", dispatched_at),
+        ("completed_at", completed_at),
+        ("failed_at", failed_at),
+        ("cancelled_at", cancelled_at),
+        ("cancel_requested_at", cancel_requested_at),
     ):
         if not isinstance(value, _Unset):
             fields[name] = value
@@ -186,6 +227,28 @@ def update_job(
             f"UPDATE jobs SET {assignments} WHERE id = ?",
             (*fields.values(), job_id),
         )
+
+
+def list_stale_jobs(heartbeat_timeout_s: float = 300.0) -> list[Job]:
+    """Find running/dispatching jobs that haven't sent a heartbeat within timeout."""
+    active_statuses = ("running", "dispatching", "processing", "uploading", "publishing")
+    placeholders = ", ".join("?" for _ in active_statuses)
+    with connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM jobs
+            WHERE status IN ({placeholders})
+              AND (
+                (last_heartbeat_at IS NOT NULL AND datetime(last_heartbeat_at) < datetime('now', ?))
+                OR
+                (last_heartbeat_at IS NULL AND started_at IS NOT NULL AND datetime(started_at) < datetime('now', ?))
+                OR
+                (last_heartbeat_at IS NULL AND started_at IS NULL AND datetime(created_at) < datetime('now', ?))
+              )
+            """,
+            (*active_statuses, f"-{int(heartbeat_timeout_s)} seconds", f"-{int(heartbeat_timeout_s)} seconds", f"-{int(heartbeat_timeout_s)} seconds"),
+        ).fetchall()
+    return [Job.from_row(r) for r in rows]
 
 
 def next_queued_job() -> Job | None:

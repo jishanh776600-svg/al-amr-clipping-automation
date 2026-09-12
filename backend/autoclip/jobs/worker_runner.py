@@ -47,6 +47,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class WorkerCancelledError(Exception):
+    """Raised when worker detects that job cancellation was requested by operator."""
+
+
 def send_callback(
     callback_url: str,
     token: str,
@@ -59,9 +63,9 @@ def send_callback(
     evaluations: list[dict[str, Any]] | None = None,
     exports: list[dict[str, Any]] | None = None,
     publishing_records: list[dict[str, Any]] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     if not callback_url:
-        return
+        return None
 
     payload: dict[str, Any] = {
         "token": token,
@@ -84,7 +88,6 @@ def send_callback(
     if publishing_records is not None:
         payload["publishing_records"] = publishing_records
 
-
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -93,8 +96,17 @@ def send_callback(
     try:
         resp = httpx.post(callback_url, json=payload, headers=headers, timeout=20.0)
         log.info("Callback to %s reported (HTTP %s): stage=%s, progress=%s", callback_url, resp.status_code, stage, progress)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") in ("cancel_requested", "cancelled"):
+                log.warning("Received cancellation signal from control plane! Terminating worker...")
+                raise WorkerCancelledError("Job cancelled by operator")
+            return data
+    except WorkerCancelledError:
+        raise
     except Exception as exc:
         log.warning("Callback to %s failed: %s", callback_url, exc)
+    return None
 
 
 async def async_main() -> None:
@@ -381,6 +393,16 @@ def main() -> None:
     args = parse_args()
     try:
         asyncio.run(async_main())
+    except WorkerCancelledError:
+        log.warning("Worker execution cleanly terminated due to job cancellation.")
+        send_callback(
+            args.callback_url,
+            args.callback_token,
+            status="cancelled",
+            stage="cancelled",
+            error="Job cancelled by operator",
+        )
+        sys.exit(0)
     except Exception as exc:
         log.exception("Worker run failed with unhandled exception: %s", exc)
         send_callback(

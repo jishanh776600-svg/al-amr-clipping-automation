@@ -13,11 +13,12 @@ from sse_starlette.sse import EventSourceResponse
 from ..config import load as load_settings
 from ..db import models, store
 from ..db.models import Job, new_id
+from ..jobs import orchestrator
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
 from ..jobs.events import Event, broker
 from ..jobs.queue import queue
 from .auth import is_valid_token
-from .schemas import JobCreateIn, JobOut, JobSettingsIn, WorkerCallbackIn
+from .schemas import JobCreateIn, JobManifestOut, JobOut, JobSettingsIn, WorkerCallbackIn
 
 log = logging.getLogger(__name__)
 
@@ -73,16 +74,13 @@ async def create_job(payload: JobCreateIn) -> JobOut:
         provider=settings.active_provider,
         settings=job_settings,
         dispatch_mode=dispatch_mode,
+        max_attempts=int(os.environ.get("AUTOCLIP_MAX_ATTEMPTS", "3")),
     )
     await asyncio.to_thread(store.create_job, job)
 
     if dispatch_mode == "github":
-        try:
-            await dispatch_job_to_github(job, source)
-        except Exception as exc:
-            log.exception("Failed to dispatch job %s to GitHub: %s", job.id, exc)
-            failed_job = await asyncio.to_thread(store.get_job, job.id)
-            return JobOut.of(failed_job or job, source)
+        # Launch dispatch asynchronously so HTTP response is returned immediately
+        asyncio.create_task(dispatch_job_to_github(job, source))
     else:
         queue.notify()
 
@@ -108,6 +106,15 @@ async def get_job(job_id: str) -> JobOut:
     return JobOut.of(job, source)
 
 
+@router.get("/{job_id}/manifest", response_model=JobManifestOut)
+async def get_job_manifest_endpoint(job_id: str) -> JobManifestOut:
+    """Retrieve authoritative forensic job manifest answering 'What happened to this clip?'."""
+    manifest = await asyncio.to_thread(orchestrator.get_job_manifest, job_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return JobManifestOut(**manifest)
+
+
 @router.get("/{job_id}/events")
 async def job_events(job_id: str, request: Request) -> EventSourceResponse:
     """Stream progress for a job as Server-Sent Events."""
@@ -116,13 +123,12 @@ async def job_events(job_id: str, request: Request) -> EventSourceResponse:
         raise HTTPException(status_code=404, detail="Job not found.")
 
     async def stream():
-        # Send the current state immediately: a client connecting mid-job (or
-        # reconnecting) must not wait for the next progress tick to render.
         current = await asyncio.to_thread(store.get_job, job_id)
         if current is not None:
+            source = await asyncio.to_thread(store.get_source, current.source_id)
             yield {
                 "event": "snapshot",
-                "data": JobOut.of(current).model_dump_json(),
+                "data": JobOut.of(current, source).model_dump_json(),
             }
             if current.status in ("done", "failed", "cancelled"):
                 return
@@ -137,26 +143,24 @@ async def job_events(job_id: str, request: Request) -> EventSourceResponse:
 
 @router.post("/{job_id}/cancel", response_model=JobOut)
 async def cancel_job(job_id: str) -> JobOut:
+    """Request graceful job cancellation."""
     job = await asyncio.to_thread(store.get_job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    if not queue.cancel(job_id):
+    if job.status in ("done", "cancelled", "failed"):
         raise HTTPException(
             status_code=409, detail=f"Job is already {job.status}; nothing to cancel."
         )
 
-    updated = await asyncio.to_thread(store.get_job, job_id)
-    return JobOut.of(updated or job)
+    updated = await orchestrator.request_job_cancellation(job_id)
+    source = await asyncio.to_thread(store.get_source, job.source_id)
+    return JobOut.of(updated, source)
 
 
 @router.post("/{job_id}/retry", response_model=JobOut)
 async def retry_job(job_id: str) -> JobOut:
-    """Requeue a failed or cancelled job.
-
-    Completed stages left their artifacts in ``work/{job_id}/``, so the retry
-    resumes at the stage that failed rather than starting over.
-    """
+    """Requeue a failed or cancelled job with exponential backoff and attempt tracking."""
     job = await asyncio.to_thread(store.get_job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -166,34 +170,39 @@ async def retry_job(job_id: str) -> JobOut:
             detail=f"Only failed or cancelled jobs can be retried (this one is {job.status}).",
         )
 
+    if job.attempt >= job.max_attempts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job {job_id} has exceeded maximum allowed attempts ({job.max_attempts}).",
+        )
+
+    next_attempt = job.attempt + 1
+    now = store.utcnow()
+    await asyncio.to_thread(
+        store.update_job,
+        job_id,
+        status="queued",
+        attempt=next_attempt,
+        error=None,
+        progress=0.0,
+        current_stage="requeued",
+        last_heartbeat_at=None,
+        stale_at=None,
+        failed_at=None,
+        cancelled_at=None,
+        cancel_requested_at=None,
+    )
+    broker.publish(Event(type="retried", job_id=job_id, data={"attempt": next_attempt}))
+
+    source = await asyncio.to_thread(store.get_source, job.source_id)
     if job.dispatch_mode == "github" or is_github_dispatch_enabled():
-        await asyncio.to_thread(
-            store.update_job,
-            job_id,
-            status="queued",
-            error=None,
-            progress=0.0,
-            dispatch_mode="github",
-        )
-        source = await asyncio.to_thread(store.get_source, job.source_id)
         if source:
-            try:
-                await dispatch_job_to_github(job, source)
-            except Exception as exc:
-                log.exception("Failed to redispatch job %s to GitHub: %s", job_id, exc)
+            asyncio.create_task(dispatch_job_to_github(job, source))
     else:
-        await asyncio.to_thread(
-            store.update_job,
-            job_id,
-            status="queued",
-            error=None,
-            progress=0.0,
-            dispatch_mode="local",
-        )
         queue.notify()
 
     updated = await asyncio.to_thread(store.get_job, job_id)
-    return JobOut.of(updated or job)
+    return JobOut.of(updated or job, source)
 
 
 @router.get("/{job_id}/clips")
@@ -208,7 +217,7 @@ async def worker_callback(
     job_id: str,
     payload: WorkerCallbackIn,
 ) -> JobOut:
-    """Receive live execution and completion updates from on-demand worker."""
+    """Receive live execution, heartbeat, and completion updates from on-demand worker."""
     job = await asyncio.to_thread(store.get_job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -216,21 +225,44 @@ async def worker_callback(
     if not is_valid_token(payload.token):
         raise HTTPException(status_code=401, detail="Unauthorized worker callback.")
 
-    update_kwargs: dict[str, Any] = {}
+    now = store.utcnow()
+    update_kwargs: dict[str, Any] = {
+        "last_heartbeat_at": now,
+    }
+
+    # State transition & duplicate check
     if payload.status is not None:
-        update_kwargs["status"] = payload.status
-        if payload.status == "running" and not job.started_at:
-            update_kwargs["started_at"] = store.utcnow()
-        elif payload.status in ("done", "failed"):
-            update_kwargs["finished_at"] = store.utcnow()
+        if job.status == "done" and payload.status == "done":
+            # Duplicate completion callback: idempotent no-op for status
+            pass
+        elif not orchestrator.can_transition(job.status, payload.status):
+            log.warning(
+                "Ignoring illegal callback status transition for job %s: '%s' -> '%s'",
+                job_id,
+                job.status,
+                payload.status,
+            )
+        else:
+            update_kwargs["status"] = payload.status
+            if payload.status == "running" and not job.started_at:
+                update_kwargs["started_at"] = now
+            elif payload.status == "done":
+                update_kwargs["completed_at"] = now
+                update_kwargs["finished_at"] = now
+            elif payload.status == "failed":
+                update_kwargs["failed_at"] = now
+                update_kwargs["finished_at"] = now
+
     if payload.stage is not None:
         update_kwargs["current_stage"] = payload.stage
     if payload.progress is not None:
-        update_kwargs["progress"] = payload.progress
+        if payload.progress >= job.progress or payload.status in ("queued", "failed"):
+            update_kwargs["progress"] = payload.progress
     if payload.error is not None:
         update_kwargs["error"] = payload.error
     if payload.github_run_id is not None:
         update_kwargs["github_run_id"] = payload.github_run_id
+        update_kwargs["github_run_url"] = f"https://github.com/jishanh776600-svg/al-amr-clipping-automation/actions/runs/{payload.github_run_id}"
 
     if update_kwargs:
         await asyncio.to_thread(store.update_job, job_id, **update_kwargs)

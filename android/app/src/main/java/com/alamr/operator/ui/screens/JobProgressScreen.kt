@@ -116,15 +116,24 @@ fun JobProgressScreen(
                     )
 
                     Text(
-                        text = "Status: ${j.status.uppercase()}",
+                        text = "Status: ${j.status.uppercase()}${if (j.attempt > 1) " (Attempt ${j.attempt}/${j.max_attempts})" else ""}",
                         color = when (j.status) {
                             "done" -> Emerald400
                             "failed" -> Rose500
+                            "cancel_requested" -> Rose400
                             else -> Sodium400
                         },
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
+
+                    if (j.stale_at != null) {
+                        Text(
+                            text = "⚠ Stale warning: No worker heartbeat recently. Auto-recovery active.",
+                            color = Sodium400,
+                            fontSize = 11.sp
+                        )
+                    }
 
                     j.error?.let { err ->
                         Text(text = "Error: $err", color = Rose500, fontSize = 11.sp)

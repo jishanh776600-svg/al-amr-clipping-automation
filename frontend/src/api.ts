@@ -21,7 +21,17 @@ export interface Source {
   created_at: string
 }
 
-export type JobStatus = 'queued' | 'running' | 'failed' | 'done' | 'cancelled'
+export type JobStatus =
+  | 'queued'
+  | 'dispatching'
+  | 'running'
+  | 'processing'
+  | 'uploading'
+  | 'publishing'
+  | 'done'
+  | 'failed'
+  | 'cancel_requested'
+  | 'cancelled'
 
 export interface Job {
   id: string
@@ -31,12 +41,74 @@ export interface Job {
   progress: number
   error: string | null
   provider: string
+  dispatch_mode?: string
+  github_run_id?: string | null
+  github_run_url?: string | null
+  github_workflow?: string | null
+  attempt?: number
+  max_attempts?: number
+  last_heartbeat_at?: string | null
+  stale_at?: string | null
+  dispatched_at?: string | null
+  started_at: string | null
+  completed_at?: string | null
+  failed_at?: string | null
+  cancelled_at?: string | null
+  cancel_requested_at?: string | null
+  finished_at: string | null
   created_at: string
   updated_at: string
-  started_at: string | null
-  finished_at: string | null
   source: Source | null
   settings?: Record<string, any>
+}
+
+export interface JobManifestClipExport {
+  export_id: string
+  ratio: string
+  style: string
+  size_bytes: number
+  drive_file_id?: string | null
+  drive_storage_key?: string | null
+  drive_web_view_link?: string | null
+  download_url: string
+  stream_url: string
+  publishing_records: PublishingRecord[]
+}
+
+export interface JobManifestClip {
+  clip_id: string
+  rank: number
+  title: string
+  hook: string
+  duration_s: number
+  start_s: number
+  end_s: number
+  score: number
+  status: string
+  campaign_evaluation?: any
+  exports: JobManifestClipExport[]
+}
+
+export interface JobManifest {
+  job_id: string
+  status: JobStatus
+  current_stage: string
+  progress: number
+  error: string | null
+  dispatch_mode: string
+  attempt: number
+  max_attempts: number
+  github: {
+    run_id?: string | null
+    workflow?: string | null
+    job_id?: string | null
+    run_url?: string | null
+    run_status?: string | null
+    conclusion?: string | null
+  }
+  timestamps: Record<string, string | null>
+  source?: Source | null
+  clips: JobManifestClip[]
 }
 
 export interface ExportRecord {
@@ -372,6 +444,7 @@ export const api = {
 
   listJobs: (limit = 50) => request<Job[]>(`/api/jobs?limit=${limit}`),
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
+  getJobManifest: (id: string) => request<JobManifest>(`/api/jobs/${id}/manifest`),
 
   createJob: (sourceId: string, settings: JobSettingsOverrides = {}, campaign?: CampaignBrief | null) =>
     request<Job>('/api/jobs', {

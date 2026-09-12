@@ -54,6 +54,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     broker.bind_loop(asyncio.get_running_loop())
 
+    # Step 9: Reconcile in-flight jobs and perform crash recovery on startup
+    from .jobs import orchestrator
+    orchestrator.reconcile_on_startup()
+
+    async def _stale_sweeper():
+        while True:
+            try:
+                await asyncio.sleep(60.0)
+                await asyncio.to_thread(orchestrator.sweep_stale_jobs)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.warning("Background stale sweeper error: %s", exc)
+
+    sweeper_task = asyncio.create_task(_stale_sweeper(), name="alamr-stale-sweeper")
+
     # Serving the API without a worker is useful for debugging a stuck queue and
     # makes API tests deterministic — jobs stay queued instead of racing off.
     worker_enabled = os.environ.get(ENV_NO_WORKER) != "1"
@@ -67,6 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        sweeper_task.cancel()
         if worker_enabled:
             await queue.stop()
 

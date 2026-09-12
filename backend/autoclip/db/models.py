@@ -15,7 +15,18 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 SourceType = Literal["youtube", "upload"]
-JobStatus = Literal["queued", "running", "failed", "done", "cancelled"]
+JobStatus = Literal[
+    "queued",
+    "dispatching",
+    "running",
+    "processing",
+    "uploading",
+    "publishing",
+    "done",
+    "failed",
+    "cancel_requested",
+    "cancelled",
+]
 ClipStatus = Literal["candidate", "kept", "discarded", "exported"]
 
 
@@ -78,10 +89,24 @@ class Job:
     settings: dict[str, Any] = field(default_factory=dict)
     dispatch_mode: str = "local"
     github_run_id: str | None = None
+    attempt: int = 1
+    max_attempts: int = 3
+    last_heartbeat_at: str | None = None
+    stale_at: str | None = None
+    github_workflow: str | None = None
+    github_job_id: str | None = None
+    github_run_url: str | None = None
+    github_run_status: str | None = None
+    github_conclusion: str | None = None
+    dispatched_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    cancelled_at: str | None = None
+    cancel_requested_at: str | None = None
+    finished_at: str | None = None
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
-    started_at: str | None = None
-    finished_at: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Job:
@@ -97,10 +122,24 @@ class Job:
             settings=json.loads(row["settings_json"] or "{}"),
             dispatch_mode=row["dispatch_mode"] if "dispatch_mode" in keys else "local",
             github_run_id=row["github_run_id"] if "github_run_id" in keys else None,
+            attempt=row["attempt"] if "attempt" in keys else 1,
+            max_attempts=row["max_attempts"] if "max_attempts" in keys else 3,
+            last_heartbeat_at=row["last_heartbeat_at"] if "last_heartbeat_at" in keys else None,
+            stale_at=row["stale_at"] if "stale_at" in keys else None,
+            github_workflow=row["github_workflow"] if "github_workflow" in keys else None,
+            github_job_id=row["github_job_id"] if "github_job_id" in keys else None,
+            github_run_url=row["github_run_url"] if "github_run_url" in keys else None,
+            github_run_status=row["github_run_status"] if "github_run_status" in keys else None,
+            github_conclusion=row["github_conclusion"] if "github_conclusion" in keys else None,
+            dispatched_at=row["dispatched_at"] if "dispatched_at" in keys else None,
+            started_at=row["started_at"] if "started_at" in keys else None,
+            completed_at=row["completed_at"] if "completed_at" in keys else None,
+            failed_at=row["failed_at"] if "failed_at" in keys else None,
+            cancelled_at=row["cancelled_at"] if "cancelled_at" in keys else None,
+            cancel_requested_at=row["cancel_requested_at"] if "cancel_requested_at" in keys else None,
+            finished_at=row["finished_at"] if "finished_at" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            started_at=row["started_at"],
-            finished_at=row["finished_at"],
         )
 
 
