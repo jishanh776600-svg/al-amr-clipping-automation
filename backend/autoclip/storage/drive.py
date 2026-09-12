@@ -35,11 +35,13 @@ class GoogleDriveStorage:
         client_secret: Optional[str] = None,
         refresh_token: Optional[str] = None,
         root_folder_id: Optional[str] = None,
+        scopes: Optional[list[str]] = None,
     ) -> None:
         self.client_id = client_id or os.getenv("GOOGLE_DRIVE_CLIENT_ID", "")
         self.client_secret = client_secret or os.getenv("GOOGLE_DRIVE_CLIENT_SECRET", "")
         self.refresh_token = refresh_token or os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN", "")
         self.root_folder_id = root_folder_id or os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "")
+        self.scopes = scopes
 
         self._folder_cache: Dict[str, str] = {}
         self._service: Any = None
@@ -71,7 +73,7 @@ class GoogleDriveStorage:
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=self.client_id,
                 client_secret=self.client_secret,
-                scopes=_DRIVE_SCOPES,
+                scopes=self.scopes,
             )
             self._service = build("drive", "v3", credentials=self._creds, cache_discovery=False)
         return self._service
