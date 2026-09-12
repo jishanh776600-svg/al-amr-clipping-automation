@@ -1,22 +1,29 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type Job, type Clip, formatDuration } from '../api'
+import { api, type Job, type Clip, formatDuration, onAuthChange } from '../api'
+import { AuthModal } from '../components/AuthModal'
 
 export function MissionControl() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [clips, setClips] = useState<Clip[]>([])
   const [readiness, setReadiness] = useState<{ status: string; ready: boolean; checks: Record<string, any> } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isUnauthorized, setIsUnauthorized] = useState(false)
+  const [showAuthModal, setShowAuthModal] = useState(false)
 
   const refresh = () => {
     Promise.all([
-      api.listJobs(20).catch(() => []),
+      api.listJobs(20).catch((err) => {
+        if (err?.status === 401) setIsUnauthorized(true)
+        return []
+      }),
       api.listAllClips(8).catch(() => []),
       api.ready().catch(() => null),
     ]).then(([jList, cList, rStatus]) => {
       setJobs(jList)
       setClips(cList)
       setReadiness(rStatus)
+      if (jList.length > 0) setIsUnauthorized(false)
       setLoading(false)
     })
   }
@@ -24,7 +31,11 @@ export function MissionControl() {
   useEffect(() => {
     refresh()
     const interval = setInterval(refresh, 5000)
-    return () => clearInterval(interval)
+    const unsub = onAuthChange(() => refresh())
+    return () => {
+      clearInterval(interval)
+      unsub()
+    }
   }, [])
 
   const runningJob = jobs.find((j) => j.status === 'running')
@@ -66,6 +77,24 @@ export function MissionControl() {
           </button>
         </div>
       </div>
+
+      {isUnauthorized && (
+        <div className="rounded-xl border border-sodium-500/40 bg-ink-850 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">🔒</span>
+            <div>
+              <p className="text-sm font-semibold text-ink-100">Operator Authentication Required</p>
+              <p className="mt-0.5 text-xs text-ink-400">Remote control plane endpoints are locked. Enter your token to view active jobs and telemetry.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className="btn btn-primary shrink-0 text-xs"
+          >
+            Authenticate
+          </button>
+        </div>
+      )}
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:gap-6">
@@ -242,6 +271,12 @@ export function MissionControl() {
           </div>
         </div>
       </div>
+
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={() => refresh()}
+      />
     </div>
   )
 }

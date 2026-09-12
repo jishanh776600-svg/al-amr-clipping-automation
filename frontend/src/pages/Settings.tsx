@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import {
   api,
+  ApiError,
   getStoredToken,
   setStoredToken,
   type ProviderStatus,
@@ -21,29 +22,61 @@ export function Settings() {
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [providers, setProviders] = useState<ProviderStatus[]>([])
   const [system, setSystem] = useState<SystemStatus | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [saved, setSaved] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState(() => getStoredToken() || '')
   const [tokenStatus, setTokenStatus] = useState<string | null>(null)
+  const [verifying, setVerifying] = useState(false)
 
-  const reload = () => {
-    void api.getSettings().then(setSettings).catch((e) => setError(e as Error))
-    void api.providerStatus().then(setProviders).catch(() => undefined)
-    void api.system().then(setSystem).catch(() => undefined)
-  }
-
-  const handleSaveToken = async () => {
-    setStoredToken(apiKeyInput.trim() || null)
+  const reload = async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const ready = await api.ready()
-      setTokenStatus(ready.ready ? 'Token verified — Remote Node Ready!' : 'Token accepted, node checking components')
-      reload()
-    } catch (err) {
-      setTokenStatus(`Authentication failed: ${(err as Error).message}`)
+      const [sData, pData, sysData] = await Promise.all([
+        api.getSettings(),
+        api.providerStatus().catch(() => []),
+        api.system().catch(() => null),
+      ])
+      setSettings(sData)
+      setProviders(pData)
+      setSystem(sysData)
+    } catch (err: any) {
+      setError(err)
+    } finally {
+      setLoading(false)
     }
   }
 
-  useEffect(reload, [])
+  const handleSaveToken = async () => {
+    const trimmed = apiKeyInput.trim()
+    setVerifying(true)
+    setTokenStatus(null)
+    try {
+      if (trimmed) {
+        const isValid = await api.testAuth(trimmed)
+        if (isValid) {
+          setStoredToken(trimmed)
+          setTokenStatus('✓ Token verified and connected!')
+          await reload()
+        } else {
+          setTokenStatus('Authentication rejected: HTTP 401 Unauthorized. Check token.')
+        }
+      } else {
+        setStoredToken(null)
+        setTokenStatus('Token cleared.')
+        await reload()
+      }
+    } catch (err: any) {
+      setTokenStatus(`Verification failed: ${err.message || 'Server error'}`)
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  useEffect(() => {
+    reload()
+  }, [])
 
   const patch = async (update: Partial<SettingsData>) => {
     setError(null)
@@ -56,7 +89,92 @@ export function Settings() {
     }
   }
 
-  if (!settings) return <p className="pt-24 text-sm text-ink-500">Loading…</p>
+  if (loading && !settings && !error) {
+    return (
+      <div className="max-w-4xl pt-14">
+        <h1 className="font-display text-[clamp(2rem,4vw,3rem)] leading-none text-ink-100">
+          Settings
+        </h1>
+        <p className="mt-6 text-sm text-ink-500">Loading settings from remote node…</p>
+      </div>
+    )
+  }
+
+  if (!settings && error) {
+    const is401 = (error as ApiError).status === 401
+    return (
+      <div className="max-w-4xl pt-14">
+        <div className="rise flex items-baseline justify-between border-b border-ink-800 pb-5">
+          <h1 className="font-display text-[clamp(2rem,4vw,3rem)] leading-none text-ink-100">
+            Settings
+          </h1>
+        </div>
+
+        <div className="mt-8 rounded-xl border border-sodium-500/40 bg-ink-850 p-6 shadow-xl shadow-black/50">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🔒</span>
+            <div>
+              <h2 className="font-display text-lg font-bold text-ink-100">
+                {is401 ? 'Operator Authentication Required' : 'Failed to Load Settings'}
+              </h2>
+              <p className="mt-1 text-xs text-ink-400">
+                {is401
+                  ? 'Private endpoints on this remote node require an operator credential (OPERATOR_TOKEN or AL_AMR_MASTER_KEY).'
+                  : error.message}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 border-t border-ink-800 pt-5">
+            <label className="eyebrow">Enter Operator API Key</label>
+            <div className="mt-2 flex gap-3">
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Paste your remote OPERATOR_TOKEN…"
+                className="field text-xs font-mono"
+              />
+              <button
+                type="button"
+                disabled={verifying || !apiKeyInput.trim()}
+                onClick={handleSaveToken}
+                className="btn btn-primary shrink-0 text-xs"
+              >
+                {verifying ? 'Verifying…' : 'Save & Connect'}
+              </button>
+            </div>
+            {tokenStatus && (
+              <p className="mt-2.5 text-xs text-sodium-400 font-medium">{tokenStatus}</p>
+            )}
+            <p className="mt-2 text-[11px] text-ink-500">
+              Stored exclusively in browser <code className="text-ink-400">localStorage</code> and transmitted as <code className="text-ink-400">Authorization: Bearer &lt;token&gt;</code>.
+            </p>
+          </div>
+
+          {!is401 && (
+            <div className="mt-4 pt-4 border-t border-ink-800">
+              <button onClick={reload} className="btn btn-quiet text-xs">
+                ↻ Retry Loading Settings
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (!settings) {
+    return (
+      <div className="max-w-4xl pt-14">
+        <h1 className="font-display text-[clamp(2rem,4vw,3rem)] leading-none text-ink-100">
+          Settings
+        </h1>
+        <p className="mt-6 text-sm text-ink-500">No settings available.</p>
+        <button onClick={reload} className="mt-4 btn btn-quiet text-xs">↻ Retry</button>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-4xl pt-14">

@@ -373,7 +373,17 @@ export function setStoredToken(token: string | null): void {
     } else {
       localStorage.removeItem('alamr_api_key')
     }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('alamr:auth-changed', { detail: token }))
+    }
   }
+}
+
+export function onAuthChange(callback: (token: string) => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const handler = () => callback(getStoredToken())
+  window.addEventListener('alamr:auth-changed', handler)
+  return () => window.removeEventListener('alamr:auth-changed', handler)
 }
 
 export function resolveUrl(path: string): string {
@@ -400,6 +410,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('alamr:auth-unauthorized', { detail: { path, status: 401 } }))
+    }
     let message = `${response.status} ${response.statusText}`
     let hint = ''
     try {
@@ -424,6 +437,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  testAuth: async (token: string): Promise<boolean> => {
+    const fullUrl = resolveUrl('/api/settings')
+    try {
+      const resp = await fetch(fullUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-API-Key': token,
+        },
+      })
+      return resp.ok
+    } catch {
+      return false
+    }
+  },
   health: () => request<{ status: string; version: string }>('/api/health'),
   system: () => request<SystemStatus>('/api/system'),
   fetchModels: () => request<void>('/api/system/models', { method: 'POST' }),

@@ -1,26 +1,43 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type Job } from '../api'
+import { api, type Job, onAuthChange } from '../api'
+import { AuthModal } from '../components/AuthModal'
+import { ErrorNote } from '../components/ErrorNote'
 
 export function JobsList() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [isUnauthorized, setIsUnauthorized] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+  const [showAuthModal, setShowAuthModal] = useState(false)
 
   const fetchJobs = () => {
     api
       .listJobs(50)
       .then((data) => {
         setJobs(data)
-        setLoading(false)
+        setIsUnauthorized(false)
+        setError(null)
       })
-      .catch(() => setLoading(false))
+      .catch((err) => {
+        if (err?.status === 401) {
+          setIsUnauthorized(true)
+        } else {
+          setError(err)
+        }
+      })
+      .finally(() => setLoading(false))
   }
 
   useEffect(() => {
     fetchJobs()
     const timer = setInterval(fetchJobs, 5000)
-    return () => clearInterval(timer)
+    const unsub = onAuthChange(() => fetchJobs())
+    return () => {
+      clearInterval(timer)
+      unsub()
+    }
   }, [])
 
   const handleCancel = async (jobId: string) => {
@@ -28,6 +45,8 @@ export function JobsList() {
     try {
       await api.cancelJob(jobId)
       fetchJobs()
+    } catch (err: any) {
+      setError(err)
     } finally {
       setActionLoading(null)
     }
@@ -38,6 +57,8 @@ export function JobsList() {
     try {
       await api.retryJob(jobId)
       fetchJobs()
+    } catch (err: any) {
+      setError(err)
     } finally {
       setActionLoading(null)
     }
@@ -67,6 +88,30 @@ export function JobsList() {
           </button>
         </div>
       </div>
+
+      {isUnauthorized && (
+        <div className="rounded-xl border border-sodium-500/40 bg-ink-850 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🔒</span>
+            <div>
+              <h2 className="font-display text-base font-bold text-ink-100">Operator Authentication Required</h2>
+              <p className="mt-0.5 text-xs text-ink-400">Viewing production jobs requires an operator token (OPERATOR_TOKEN / AL_AMR_MASTER_KEY).</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className="btn btn-primary shrink-0 text-xs"
+          >
+            Authenticate Now
+          </button>
+        </div>
+      )}
+
+      {error && !isUnauthorized && (
+        <div className="mt-4">
+          <ErrorNote error={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-ink-800 bg-ink-850 shadow-sm">
         <div className="overflow-x-auto">
@@ -174,6 +219,12 @@ export function JobsList() {
           </table>
         </div>
       </div>
+
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={() => fetchJobs()}
+      />
     </div>
   )
 }

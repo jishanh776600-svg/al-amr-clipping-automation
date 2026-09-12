@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 
-import { api, type SystemStatus } from './api'
+import { api, getStoredToken, onAuthChange, type SystemStatus } from './api'
+import { AuthModal } from './components/AuthModal'
 
 /**
  * Application shell.
@@ -11,9 +12,20 @@ import { api, type SystemStatus } from './api'
  */
 export function App() {
   const [system, setSystem] = useState<SystemStatus | null>(null)
+  const [hasToken, setHasToken] = useState<boolean>(() => Boolean(getStoredToken()))
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+
+  const checkSystem = () => {
+    api.system().then(setSystem).catch(() => setSystem(null))
+  }
 
   useEffect(() => {
-    api.system().then(setSystem).catch(() => setSystem(null))
+    checkSystem()
+    const unsub = onAuthChange((token) => {
+      setHasToken(Boolean(token))
+      checkSystem()
+    })
+    return unsub
   }, [])
 
   return (
@@ -50,7 +62,22 @@ export function App() {
             </TopLink>
           </nav>
 
-          <div className="ml-auto flex items-baseline gap-5">
+          <div className="ml-auto flex items-center gap-4">
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                hasToken
+                  ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'border border-sodium-500/50 bg-sodium-500/15 text-sodium-400 hover:bg-sodium-500/25 animate-pulse'
+              }`}
+              title={hasToken ? 'Operator token configured. Click to manage.' : 'Authentication required for remote operations. Click to connect.'}
+            >
+              <span className={hasToken ? 'text-emerald-400' : 'text-sodium-400'}>
+                {hasToken ? '●' : '🔑'}
+              </span>
+              <span>{hasToken ? 'Authenticated' : 'Enter Token'}</span>
+            </button>
+
             {system && <SystemBadge system={system} />}
           </div>
         </div>
@@ -59,6 +86,12 @@ export function App() {
       <main className="mx-auto max-w-[1600px] px-6 pb-24 lg:px-10">
         <Outlet />
       </main>
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={() => checkSystem()}
+      />
     </div>
   )
 }

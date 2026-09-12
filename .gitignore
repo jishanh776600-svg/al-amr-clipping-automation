@@ -58,6 +58,7 @@ secrets/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+*.tsbuildinfo
 
 # OS specific
 .DS_Store

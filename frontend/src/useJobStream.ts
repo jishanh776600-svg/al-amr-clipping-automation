@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-
-import { api, resolveUrl, type Job } from './api'
+import { api, getStoredToken, API_KEY, resolveUrl, type Job } from './api'
 
 export interface StageProgress {
   stage: string
@@ -37,7 +36,9 @@ export function useJobStream(jobId: string | undefined) {
       })
       .catch(() => undefined)
 
-    const source = new EventSource(resolveUrl(`/api/jobs/${jobId}/events`))
+    const token = getStoredToken() || API_KEY
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : ''
+    const source = new EventSource(resolveUrl(`/api/jobs/${jobId}/events${tokenParam}`))
     sourceRef.current = source
 
     const close = () => {
