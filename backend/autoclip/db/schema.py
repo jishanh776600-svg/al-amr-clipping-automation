@@ -243,6 +243,28 @@ def _migration_v6(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+_V7 = """
+CREATE TABLE campaign_guidelines (
+    id             TEXT PRIMARY KEY,
+    job_id         TEXT REFERENCES jobs(id) ON DELETE CASCADE,
+    filename       TEXT NOT NULL,
+    mime_type      TEXT NOT NULL,
+    size_bytes     INTEGER NOT NULL DEFAULT 0,
+    storage_path   TEXT NOT NULL,
+    extracted_text TEXT NOT NULL DEFAULT '',
+    parsed_brief   TEXT NOT NULL DEFAULT '{}',
+    status         TEXT NOT NULL DEFAULT 'extracted',
+    error          TEXT,
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX idx_guidelines_job ON campaign_guidelines(job_id);
+"""
+
+
+def _migration_v7(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V7)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -252,6 +274,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v4,
     _migration_v5,
     _migration_v6,
+    _migration_v7,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

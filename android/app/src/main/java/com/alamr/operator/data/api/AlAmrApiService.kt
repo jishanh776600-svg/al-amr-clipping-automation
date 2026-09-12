@@ -1,6 +1,7 @@
 package com.alamr.operator.data.api
 
 import com.alamr.operator.data.model.*
+import okhttp3.MultipartBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -23,6 +24,12 @@ interface AlAmrApiService {
 
     @POST("api/sources/youtube")
     suspend fun ingestYouTube(@Body request: IngestYouTubeRequest): Source
+
+    @Multipart
+    @POST("api/jobs/guidelines/upload")
+    suspend fun uploadGuideline(
+        @Part file: MultipartBody.Part
+    ): CampaignGuidelineResponse
 
     @POST("api/jobs")
     suspend fun createJob(

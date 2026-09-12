@@ -60,6 +60,20 @@ export interface Job {
   updated_at: string
   source: Source | null
   settings?: Record<string, any>
+  guideline?: CampaignGuideline | null
+}
+
+export interface CampaignGuideline {
+  id: string
+  job_id?: string | null
+  filename: string
+  mime_type: string
+  size_bytes: number
+  extracted_text: string
+  parsed_brief: Record<string, any>
+  status: string
+  error?: string | null
+  created_at: string
 }
 
 export interface JobManifestClipExport {
@@ -108,6 +122,8 @@ export interface JobManifest {
   }
   timestamps: Record<string, string | null>
   source?: Source | null
+  guideline?: Record<string, any> | null
+  campaign?: Record<string, any> | null
   clips: JobManifestClip[]
 }
 
@@ -473,10 +489,35 @@ export const api = {
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
   getJobManifest: (id: string) => request<JobManifest>(`/api/jobs/${id}/manifest`),
 
-  createJob: (sourceId: string, settings: JobSettingsOverrides = {}, campaign?: CampaignBrief | null) =>
+  uploadGuideline: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<CampaignGuideline>('/api/jobs/guidelines/upload', {
+      method: 'POST',
+      body: form,
+    })
+  },
+
+  createAutonomousJob: (form: FormData) =>
+    request<Job>('/api/jobs/create-autonomous', {
+      method: 'POST',
+      body: form,
+    }),
+
+  createJob: (
+    sourceId: string,
+    settings: JobSettingsOverrides = {},
+    campaign?: CampaignBrief | null,
+    guidelineId?: string | null,
+  ) =>
     request<Job>('/api/jobs', {
       method: 'POST',
-      body: JSON.stringify({ source_id: sourceId, settings, ...(campaign ? { campaign } : {}) }),
+      body: JSON.stringify({
+        source_id: sourceId,
+        settings,
+        ...(campaign ? { campaign } : {}),
+        ...(guidelineId ? { guideline_id: guidelineId } : {}),
+      }),
     }),
 
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),

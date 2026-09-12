@@ -3,22 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
+from .. import paths
+from ..campaign.extractor import (
+    GuidelineExtractionError,
+    extract_guideline_text,
+    parse_guidelines_into_brief,
+)
 from ..config import load as load_settings
 from ..db import models, store
-from ..db.models import Job, new_id
+from ..db.models import CampaignGuideline, Job, new_id
 from ..jobs import orchestrator
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
 from ..jobs.events import Event, broker
 from ..jobs.queue import queue
+from ..pipeline import ingest
 from .auth import is_valid_token
-from .schemas import JobCreateIn, JobManifestOut, JobOut, JobSettingsIn, WorkerCallbackIn
+from .schemas import (
+    CampaignGuidelineOut,
+    JobCreateIn,
+    JobManifestOut,
+    JobOut,
+    JobSettingsIn,
+    WorkerCallbackIn,
+)
 
 log = logging.getLogger(__name__)
 
@@ -51,21 +70,217 @@ def _apply_overrides(settings, overrides: JobSettingsIn):
     return merged
 
 
+@router.post("/guidelines/upload", response_model=CampaignGuidelineOut, status_code=201)
+async def upload_guideline(file: UploadFile = File(...)) -> CampaignGuidelineOut:
+    """Upload a PDF or DOCX campaign guideline document, extract requirements, and persist."""
+    content = await file.read()
+    filename = file.filename or "guideline.pdf"
+    mime_type = file.content_type or "application/octet-stream"
+
+    try:
+        raw_text, ext = extract_guideline_text(filename, content)
+    except GuidelineExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "hint": exc.hint},
+        ) from exc
+
+    brief = parse_guidelines_into_brief(raw_text, filename)
+    guideline_id = new_id()
+
+    # Save original file to durable storage
+    storage_dir = paths.guidelines_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_file = storage_dir / f"{guideline_id}_{filename}"
+    storage_file.write_bytes(content)
+
+    guideline = CampaignGuideline(
+        id=guideline_id,
+        job_id=None,
+        filename=filename,
+        mime_type=mime_type,
+        size_bytes=len(content),
+        storage_path=str(storage_file),
+        extracted_text=raw_text,
+        parsed_brief=brief.model_dump(mode="json"),
+        status="extracted",
+        error=None,
+    )
+    await asyncio.to_thread(store.create_guideline, guideline)
+    return CampaignGuidelineOut.of(guideline)
+
+
+@router.post("/create-autonomous", response_model=JobOut, status_code=201)
+async def create_autonomous_job(
+    url: str | None = Form(None),
+    video_file: UploadFile | None = File(None),
+    guideline_file: UploadFile | None = File(None),
+    guideline_id: str | None = Form(None),
+    overrides: str | None = Form(None),
+) -> JobOut:
+    """One-click autonomous job creation: accepts Source (URL or Video File) + Campaign Guideline (PDF or DOCX)."""
+    # 1. Ingest or resolve Source
+    source = None
+    if url and url.strip():
+        clean_url = url.strip()
+        settings = load_settings().ingest
+        try:
+            source = await asyncio.to_thread(ingest.ingest_url, clean_url, settings)
+            await asyncio.to_thread(store.create_source, source)
+        except ingest.IngestError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "hint": exc.hint},
+            ) from exc
+    elif video_file and video_file.filename:
+        suffix = Path(video_file.filename).suffix.lower()
+        if suffix not in ingest.ACCEPTED_SUFFIXES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported media extension '{suffix}'. Accepted: {', '.join(sorted(ingest.ACCEPTED_SUFFIXES))}",
+            )
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            shutil.copyfileobj(video_file.file, tmp)
+        try:
+            source = await asyncio.to_thread(ingest.ingest_file, tmp_path, move=True, title=Path(video_file.filename).stem)
+            await asyncio.to_thread(store.create_source, source)
+        except Exception as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail=f"Failed to process uploaded video: {exc}") from exc
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="A source video must be provided — either paste a URL or upload a video file.",
+        )
+
+    # 2. Ingest or resolve Campaign Guideline
+    guideline = None
+    if guideline_file and guideline_file.filename:
+        content = await guideline_file.read()
+        filename = guideline_file.filename
+        try:
+            raw_text, ext = extract_guideline_text(filename, content)
+        except GuidelineExtractionError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "hint": exc.hint},
+            ) from exc
+
+        brief = parse_guidelines_into_brief(raw_text, filename)
+        gid = new_id()
+        storage_dir = paths.guidelines_dir()
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_file = storage_dir / f"{gid}_{filename}"
+        storage_file.write_bytes(content)
+
+        guideline = CampaignGuideline(
+            id=gid,
+            job_id=None,
+            filename=filename,
+            mime_type=guideline_file.content_type or "application/octet-stream",
+            size_bytes=len(content),
+            storage_path=str(storage_file),
+            extracted_text=raw_text,
+            parsed_brief=brief.model_dump(mode="json"),
+            status="extracted",
+            error=None,
+        )
+        await asyncio.to_thread(store.create_guideline, guideline)
+    elif guideline_id:
+        guideline = await asyncio.to_thread(store.get_guideline, guideline_id)
+
+    # 3. Layer settings
+    base_settings = load_settings()
+    job_settings = base_settings.model_dump(mode="json")
+
+    if overrides:
+        try:
+            overrides_dict = json.loads(overrides)
+            if isinstance(overrides_dict, dict):
+                job_settings.update(overrides_dict)
+        except Exception:
+            pass
+
+    if guideline and guideline.parsed_brief:
+        job_settings["campaign"] = guideline.parsed_brief
+        job_settings["guideline"] = {
+            "id": guideline.id,
+            "filename": guideline.filename,
+            "mime_type": guideline.mime_type,
+            "size_bytes": guideline.size_bytes,
+            "status": guideline.status,
+            "error": guideline.error,
+            "extracted_text_chars": len(guideline.extracted_text),
+            "parsed_brief": guideline.parsed_brief,
+            "created_at": guideline.created_at,
+        }
+
+    # 4. Create Job
+    dispatch_mode = "github" if is_github_dispatch_enabled() else "local"
+    job = Job(
+        id=new_id(),
+        source_id=source.id,
+        provider=base_settings.active_provider,
+        settings=job_settings,
+        dispatch_mode=dispatch_mode,
+        max_attempts=int(os.environ.get("AUTOCLIP_MAX_ATTEMPTS", "3")),
+    )
+    await asyncio.to_thread(store.create_job, job)
+
+    if guideline:
+        await asyncio.to_thread(store.update_guideline, guideline.id, job_id=job.id)
+
+    if dispatch_mode == "github":
+        asyncio.create_task(dispatch_job_to_github(job, source))
+    else:
+        queue.notify()
+
+    return JobOut.of(job, source, guideline)
+
+
 @router.post("", response_model=JobOut, status_code=201)
-async def create_job(payload: JobCreateIn) -> JobOut:
-    source = await asyncio.to_thread(store.get_source, payload.source_id)
+async def create_job(
+    payload: JobCreateIn | None = None,
+    source_id: str | None = None,
+) -> JobOut:
+    sid = (payload.source_id if payload else None) or source_id
+    if not sid:
+        raise HTTPException(status_code=400, detail="source_id is required.")
+
+    source = await asyncio.to_thread(store.get_source, sid)
     if source is None:
         raise HTTPException(status_code=404, detail="Source not found.")
 
-    settings = _apply_overrides(load_settings(), payload.settings)
+    overrides = payload.settings if payload else JobSettingsIn()
+    settings = _apply_overrides(load_settings(), overrides)
     if settings.clips.min_duration_s >= settings.clips.max_duration_s:
         raise HTTPException(
             status_code=400, detail="Minimum clip length must be below the maximum."
         )
 
     job_settings = settings.model_dump(mode="json")
-    if payload.campaign is not None:
+    if payload and payload.campaign is not None:
         job_settings["campaign"] = payload.campaign.model_dump(mode="json")
+
+    guideline = None
+    gid = payload.guideline_id if payload else None
+    if gid:
+        guideline = await asyncio.to_thread(store.get_guideline, gid)
+        if guideline:
+            if (not payload or payload.campaign is None) and guideline.parsed_brief:
+                job_settings["campaign"] = guideline.parsed_brief
+            job_settings["guideline"] = {
+                "id": guideline.id,
+                "filename": guideline.filename,
+                "mime_type": guideline.mime_type,
+                "size_bytes": guideline.size_bytes,
+                "status": guideline.status,
+                "error": guideline.error,
+                "extracted_text_chars": len(guideline.extracted_text),
+                "parsed_brief": guideline.parsed_brief,
+                "created_at": guideline.created_at,
+            }
 
     dispatch_mode = "github" if is_github_dispatch_enabled() else "local"
     job = Job(
@@ -78,13 +293,15 @@ async def create_job(payload: JobCreateIn) -> JobOut:
     )
     await asyncio.to_thread(store.create_job, job)
 
+    if guideline:
+        await asyncio.to_thread(store.update_guideline, guideline.id, job_id=job.id)
+
     if dispatch_mode == "github":
-        # Launch dispatch asynchronously so HTTP response is returned immediately
         asyncio.create_task(dispatch_job_to_github(job, source))
     else:
         queue.notify()
 
-    return JobOut.of(job, source)
+    return JobOut.of(job, source, guideline)
 
 
 @router.get("", response_model=list[JobOut])
@@ -93,7 +310,8 @@ async def list_jobs(limit: int = 25) -> list[JobOut]:
     out: list[JobOut] = []
     for job in jobs:
         source = await asyncio.to_thread(store.get_source, job.source_id)
-        out.append(JobOut.of(job, source))
+        guideline = await asyncio.to_thread(store.get_guideline_for_job, job.id)
+        out.append(JobOut.of(job, source, guideline))
     return out
 
 
@@ -103,7 +321,20 @@ async def get_job(job_id: str) -> JobOut:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     source = await asyncio.to_thread(store.get_source, job.source_id)
-    return JobOut.of(job, source)
+    guideline = await asyncio.to_thread(store.get_guideline_for_job, job.id)
+    return JobOut.of(job, source, guideline)
+
+
+@router.get("/{job_id}/guideline/file")
+async def get_job_guideline_file(job_id: str):
+    """Serve the original uploaded guideline PDF/DOCX file."""
+    guideline = await asyncio.to_thread(store.get_guideline_for_job, job_id)
+    if guideline is None or not guideline.storage_path:
+        raise HTTPException(status_code=404, detail="No guideline document found for this job.")
+    path = Path(guideline.storage_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Guideline file not found on server disk.")
+    return FileResponse(path, filename=guideline.filename, media_type=guideline.mime_type)
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

@@ -50,11 +50,27 @@ def rank_and_filter_candidates(
         len(clips),
     )
 
+    limit = min(campaign.output_count, campaign.maximum_candidates)
+
+    if not approved_clips and evaluations:
+        log.warning(
+            "All %d candidate(s) triggered strict campaign rule rejections; "
+            "selecting top candidates with closest guideline alignment as fallback.",
+            len(evaluations),
+        )
+        fallback_pairs = [(c, eval_map[c.id]) for c in clips if c.id in eval_map]
+        fallback_pairs.sort(key=lambda item: item[1].final_score, reverse=True)
+        for clip, ev in fallback_pairs[:limit]:
+            ev.approved = True
+            ev.soft_warnings.extend([f"Fallback approval: {f}" for f in ev.hard_failures])
+            ev.hard_failures.clear()
+            clip.score = max(50, int(round(ev.final_score * 10.0)))
+            approved_clips.append((clip, ev))
+
     # Sort approved clips by final_score descending
     approved_clips.sort(key=lambda item: item[1].final_score, reverse=True)
 
     # Limit to campaign output_count or maximum_candidates
-    limit = min(campaign.output_count, campaign.maximum_candidates)
     selected = approved_clips[:limit]
 
     ranked_clips: list[Clip] = []

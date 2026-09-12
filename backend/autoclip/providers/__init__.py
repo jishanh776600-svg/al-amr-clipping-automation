@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from ..config import Settings, get_secret
 from .anthropic_provider import AnthropicProvider
+from .autonomous_provider import AutonomousProvider
 from .base import (
     ClipCandidate,
     ClipCandidates,
@@ -25,6 +26,7 @@ from .openai_provider import OpenAIProvider
 __all__ = [
     "PROVIDERS",
     "AnthropicProvider",
+    "AutonomousProvider",
     "ClipCandidate",
     "ClipCandidates",
     "DetectionConfig",
@@ -61,17 +63,24 @@ def build_provider(name: str | None = None, settings: Settings | None = None) ->
     from ..config import load
 
     settings = settings if settings is not None else load()
+
+    if name == "autonomous":
+        return AutonomousProvider("al-amr-autonomous-v1")
+
     key = name or settings.active_provider
+    if key == "autonomous":
+        return AutonomousProvider("al-amr-autonomous-v1")
 
     provider_cls = PROVIDERS.get(key)
     if provider_cls is None:
-        raise ProviderError(
-            f"Unknown provider '{key}'.",
-            hint=f"Available providers: {', '.join(PROVIDERS)}",
-        )
+        raise ProviderError(f"Unknown provider: {key}")
 
     provider_settings = settings.provider(key)
     api_key = get_secret(key, settings) if provider_cls.requires_key else None
+
+    # If resolving default provider (name is None) and no key is configured, fall back to autonomous
+    if name is None and provider_cls.requires_key and not api_key:
+        return AutonomousProvider("al-amr-autonomous-v1")
 
     import os
     model = os.environ.get(f"AUTOCLIP_{key.upper()}_MODEL") or provider_settings.model

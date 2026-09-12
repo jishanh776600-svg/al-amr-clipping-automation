@@ -12,6 +12,7 @@ from typing import Any
 
 from . import connection
 from .models import (
+    CampaignGuideline,
     Clip,
     ClipEdit,
     ClipStatus,
@@ -775,5 +776,73 @@ def list_publishing_records(
     with connection() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [PublishingRecord.from_row(r) for r in rows]
+
+
+# --------------------------------------------------------------------------
+# Campaign Guidelines
+# --------------------------------------------------------------------------
+
+
+def create_guideline(guideline: CampaignGuideline) -> CampaignGuideline:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO campaign_guidelines (
+                id, job_id, filename, mime_type, size_bytes, storage_path,
+                extracted_text, parsed_brief, status, error, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guideline.id,
+                guideline.job_id,
+                guideline.filename,
+                guideline.mime_type,
+                guideline.size_bytes,
+                guideline.storage_path,
+                guideline.extracted_text,
+                json.dumps(guideline.parsed_brief),
+                guideline.status,
+                guideline.error,
+                guideline.created_at,
+            ),
+        )
+    return guideline
+
+
+def get_guideline(guideline_id: str) -> CampaignGuideline | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM campaign_guidelines WHERE id = ?", (guideline_id,)
+        ).fetchone()
+    return CampaignGuideline.from_row(row) if row else None
+
+
+def get_guideline_for_job(job_id: str) -> CampaignGuideline | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM campaign_guidelines WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    return CampaignGuideline.from_row(row) if row else None
+
+
+def update_guideline(guideline_id: str, **updates: Any) -> CampaignGuideline | None:
+    if not updates:
+        return get_guideline(guideline_id)
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    for key, value in updates.items():
+        if key == "parsed_brief" and isinstance(value, dict):
+            value = json.dumps(value)
+        clauses.append(f"{key} = ?")
+        params.append(value)
+    params.append(guideline_id)
+
+    sql = f"UPDATE campaign_guidelines SET {', '.join(clauses)} WHERE id = ?"
+    with connection() as conn:
+        conn.execute(sql, params)
+    return get_guideline(guideline_id)
 
 

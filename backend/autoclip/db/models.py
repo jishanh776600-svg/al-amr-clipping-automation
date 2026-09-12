@@ -342,3 +342,34 @@ class PublishingRecord:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class CampaignGuideline:
+    id: str
+    job_id: str | None
+    filename: str
+    mime_type: str
+    size_bytes: int
+    storage_path: str
+    extracted_text: str = ""
+    parsed_brief: dict[str, Any] = field(default_factory=dict)
+    status: str = "extracted"  # "extracted", "failed"
+    error: str | None = None
+    created_at: str = field(default_factory=utcnow)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> CampaignGuideline:
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            filename=row["filename"],
+            mime_type=row["mime_type"],
+            size_bytes=row["size_bytes"],
+            storage_path=row["storage_path"],
+            extracted_text=row["extracted_text"],
+            parsed_brief=json.loads(row["parsed_brief"] or "{}"),
+            status=row["status"],
+            error=row["error"],
+            created_at=row["created_at"],
+        )
+

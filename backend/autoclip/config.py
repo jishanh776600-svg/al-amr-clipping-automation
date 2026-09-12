@@ -34,9 +34,9 @@ KEYRING_SERVICE = "autoclip"
 #: stored under the old name aren't silently lost; writes always use the new one.
 LEGACY_KEYRING_SERVICE = "clipforge"
 
-ProviderName = Literal["anthropic", "openai", "gemini", "ollama"]
+ProviderName = Literal["autonomous", "anthropic", "openai", "gemini", "ollama"]
 
-#: Providers that authenticate with an API key. Ollama runs locally and needs none.
+#: Providers that authenticate with an API key. Ollama and Autonomous need none.
 KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
 
 #: Extra secrets that aren't tied to a provider.
@@ -102,6 +102,7 @@ class Settings(BaseModel):
     active_provider: ProviderName = "anthropic"
     providers: dict[str, ProviderSettings] = Field(
         default_factory=lambda: {
+            "autonomous": ProviderSettings(model="al-amr-autonomous-v1"),
             "anthropic": ProviderSettings(model="claude-sonnet-5"),
             "openai": ProviderSettings(model="gpt-4o"),
             "gemini": ProviderSettings(model="gemini-2.0-flash"),

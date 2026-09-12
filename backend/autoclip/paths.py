@@ -108,12 +108,17 @@ def source_media_dir(source_id: str) -> Path:
     return media_dir() / source_id
 
 
+def guidelines_dir() -> Path:
+    """Return the directory holding uploaded campaign guideline documents."""
+    return root() / "guidelines"
+
+
 def ensure_layout() -> Path:
     """Create the directory tree if absent and return the root.
 
     Safe to call repeatedly; used on startup and at the top of each CLI command.
     """
     base = root()
-    for path in (base, media_dir(), work_dir(), exports_dir(), models_dir()):
+    for path in (base, media_dir(), work_dir(), exports_dir(), models_dir(), guidelines_dir()):
         path.mkdir(parents=True, exist_ok=True)
     return base

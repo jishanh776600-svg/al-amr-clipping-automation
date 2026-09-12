@@ -317,6 +317,7 @@ class PipelineRunner:
             config,
             job_id=self.job.id,
             silences=silences,
+            campaign=campaign,
             on_progress=self._stage_progress(stage),
         )
 

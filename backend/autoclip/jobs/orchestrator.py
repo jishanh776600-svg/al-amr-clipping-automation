@@ -364,5 +364,21 @@ def get_job_manifest(job_id: str) -> dict[str, Any] | None:
             "duration_s": source.duration_s,
             "type": source.type,
         } if source else None,
+        "guideline": (
+            {
+                "id": g.id,
+                "filename": g.filename,
+                "mime_type": g.mime_type,
+                "size_bytes": g.size_bytes,
+                "status": g.status,
+                "error": g.error,
+                "extracted_text_chars": len(g.extracted_text),
+                "parsed_brief": g.parsed_brief,
+                "created_at": g.created_at,
+            }
+            if (g := store.get_guideline_for_job(job_id))
+            else job.settings.get("guideline")
+        ),
+        "campaign": job.settings.get("campaign"),
         "clips": manifest_clips,
     }

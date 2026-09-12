@@ -247,13 +247,38 @@ def ingest_youtube(
         "progress_hooks": [hook],
         "retries": 3,
         "fragment_retries": 3,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
     }
+
+    # Handle cookies: check explicit file, env var, or env text secret
     cookies_file = settings.cookies_file or os.environ.get("AUTOCLIP_COOKIES_FILE")
-    if cookies_file:
+    env_cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT") or os.environ.get("YOUTUBE_COOKIES")
+
+    if env_cookies_text and not cookies_file:
+        tmp_cookies = target_dir / "cookies.txt"
+        tmp_cookies.write_text(env_cookies_text, encoding="utf-8")
+        options["cookiefile"] = str(tmp_cookies)
+    elif cookies_file and Path(cookies_file).expanduser().is_file():
         options["cookiefile"] = str(Path(cookies_file).expanduser())
     elif settings.cookies_from_browser:
-        # yt-dlp expects a tuple; only the browser name is required.
-        options["cookiesfrombrowser"] = (settings.cookies_from_browser,)
+        # Check if browser cookies can be accessed or if running on headless Linux/CI
+        is_ci_or_headless = bool(
+            os.environ.get("CI")
+            or os.environ.get("GITHUB_ACTIONS")
+            or os.environ.get("RENDER")
+            or (os.name != "nt" and not os.environ.get("DISPLAY"))
+        )
+        if not is_ci_or_headless:
+            # yt-dlp expects a tuple; only the browser name is required.
+            options["cookiesfrombrowser"] = (settings.cookies_from_browser,)
+        else:
+            log.info("Headless/cloud environment detected; skipping browser cookie extraction for '%s'.", settings.cookies_from_browser)
+
     if settings.prefer_youtube_captions:
         options["writeautomaticsub"] = True
         options["subtitleslangs"] = ["en.*"]
@@ -263,8 +288,23 @@ def ingest_youtube(
         with yt_dlp.YoutubeDL(options) as ydl:
             metadata = ydl.extract_info(url, download=True)
     except yt_dlp.utils.DownloadError as exc:
-        shutil.rmtree(target_dir, ignore_errors=True)
-        raise _translate_ytdlp_error(exc, settings) from exc
+        # If failed with browser cookie error or player client error, retry once with android client alone without browser cookies
+        err_msg = str(exc).lower()
+        if "cookies" in err_msg or "cookie" in err_msg or "browser" in err_msg or "sign in" in err_msg:
+            log.warning("yt-dlp primary attempt encountered cookie/auth error (%s); retrying with android client.", exc)
+            fallback_options = dict(options)
+            fallback_options.pop("cookiesfrombrowser", None)
+            fallback_options.pop("cookiefile", None)
+            fallback_options["extractor_args"] = {"youtube": {"player_client": ["android"]}}
+            try:
+                with yt_dlp.YoutubeDL(fallback_options) as fallback_ydl:
+                    metadata = fallback_ydl.extract_info(url, download=True)
+            except Exception as retry_exc:
+                shutil.rmtree(target_dir, ignore_errors=True)
+                raise _translate_ytdlp_error(retry_exc, settings) from retry_exc
+        else:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise _translate_ytdlp_error(exc, settings) from exc
     except Exception as exc:
         shutil.rmtree(target_dir, ignore_errors=True)
         raise IngestError(f"Could not download {url}: {exc}") from exc

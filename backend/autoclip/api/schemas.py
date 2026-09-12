@@ -78,10 +78,39 @@ class JobSettingsIn(BaseModel):
     ratio: Literal["9:16", "1:1", "16:9"] | None = None
 
 
+class CampaignGuidelineOut(BaseModel):
+    id: str
+    job_id: str | None = None
+    filename: str
+    mime_type: str
+    size_bytes: int
+    extracted_text: str = ""
+    parsed_brief: dict[str, Any] = Field(default_factory=dict)
+    status: str = "extracted"
+    error: str | None = None
+    created_at: str
+
+    @classmethod
+    def of(cls, guideline: models.CampaignGuideline) -> CampaignGuidelineOut:
+        return cls(
+            id=guideline.id,
+            job_id=guideline.job_id,
+            filename=guideline.filename,
+            mime_type=guideline.mime_type,
+            size_bytes=guideline.size_bytes,
+            extracted_text=guideline.extracted_text,
+            parsed_brief=guideline.parsed_brief,
+            status=guideline.status,
+            error=guideline.error,
+            created_at=guideline.created_at,
+        )
+
+
 class JobCreateIn(BaseModel):
     source_id: str
     settings: JobSettingsIn = Field(default_factory=JobSettingsIn)
     campaign: CampaignBriefIn | None = None
+    guideline_id: str | None = None
 
 
 class CampaignEvaluationOut(BaseModel):
@@ -143,9 +172,33 @@ class JobOut(BaseModel):
     created_at: str
     updated_at: str
     source: SourceOut | None = None
+    guideline: CampaignGuidelineOut | None = None
 
     @classmethod
-    def of(cls, job: models.Job, source: models.Source | None = None) -> JobOut:
+    def of(
+        cls,
+        job: models.Job,
+        source: models.Source | None = None,
+        guideline: models.CampaignGuideline | None = None,
+    ) -> JobOut:
+        guideline_out = None
+        if guideline:
+            guideline_out = CampaignGuidelineOut.of(guideline)
+        elif "guideline" in job.settings and isinstance(job.settings["guideline"], dict):
+            g_dict = job.settings["guideline"]
+            guideline_out = CampaignGuidelineOut(
+                id=g_dict.get("id", ""),
+                job_id=job.id,
+                filename=g_dict.get("filename", ""),
+                mime_type=g_dict.get("mime_type", ""),
+                size_bytes=g_dict.get("size_bytes", 0),
+                extracted_text=g_dict.get("extracted_text", ""),
+                parsed_brief=g_dict.get("parsed_brief", {}),
+                status=g_dict.get("status", "extracted"),
+                error=g_dict.get("error"),
+                created_at=g_dict.get("created_at", job.created_at),
+            )
+
         return cls(
             id=job.id,
             source_id=job.source_id,
@@ -175,6 +228,7 @@ class JobOut(BaseModel):
             created_at=job.created_at,
             updated_at=job.updated_at,
             source=SourceOut.of(source) if source else None,
+            guideline=guideline_out,
         )
 
 
@@ -224,6 +278,8 @@ class JobManifestOut(BaseModel):
     github: dict[str, Any] = Field(default_factory=dict)
     timestamps: dict[str, Any] = Field(default_factory=dict)
     source: dict[str, Any] | None = None
+    guideline: dict[str, Any] | None = None
+    campaign: dict[str, Any] | None = None
     clips: list[JobManifestClipOut] = Field(default_factory=list)
 
 

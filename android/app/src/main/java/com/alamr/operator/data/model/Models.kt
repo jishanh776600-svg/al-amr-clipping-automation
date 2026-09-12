@@ -166,3 +166,12 @@ data class PublishRequest(
     val dry_run: Boolean = false
 )
 
+data class CampaignGuidelineResponse(
+    val id: String = "",
+    val filename: String = "",
+    val mime_type: String = "",
+    val size_bytes: Long = 0L,
+    val status: String = "extracted",
+    val parsed_brief: Map<String, Any?>? = null
+)
+

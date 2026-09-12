@@ -126,6 +126,7 @@ async def detect(
     *,
     job_id: str,
     silences: list[Silence] | None = None,
+    campaign: Any | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> list[Clip]:
     """Run detection across the whole transcript and return ranked clips."""
@@ -167,26 +168,50 @@ async def detect(
     if not candidates:
         total_w = len(transcript.words)
         if total_w > 0:
-            log.info("No LLM candidates found; generating speech segment fallback candidates from %d words.", total_w)
+            log.info("Generating candidates from transcript speech segments (%d words).", total_w)
             min_w = max(4, int(config.min_duration_s * 1.5))
             max_w = min(total_w, int(config.max_duration_s * 3.0))
-            step = max(min_w, 10)
+            step = max(min_w // 2, 8)
+            
+            # Keywords and topics from campaign if provided
+            topics = [t.lower() for t in (getattr(campaign, "required_topics", []) or [])]
+            keywords = [k.lower() for k in (getattr(campaign, "optional_keywords", []) or [])]
+            guideline_terms = set(topics + keywords)
+
+            scored_candidates: list[tuple[int, ClipCandidate]] = []
+
             for start_idx in range(0, total_w, step):
                 end_idx = min(total_w - 1, start_idx + max_w - 1)
                 if end_idx > start_idx:
-                    seg_text = " ".join(w.text for w in transcript.words[start_idx : end_idx + 1])
-                    candidates.append(
-                        ClipCandidate(
-                            start_word_index=start_idx,
-                            end_word_index=end_idx,
-                            title=seg_text[:40].strip() + "...",
-                            hook=seg_text[:60].strip(),
-                            score=85,
-                            reason="Speech density highlight",
-                        )
+                    seg_words = transcript.words[start_idx : end_idx + 1]
+                    dur = seg_words[-1].end - seg_words[0].start
+                    if dur < config.min_duration_s * 0.7:
+                        continue
+
+                    seg_text = " ".join(w.text for w in seg_words)
+                    lower_seg = seg_text.lower()
+
+                    # Guideline match score
+                    match_count = sum(1 for term in guideline_terms if term in lower_seg)
+                    base_score = 75 + min(20, match_count * 5)
+                    reason = f"Guideline topic match ({match_count} terms)" if match_count > 0 else "Speech density highlight"
+
+                    hook = seg_text[:60].strip()
+                    title = seg_text[:40].strip() + "..."
+                    cand = ClipCandidate(
+                        start_word_index=start_idx,
+                        end_word_index=end_idx,
+                        title=title,
+                        hook=hook,
+                        score=base_score,
+                        reason=reason,
                     )
-                if len(candidates) >= config.max_clips:
-                    break
+                    scored_candidates.append((base_score, cand))
+
+            # Sort by score descending and take top candidates
+            scored_candidates.sort(key=lambda item: item[0], reverse=True)
+            max_cands = max(config.max_clips * 2, 10)
+            candidates = [c for _, c in scored_candidates[:max_cands]]
 
     if not candidates:
         raise HighlightError(
