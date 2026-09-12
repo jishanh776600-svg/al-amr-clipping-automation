@@ -73,6 +73,10 @@ def test_cookie_abstraction_precedence(monkeypatch, tmp_path):
 
     # Case 3: No cookies_file, fallback to cookies_from_browser
     monkeypatch.delenv("AUTOCLIP_COOKIES_FILE", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
     settings_browser = IngestSettings(cookies_from_browser="edge")
     with patch("yt_dlp.YoutubeDL") as mock_ydl:
         mock_instance = MagicMock()
