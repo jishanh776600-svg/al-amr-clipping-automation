@@ -27,7 +27,8 @@ from ..db.models import Job, Source, new_id
 from ..pipeline import ingest
 from ..pipeline.runner import PipelineRunner
 from ..pipeline.validator import validate_media_output
-from ..publishing.publisher import publish_clip
+from ..publishing.base import PublishingMetadata
+from ..publishing.service import PublishingService
 from ..storage.drive import GoogleDriveStorage
 
 log = logging.getLogger("alamr.worker_runner")
@@ -57,6 +58,7 @@ def send_callback(
     clips: list[dict[str, Any]] | None = None,
     evaluations: list[dict[str, Any]] | None = None,
     exports: list[dict[str, Any]] | None = None,
+    publishing_records: list[dict[str, Any]] | None = None,
 ) -> None:
     if not callback_url:
         return
@@ -79,6 +81,9 @@ def send_callback(
         payload["evaluations"] = evaluations
     if exports is not None:
         payload["exports"] = exports
+    if publishing_records is not None:
+        payload["publishing_records"] = publishing_records
+
 
     headers: dict[str, str] = {}
     if token:
@@ -216,6 +221,8 @@ async def async_main() -> None:
     clips_payload: list[dict[str, Any]] = []
     evaluations_payload: list[dict[str, Any]] = []
     exports_payload: list[dict[str, Any]] = []
+    publishing_payload: list[dict[str, Any]] = []
+    publishing_service = PublishingService()
 
     for clip in clips:
         clips_payload.append({
@@ -295,13 +302,46 @@ async def async_main() -> None:
             # Publish if requested
             if publish_targets:
                 report(stage="publishing", progress=0.95)
-                log.info("Publishing clip %s to %s...", clip.id, publish_targets)
-                publish_clip(
-                    exp_path,
-                    clip.title,
-                    publish_targets,
-                    drive_link=drive_web_view_link,
+                log.info("Publishing export %s (clip %s) to %s...", exp.id, clip.id, publish_targets)
+                cta = ""
+                if eval_row and eval_row.campaign_id:
+                    camp = store.get_campaign(eval_row.campaign_id)
+                    if camp and camp.brief:
+                        cta = camp.brief.get("cta_text", "")
+                desc = clip.hook or ""
+                if cta and cta not in desc:
+                    desc = f"{desc}\n\n{cta}".strip()
+
+                meta = PublishingMetadata(
+                    title=clip.title or "AL AMR Highlight",
+                    description=desc,
+                    tags=["ALAMR", "Shorts"],
+                    destination="",
+                    extra={"export_id": exp.id},
                 )
+                for target in publish_targets:
+                    try:
+                        record = await publishing_service.publish_export(
+                            export_id=exp.id,
+                            platform=target,
+                            metadata=meta,
+                            dry_run=False,
+                        )
+                        publishing_payload.append({
+                            "id": record.id,
+                            "export_id": record.export_id,
+                            "clip_id": clip.id,
+                            "platform": record.platform,
+                            "status": record.status,
+                            "external_id": record.external_id,
+                            "destination": record.destination,
+                            "metadata": record.metadata,
+                            "error": record.error,
+                            "created_at": record.created_at,
+                            "updated_at": record.updated_at,
+                        })
+                    except Exception as exc:
+                        log.error("Failed publishing export %s to %s: %s", exp.id, target, exc)
 
             exports_payload.append({
                 "id": exp.id,
@@ -323,6 +363,7 @@ async def async_main() -> None:
         clips=clips_payload,
         evaluations=evaluations_payload,
         exports=exports_payload,
+        publishing_records=publishing_payload,
     )
     log.info("AL AMR Worker completed job %s successfully with %d clips.", args.job_id, len(clips))
 

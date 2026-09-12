@@ -1,17 +1,17 @@
-"""Publishing dispatcher for AL AMR worker.
-
-Dispatches rendered clips to configured destinations (Telegram, YouTube, Instagram)
-using server-side secrets without exposing tokens to clients.
-"""
+"""Publishing dispatcher for AL AMR worker and backward compatibility layer."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-import httpx
+from .base import PublishingMetadata
+from .instagram import InstagramPublisher
+from .service import PublishingService
+from .telegram import TelegramPublisher
+from .youtube import YouTubePublisher
 
 log = logging.getLogger(__name__)
 
@@ -21,31 +21,23 @@ def publish_to_telegram(
     caption: str,
     drive_link: str | None = None,
 ) -> dict[str, Any]:
-    """Publish clip to Telegram channel/chat using Bot API."""
-    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not bot_token or not chat_id:
-        return {"status": "skipped", "reason": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured"}
-
-    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
-    text = caption
-    if drive_link:
-        text += f"\n\nDrive Backup: {drive_link}"
-
+    """Publish clip to Telegram channel/chat using TelegramPublisher."""
+    publisher = TelegramPublisher()
+    meta = PublishingMetadata(title=caption)
     try:
-        with open(clip_path, "rb") as f:
-            resp = httpx.post(
-                url,
-                data={"chat_id": chat_id, "caption": text[:1024]},
-                files={"video": (clip_path.name, f, "video/mp4")},
-                timeout=60.0,
-            )
-        if resp.status_code == 200:
-            return {"status": "published", "response": resp.json()}
-        return {"status": "failed", "status_code": resp.status_code, "error": resp.text}
-    except Exception as exc:
-        log.warning("Telegram publish failed: %s", exc)
-        return {"status": "failed", "error": str(exc)}
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                res = pool.submit(asyncio.run, publisher.publish(clip_path, meta, drive_link=drive_link)).result()
+        else:
+            res = loop.run_until_complete(publisher.publish(clip_path, meta, drive_link=drive_link))
+    except RuntimeError:
+        res = asyncio.run(publisher.publish(clip_path, meta, drive_link=drive_link))
+
+    if res.success:
+        return {"status": "published", "response": res.details, "url": res.url}
+    return {"status": res.status, "error": res.error}
 
 
 def publish_clip(
@@ -54,7 +46,7 @@ def publish_clip(
     platforms: list[str],
     drive_link: str | None = None,
 ) -> dict[str, Any]:
-    """Publish a rendered clip to all requested target platforms."""
+    """Publish a rendered clip to all requested target platforms synchronously."""
     path = Path(clip_path)
     results: dict[str, Any] = {}
 
@@ -63,20 +55,28 @@ def publish_clip(
         if norm == "telegram":
             results["telegram"] = publish_to_telegram(path, title, drive_link)
         elif norm == "youtube":
-            # Reserved for YouTube Shorts upload if OAuth refresh token is provided
-            yt_token = os.environ.get("YOUTUBE_REFRESH_TOKEN") or os.environ.get("YOUTUBE_API_KEY")
-            if not yt_token:
+            yt = YouTubePublisher()
+            if not yt.is_configured():
                 results["youtube"] = {"status": "skipped", "reason": "YOUTUBE credentials not configured"}
             else:
-                results["youtube"] = {"status": "ready_for_upload", "details": "YouTube credentials verified"}
+                meta = PublishingMetadata(title=title)
+                try:
+                    res = asyncio.run(yt.publish(path, meta, drive_link=drive_link, dry_run=True))
+                    results["youtube"] = {"status": res.status, "details": res.details, "error": res.error}
+                except Exception as exc:
+                    results["youtube"] = {"status": "failed", "error": str(exc)}
         elif norm in ("instagram", "meta"):
-            meta_token = os.environ.get("META_ACCESS_TOKEN") or os.environ.get("INSTAGRAM_ACCESS_TOKEN")
-            if not meta_token:
+            ig = InstagramPublisher()
+            if not ig.is_configured():
                 results["instagram"] = {"status": "skipped", "reason": "Instagram credentials not configured"}
             else:
-                results["instagram"] = {"status": "ready_for_upload", "details": "Instagram credentials verified"}
+                meta = PublishingMetadata(title=title)
+                try:
+                    res = asyncio.run(ig.publish(path, meta, drive_link=drive_link, dry_run=True))
+                    results["instagram"] = {"status": res.status, "details": res.details, "error": res.error}
+                except Exception as exc:
+                    results["instagram"] = {"status": "failed", "error": str(exc)}
         else:
             results[norm] = {"status": "unsupported", "reason": f"Platform {norm} is not supported"}
 
     return results
-

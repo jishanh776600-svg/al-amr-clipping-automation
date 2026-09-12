@@ -272,3 +272,34 @@ class CampaignPreset:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class PublishingRecord:
+    id: str
+    export_id: str
+    job_id: str
+    platform: str
+    status: str  # "pending", "publishing", "published", "failed"
+    external_id: str | None = None
+    destination: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> PublishingRecord:
+        return cls(
+            id=row["id"],
+            export_id=row["export_id"],
+            job_id=row["job_id"],
+            platform=row["platform"],
+            status=row["status"],
+            external_id=row["external_id"],
+            destination=row["destination"] or "",
+            metadata=json.loads(row["metadata_json"] or "{}"),
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

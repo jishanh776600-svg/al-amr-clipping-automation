@@ -50,6 +50,37 @@ export interface ExportRecord {
   stream_url?: string
 }
 
+export interface PublishingRecord {
+  id: string
+  export_id: string
+  job_id: string
+  platform: string
+  status: string
+  destination: string
+  external_id: string | null
+  error: string | null
+  metadata: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+export interface PublishingPlatformInfo {
+  platform: string
+  available: boolean
+  configured: boolean
+  details: string
+}
+
+export interface PublishRequest {
+  platforms: ('telegram' | 'youtube' | 'instagram')[]
+  title?: string
+  description?: string
+  tags?: string[]
+  destination?: string
+  dry_run?: boolean
+}
+
+
 export interface CampaignBrief {
   campaign_id?: string
   name: string
@@ -405,6 +436,41 @@ export const api = {
     request<void>(`/api/settings/secrets/${key}`, { method: 'DELETE' }),
 
   mediaUrl: (jobId: string) => `/api/jobs/${jobId}/media`,
+
+  listPublishing: (params?: {
+    job_id?: string
+    export_id?: string
+    platform?: string
+    status?: string
+    limit?: number
+  }) => {
+    const sp = new URLSearchParams()
+    if (params?.job_id) sp.set('job_id', params.job_id)
+    if (params?.export_id) sp.set('export_id', params.export_id)
+    if (params?.platform) sp.set('platform', params.platform)
+    if (params?.status) sp.set('status', params.status)
+    if (params?.limit) sp.set('limit', String(params.limit))
+    const query = sp.toString() ? `?${sp.toString()}` : ''
+    return request<PublishingRecord[]>(`/api/publishing${query}`)
+  },
+
+  getPublishingPlatforms: () =>
+    request<PublishingPlatformInfo[]>('/api/publishing/platforms'),
+
+  getPublishingRecord: (id: string) =>
+    request<PublishingRecord>(`/api/publishing/${id}`),
+
+  retryPublishing: (id: string) =>
+    request<PublishingRecord>(`/api/publishing/${id}/retry`, { method: 'POST' }),
+
+  getJobPublishing: (jobId: string) =>
+    request<PublishingRecord[]>(`/api/jobs/${jobId}/publishing`),
+
+  publishExport: (exportId: string, req: PublishRequest) =>
+    request<PublishingRecord[]>(`/api/exports/${exportId}/publish`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

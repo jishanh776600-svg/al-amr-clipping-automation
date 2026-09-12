@@ -311,3 +311,82 @@ This document specifies the REST and Server-Sent Events (SSE) API contract that 
 #### `DELETE /api/campaigns/{id}`
 - **Response**: `204 No Content`
 
+---
+
+### 2.9 Publishing & Distribution Management
+
+#### `GET /api/publishing`
+- **Query Parameters**:
+  - `job_id`: Filter by job ID (optional)
+  - `export_id`: Filter by export ID (optional)
+  - `platform`: Filter by platform (`telegram`, `youtube`, `instagram`) (optional)
+  - `status`: Filter by status (`pending`, `publishing`, `published`, `failed`) (optional)
+  - `limit`: Maximum items to return (default: 50)
+- **Response**: `200 OK`
+```json
+[
+  {
+    "id": "pub_01hxyz...",
+    "export_id": "exp_01habc...",
+    "job_id": "job_123",
+    "platform": "telegram",
+    "status": "published",
+    "destination": "@alamr_drops",
+    "external_id": "msg_45678",
+    "error": null,
+    "metadata": {
+      "title": "AL AMR Highlights #Shorts",
+      "url": "https://t.me/alamr_drops/45678"
+    },
+    "created_at": "2026-09-12T15:00:00Z",
+    "updated_at": "2026-09-12T15:01:00Z"
+  }
+]
+```
+
+#### `GET /api/publishing/platforms`
+- **Response**: `200 OK`
+```json
+[
+  {
+    "platform": "telegram",
+    "available": true,
+    "configured": true,
+    "details": "Bot token and Chat ID present"
+  },
+  {
+    "platform": "youtube",
+    "available": true,
+    "configured": true,
+    "details": "OAuth2 configured (Live: false)"
+  },
+  {
+    "platform": "instagram",
+    "available": true,
+    "configured": false,
+    "details": "Missing INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID"
+  }
+]
+```
+
+#### `POST /api/exports/{export_id}/publish`
+- **Payload**:
+```json
+{
+  "platforms": ["telegram", "youtube"],
+  "title": "AL AMR Elite Hook",
+  "description": "Watch full episode now #Shorts",
+  "tags": ["ALAMR", "Shorts"],
+  "destination": "",
+  "dry_run": false
+}
+```
+- **Response**: `200 OK` with list of `PublishingRecord` objects.
+
+#### `POST /api/publishing/{id}/retry`
+- **Response**: `200 OK` with retried `PublishingRecord` object.
+
+#### `GET /api/jobs/{job_id}/publishing`
+- **Response**: `200 OK` with list of `PublishingRecord` objects associated with the job.
+
+

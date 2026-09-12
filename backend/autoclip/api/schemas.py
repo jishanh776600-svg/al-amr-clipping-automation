@@ -326,4 +326,54 @@ class WorkerCallbackIn(BaseModel):
     clips: list[dict[str, Any]] | None = None
     evaluations: list[dict[str, Any]] | None = None
     exports: list[dict[str, Any]] | None = None
+    publishing_records: list[dict[str, Any]] | None = None
+
+
+class PublishingRecordOut(BaseModel):
+    id: str
+    export_id: str
+    job_id: str
+    platform: str
+    status: str
+    destination: str = ""
+    external_id: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.PublishingRecord) -> PublishingRecordOut:
+        return cls(
+            id=record.id,
+            export_id=record.export_id,
+            job_id=record.job_id,
+            platform=record.platform,
+            status=record.status,
+            destination=record.destination or "",
+            external_id=record.external_id,
+            error=record.error,
+            metadata=record.metadata or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class PublishRequestIn(BaseModel):
+    platforms: list[Literal["telegram", "youtube", "instagram"]] = Field(
+        default_factory=lambda: ["telegram"]
+    )
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    destination: str = ""
+    dry_run: bool = False
+
+
+class PublishingPlatformInfo(BaseModel):
+    platform: str
+    available: bool
+    configured: bool
+    details: str = ""
+
 

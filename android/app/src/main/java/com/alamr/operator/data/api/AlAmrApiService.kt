@@ -69,4 +69,27 @@ interface AlAmrApiService {
 
     @DELETE("api/campaigns/{id}")
     suspend fun deleteCampaign(@Path("id") id: String): Response<Unit>
+
+    @GET("api/publishing")
+    suspend fun listPublishing(
+        @Query("job_id") jobId: String? = null,
+        @Query("export_id") exportId: String? = null,
+        @Query("platform") platform: String? = null,
+        @Query("status") status: String? = null,
+        @Query("limit") limit: Int = 50
+    ): List<PublishingRecord>
+
+    @GET("api/publishing/platforms")
+    suspend fun getPublishingPlatforms(): List<PublishingPlatformInfo>
+
+    @POST("api/exports/{export_id}/publish")
+    suspend fun publishExport(
+        @Path("export_id") exportId: String,
+        @Body request: PublishRequest
+    ): List<PublishingRecord>
+
+    @POST("api/publishing/{id}/retry")
+    suspend fun retryPublishing(
+        @Path("id") id: String
+    ): PublishingRecord
 }

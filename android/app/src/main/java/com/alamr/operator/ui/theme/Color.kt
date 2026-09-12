@@ -20,4 +20,6 @@ val Sodium600 = Color(0xFFD97706)
 
 val Emerald400 = Color(0xFF34D399)
 val Emerald500 = Color(0xFF10B981)
+val Rose400 = Color(0xFFF87171)
 val Rose500 = Color(0xFFEF4444)
+

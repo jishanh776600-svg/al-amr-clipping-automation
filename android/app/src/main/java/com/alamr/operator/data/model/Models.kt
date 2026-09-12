@@ -129,3 +129,34 @@ data class ExportClipRequest(
     val ratio: String = "9:16",
     val caption_style: String = "bold_pop"
 )
+
+data class PublishingRecord(
+    val id: String = "",
+    val export_id: String = "",
+    val job_id: String = "",
+    val platform: String = "",
+    val status: String = "pending",
+    val destination: String = "",
+    val external_id: String? = null,
+    val error: String? = null,
+    val metadata: Map<String, Any?> = emptyMap(),
+    val created_at: String = "",
+    val updated_at: String = ""
+)
+
+data class PublishingPlatformInfo(
+    val platform: String = "",
+    val available: Boolean = true,
+    val configured: Boolean = false,
+    val details: String = ""
+)
+
+data class PublishRequest(
+    val platforms: List<String> = listOf("telegram"),
+    val title: String? = null,
+    val description: String? = null,
+    val tags: List<String> = emptyList(),
+    val destination: String = "",
+    val dry_run: Boolean = false
+)
+

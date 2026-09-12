@@ -302,6 +302,24 @@ async def worker_callback(
                     drive_storage_key=exp_row.drive_storage_key,
                 )
 
+    # Ingest publishing records if reported
+    if payload.publishing_records:
+        for pub in payload.publishing_records:
+            pub_row = models.PublishingRecord(
+                id=pub.get("id", new_id()),
+                export_id=pub["export_id"],
+                job_id=job_id,
+                platform=pub["platform"],
+                status=pub.get("status", "pending"),
+                external_id=pub.get("external_id"),
+                destination=pub.get("destination", ""),
+                metadata=pub.get("metadata", {}),
+                error=pub.get("error"),
+                created_at=pub.get("created_at", store.utcnow()),
+                updated_at=pub.get("updated_at", store.utcnow()),
+            )
+            await asyncio.to_thread(store.create_or_update_publishing_record, pub_row)
+
     # Broadcast real-time SSE event to all connected clients
     event_type = "progress"
     if payload.status == "done":

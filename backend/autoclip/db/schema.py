@@ -156,6 +156,31 @@ def _migration_v4(conn: sqlite3.Connection) -> None:
     conn.executescript(_V4)
 
 
+_V5 = """
+CREATE TABLE publishing_records (
+    id            TEXT PRIMARY KEY,
+    export_id     TEXT NOT NULL REFERENCES exports(id) ON DELETE CASCADE,
+    job_id        TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    platform      TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'publishing', 'published', 'failed')),
+    external_id   TEXT,
+    destination   TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    error         TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    UNIQUE(export_id, platform, destination)
+);
+CREATE INDEX idx_publishing_export ON publishing_records(export_id);
+CREATE INDEX idx_publishing_job ON publishing_records(job_id);
+CREATE INDEX idx_publishing_status ON publishing_records(status);
+"""
+
+
+def _migration_v5(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V5)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -163,6 +188,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v2,
     _migration_v3,
     _migration_v4,
+    _migration_v5,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

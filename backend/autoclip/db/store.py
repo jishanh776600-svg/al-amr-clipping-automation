@@ -20,6 +20,7 @@ from .models import (
     Export,
     Job,
     JobStatus,
+    PublishingRecord,
     Source,
     Transcript,
     utcnow,
@@ -588,4 +589,128 @@ def delete_campaign(campaign_id: str) -> bool:
     with connection() as conn:
         cursor = conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
     return cursor.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# Publishing Records
+# --------------------------------------------------------------------------
+
+
+def create_or_update_publishing_record(record: PublishingRecord) -> PublishingRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO publishing_records (
+                id, export_id, job_id, platform, status, external_id,
+                destination, metadata_json, error, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(export_id, platform, destination) DO UPDATE SET
+                status = excluded.status,
+                external_id = COALESCE(excluded.external_id, publishing_records.external_id),
+                metadata_json = excluded.metadata_json,
+                error = excluded.error,
+                updated_at = excluded.updated_at
+            """,
+            (
+                record.id,
+                record.export_id,
+                record.job_id,
+                record.platform,
+                record.status,
+                record.external_id,
+                record.destination or "",
+                json.dumps(record.metadata),
+                record.error,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return get_publishing_record_by_target(record.export_id, record.platform, record.destination) or record
+
+
+def get_publishing_record(record_id: str) -> PublishingRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publishing_records WHERE id = ?", (record_id,)
+        ).fetchone()
+    return PublishingRecord.from_row(row) if row else None
+
+
+def get_publishing_record_by_target(
+    export_id: str, platform: str, destination: str | None = None
+) -> PublishingRecord | None:
+    dest = destination or ""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publishing_records WHERE export_id = ? AND platform = ? AND destination = ?",
+            (export_id, platform, dest),
+        ).fetchone()
+    return PublishingRecord.from_row(row) if row else None
+
+
+def update_publishing_record(
+    record_id: str,
+    *,
+    status: str | None = None,
+    external_id: str | None = None,
+    error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> PublishingRecord | None:
+    clauses: list[str] = ["updated_at = ?"]
+    params: list[Any] = [utcnow()]
+
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    if external_id is not None:
+        clauses.append("external_id = ?")
+        params.append(external_id)
+    if error is not None:
+        clauses.append("error = ?")
+        params.append(error)
+    if metadata is not None:
+        clauses.append("metadata_json = ?")
+        params.append(json.dumps(metadata))
+
+    params.append(record_id)
+    sql = f"UPDATE publishing_records SET {', '.join(clauses)} WHERE id = ?"
+
+    with connection() as conn:
+        conn.execute(sql, params)
+    return get_publishing_record(record_id)
+
+
+def list_publishing_records(
+    *,
+    job_id: str | None = None,
+    export_id: str | None = None,
+    platform: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[PublishingRecord]:
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if job_id:
+        clauses.append("job_id = ?")
+        params.append(job_id)
+    if export_id:
+        clauses.append("export_id = ?")
+        params.append(export_id)
+    if platform:
+        clauses.append("platform = ?")
+        params.append(platform)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT * FROM publishing_records {where} ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+
+    with connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [PublishingRecord.from_row(r) for r in rows]
+
 
