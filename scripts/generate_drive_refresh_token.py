@@ -85,6 +85,7 @@ def main():
     parser.add_argument("--client-secret", default=os.getenv("GOOGLE_DRIVE_CLIENT_SECRET"), help="OAuth2 Client Secret")
     parser.add_argument("--port", type=int, default=REDIRECT_PORT, help="Local callback port (default: 8085)")
     parser.add_argument("--manual", action="store_true", help="Manual authorization code copy-paste mode")
+    parser.add_argument("--auto-save", action="store_true", default=True, help="Auto-save secrets to GitHub via gh CLI")
     args = parser.parse_args()
 
     client_id = args.client_id
@@ -156,6 +157,17 @@ def main():
         print("This typically occurs if 'prompt=consent' was omitted or Google considers the app already approved.")
         print("Try re-running with prompt=consent or revoking app access under myaccount.google.com/permissions.")
         sys.exit(1)
+
+    if args.auto_save:
+        import subprocess
+        print("\nAuto-saving secrets directly to your GitHub repository...")
+        try:
+            subprocess.run(["gh", "secret", "set", "GOOGLE_DRIVE_CLIENT_ID", "--body", client_id], check=True)
+            subprocess.run(["gh", "secret", "set", "GOOGLE_DRIVE_CLIENT_SECRET", "--body", client_secret], check=True)
+            subprocess.run(["gh", "secret", "set", "GOOGLE_DRIVE_REFRESH_TOKEN", "--body", refresh_token], check=True)
+            print("[SUCCESS] All 3 Google Drive secrets have been automatically updated in GitHub Actions!\n")
+        except Exception as e:
+            print(f"[NOTE] Could not auto-save via gh CLI: {e}. You can save manually below.")
 
     print("\n" + "=" * 70)
     print("[SUCCESS] Refresh token generated successfully!")

@@ -282,6 +282,13 @@ async def async_main() -> None:
                         drive_web_view_link=drive_web_view_link,
                         drive_storage_key=drive_storage_key,
                     )
+                    log.info(
+                        "Successfully uploaded export %s to Google Drive: file_id=%s, key=%s, link=%s",
+                        exp.id,
+                        drive_file_id,
+                        drive_storage_key,
+                        drive_web_view_link,
+                    )
                 except Exception as exc:
                     log.error("Failed to upload export %s to Google Drive: %s", exp.id, exc)
 
