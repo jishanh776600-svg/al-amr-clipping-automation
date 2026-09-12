@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,10 @@ from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from .. import paths
+from ..campaign.drive_retriever import retrieve_drive_guideline
 from ..campaign.extractor import (
     GuidelineExtractionError,
+    compute_document_hash,
     extract_guideline_text,
     parse_guidelines_into_brief,
 )
@@ -32,6 +35,7 @@ from ..pipeline import ingest
 from .auth import is_valid_token
 from .schemas import (
     CampaignGuidelineOut,
+    DriveGuidelineIn,
     JobCreateIn,
     JobManifestOut,
     JobOut,
@@ -94,6 +98,11 @@ async def upload_guideline(file: UploadFile = File(...)) -> CampaignGuidelineOut
     storage_file = storage_dir / f"{guideline_id}_{filename}"
     storage_file.write_bytes(content)
 
+    sha256 = compute_document_hash(content)
+    word_count = len(re.findall(r"\b\w+\b", raw_text))
+    char_count = len(raw_text)
+    source_type = "upload_pdf" if ext == ".pdf" else "upload_docx"
+
     guideline = CampaignGuideline(
         id=guideline_id,
         job_id=None,
@@ -105,6 +114,63 @@ async def upload_guideline(file: UploadFile = File(...)) -> CampaignGuidelineOut
         parsed_brief=brief.model_dump(mode="json"),
         status="extracted",
         error=None,
+        source_type=source_type,
+        drive_file_id=None,
+        sha256=sha256,
+        word_count=word_count,
+        char_count=char_count,
+    )
+    await asyncio.to_thread(store.create_guideline, guideline)
+    return CampaignGuidelineOut.of(guideline)
+
+
+@router.post("/guidelines/drive", response_model=CampaignGuidelineOut, status_code=201)
+async def upload_drive_guideline_endpoint(payload: DriveGuidelineIn) -> CampaignGuidelineOut:
+    """Retrieve and process a campaign guideline document from Google Drive."""
+    try:
+        filename, content, mime_type, drive_file_id = await asyncio.to_thread(
+            retrieve_drive_guideline, payload.drive_url
+        )
+        raw_text, ext = extract_guideline_text(filename, content)
+    except GuidelineExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "hint": exc.hint},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": f"Failed to retrieve Google Drive document: {exc}", "hint": "Check document link."},
+        ) from exc
+
+    brief = parse_guidelines_into_brief(raw_text, filename)
+    guideline_id = new_id()
+
+    storage_dir = paths.guidelines_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_file = storage_dir / f"{guideline_id}_{filename}"
+    storage_file.write_bytes(content)
+
+    sha256 = compute_document_hash(content)
+    word_count = len(re.findall(r"\b\w+\b", raw_text))
+    char_count = len(raw_text)
+
+    guideline = CampaignGuideline(
+        id=guideline_id,
+        job_id=None,
+        filename=filename,
+        mime_type=mime_type,
+        size_bytes=len(content),
+        storage_path=str(storage_file),
+        extracted_text=raw_text,
+        parsed_brief=brief.model_dump(mode="json"),
+        status="extracted",
+        error=None,
+        source_type="drive",
+        drive_file_id=drive_file_id,
+        sha256=sha256,
+        word_count=word_count,
+        char_count=char_count,
     )
     await asyncio.to_thread(store.create_guideline, guideline)
     return CampaignGuidelineOut.of(guideline)
@@ -112,17 +178,46 @@ async def upload_guideline(file: UploadFile = File(...)) -> CampaignGuidelineOut
 
 @router.post("/create-autonomous", response_model=JobOut, status_code=201)
 async def create_autonomous_job(
-    url: str | None = Form(None),
-    video_file: UploadFile | None = File(None),
-    guideline_file: UploadFile | None = File(None),
-    guideline_id: str | None = Form(None),
-    overrides: str | None = Form(None),
+    request: Request,
 ) -> JobOut:
-    """One-click autonomous job creation: accepts Source (URL or Video File) + Campaign Guideline (PDF or DOCX)."""
+    """One-click autonomous job creation: accepts Source (URL or Video File) + Campaign Guideline (PDF, DOCX, or Drive)."""
+    content_type = request.headers.get("content-type", "")
+
+    url: str | None = None
+    video_file = None
+    guideline_file = None
+    guideline_id: str | None = None
+    drive_guideline_url: str | None = None
+    destinations: Any = None
+    overrides: Any = None
+
+    if "application/json" in content_type:
+        body = await request.json()
+        url = body.get("video_url") or body.get("url")
+        guideline_id = body.get("guideline_id")
+        drive_guideline_url = body.get("drive_guideline_url")
+        destinations = body.get("destinations")
+        overrides = body.get("overrides") or body.get("settings")
+    else:
+        form = await request.form()
+        raw_url = form.get("url") or form.get("video_url")
+        if isinstance(raw_url, str):
+            url = raw_url
+        video_file = form.get("video_file")
+        guideline_file = form.get("guideline_file")
+        raw_gid = form.get("guideline_id")
+        if isinstance(raw_gid, str):
+            guideline_id = raw_gid
+        raw_dg = form.get("drive_guideline_url")
+        if isinstance(raw_dg, str):
+            drive_guideline_url = raw_dg
+        destinations = form.get("destinations")
+        overrides = form.get("overrides")
+
     # 1. Ingest or resolve Source
     source = None
-    if url and url.strip():
-        clean_url = url.strip()
+    if url and str(url).strip():
+        clean_url = str(url).strip()
         settings = load_settings().ingest
         try:
             source = await asyncio.to_thread(ingest.ingest_url, clean_url, settings)
@@ -132,7 +227,7 @@ async def create_autonomous_job(
                 status_code=422,
                 detail={"message": str(exc), "hint": exc.hint},
             ) from exc
-    elif video_file and video_file.filename:
+    elif video_file and hasattr(video_file, "filename") and video_file.filename:
         suffix = Path(video_file.filename).suffix.lower()
         if suffix not in ingest.ACCEPTED_SUFFIXES:
             raise HTTPException(
@@ -156,7 +251,7 @@ async def create_autonomous_job(
 
     # 2. Ingest or resolve Campaign Guideline
     guideline = None
-    if guideline_file and guideline_file.filename:
+    if guideline_file and hasattr(guideline_file, "filename") and guideline_file.filename:
         content = await guideline_file.read()
         filename = guideline_file.filename
         try:
@@ -174,33 +269,106 @@ async def create_autonomous_job(
         storage_file = storage_dir / f"{gid}_{filename}"
         storage_file.write_bytes(content)
 
+        sha256 = compute_document_hash(content)
+        word_count = len(re.findall(r"\b\w+\b", raw_text))
+        char_count = len(raw_text)
+        source_type = "upload_pdf" if ext == ".pdf" else "upload_docx"
+
         guideline = CampaignGuideline(
             id=gid,
             job_id=None,
             filename=filename,
-            mime_type=guideline_file.content_type or "application/octet-stream",
+            mime_type=getattr(guideline_file, "content_type", None) or "application/octet-stream",
             size_bytes=len(content),
             storage_path=str(storage_file),
             extracted_text=raw_text,
             parsed_brief=brief.model_dump(mode="json"),
             status="extracted",
             error=None,
+            source_type=source_type,
+            drive_file_id=None,
+            sha256=sha256,
+            word_count=word_count,
+            char_count=char_count,
+        )
+        await asyncio.to_thread(store.create_guideline, guideline)
+    elif drive_guideline_url and str(drive_guideline_url).strip():
+        try:
+            filename, content, mime_type, drive_file_id = await asyncio.to_thread(
+                retrieve_drive_guideline, str(drive_guideline_url).strip()
+            )
+            raw_text, ext = extract_guideline_text(filename, content)
+        except GuidelineExtractionError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "hint": exc.hint},
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": f"Failed to retrieve Google Drive document: {exc}", "hint": "Check document link."},
+            ) from exc
+
+        brief = parse_guidelines_into_brief(raw_text, filename)
+        gid = new_id()
+        storage_dir = paths.guidelines_dir()
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_file = storage_dir / f"{gid}_{filename}"
+        storage_file.write_bytes(content)
+
+        sha256 = compute_document_hash(content)
+        word_count = len(re.findall(r"\b\w+\b", raw_text))
+        char_count = len(raw_text)
+
+        guideline = CampaignGuideline(
+            id=gid,
+            job_id=None,
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=len(content),
+            storage_path=str(storage_file),
+            extracted_text=raw_text,
+            parsed_brief=brief.model_dump(mode="json"),
+            status="extracted",
+            error=None,
+            source_type="drive",
+            drive_file_id=drive_file_id,
+            sha256=sha256,
+            word_count=word_count,
+            char_count=char_count,
         )
         await asyncio.to_thread(store.create_guideline, guideline)
     elif guideline_id:
-        guideline = await asyncio.to_thread(store.get_guideline, guideline_id)
+        guideline = await asyncio.to_thread(store.get_guideline, str(guideline_id).strip())
 
     # 3. Layer settings
     base_settings = load_settings()
     job_settings = base_settings.model_dump(mode="json")
 
     if overrides:
-        try:
-            overrides_dict = json.loads(overrides)
-            if isinstance(overrides_dict, dict):
-                job_settings.update(overrides_dict)
-        except Exception:
-            pass
+        if isinstance(overrides, dict):
+            job_settings.update(overrides)
+        elif isinstance(overrides, str):
+            try:
+                overrides_dict = json.loads(overrides)
+                if isinstance(overrides_dict, dict):
+                    job_settings.update(overrides_dict)
+            except Exception:
+                pass
+
+    if destinations:
+        dest_list: list[str] = []
+        if isinstance(destinations, list):
+            dest_list = [str(x).strip().lower() for x in destinations if str(x).strip()]
+        elif isinstance(destinations, str):
+            try:
+                parsed = json.loads(destinations)
+                if isinstance(parsed, list):
+                    dest_list = [str(x).strip().lower() for x in parsed if str(x).strip()]
+            except Exception:
+                dest_list = [d.strip().lower() for d in destinations.split(",") if d.strip()]
+        if dest_list:
+            job_settings["destinations"] = dest_list
 
     if guideline and guideline.parsed_brief:
         job_settings["campaign"] = guideline.parsed_brief
@@ -209,6 +377,11 @@ async def create_autonomous_job(
             "filename": guideline.filename,
             "mime_type": guideline.mime_type,
             "size_bytes": guideline.size_bytes,
+            "source_type": getattr(guideline, "source_type", "upload_pdf"),
+            "drive_file_id": getattr(guideline, "drive_file_id", None),
+            "sha256": getattr(guideline, "sha256", None),
+            "word_count": getattr(guideline, "word_count", 0),
+            "char_count": getattr(guideline, "char_count", 0),
             "status": guideline.status,
             "error": guideline.error,
             "extracted_text_chars": len(guideline.extracted_text),

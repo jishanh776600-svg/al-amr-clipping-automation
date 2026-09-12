@@ -14,22 +14,68 @@ export function App() {
   const [system, setSystem] = useState<SystemStatus | null>(null)
   const [hasToken, setHasToken] = useState<boolean>(() => Boolean(getStoredToken()))
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [isAuthRequired, setIsAuthRequired] = useState(false)
 
   const checkSystem = () => {
-    api.system().then(setSystem).catch(() => setSystem(null))
+    api.system()
+      .then((s) => {
+        setSystem(s)
+        setIsAuthRequired(false)
+      })
+      .catch((err) => {
+        setSystem(null)
+        if (err?.status === 401) {
+          setIsAuthRequired(true)
+        }
+      })
   }
 
   useEffect(() => {
     checkSystem()
-    const unsub = onAuthChange((token) => {
+    const unsubAuth = onAuthChange((token) => {
       setHasToken(Boolean(token))
+      if (token) {
+        setIsAuthRequired(false)
+      }
       checkSystem()
     })
-    return unsub
+
+    const handleUnauthorized = () => {
+      setIsAuthRequired(true)
+      setIsAuthModalOpen(true)
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('alamr:auth-unauthorized', handleUnauthorized)
+    }
+
+    return () => {
+      unsubAuth()
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('alamr:auth-unauthorized', handleUnauthorized)
+      }
+    }
   }, [])
 
   return (
     <div className="min-h-screen bg-ink-900">
+      {isAuthRequired && !hasToken && (
+        <div className="border-b border-sodium-500/30 bg-sodium-500/10 px-6 py-2.5 lg:px-10">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-xs text-sodium-300">
+              <span>🔒</span>
+              <span><strong>Operator Authentication Required:</strong> This AL AMR control plane requires an authorized operator token to manage jobs.</span>
+            </div>
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              className="rounded bg-sodium-500 px-3 py-1 text-xs font-semibold text-ink-950 transition hover:bg-sodium-400"
+            >
+              Enter Token
+            </button>
+          </div>
+        </div>
+      )}
+
       <header className="border-b border-ink-800">
         <div className="mx-auto flex max-w-[1600px] items-baseline gap-8 px-6 py-4 lg:px-10">
           <NavLink to="/" className="group flex items-baseline gap-2.5">

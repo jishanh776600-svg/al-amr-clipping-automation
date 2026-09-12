@@ -40,12 +40,29 @@ class GuidelineExtractionError(ValueError):
         return f"{super().__str__()}\n\n{self.hint}" if self.hint else super().__str__()
 
 
+MAX_GUIDELINE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_GUIDELINE_SIZE_BYTES = MAX_GUIDELINE_SIZE
+
+
+def compute_document_hash(content_bytes: bytes) -> str:
+    """Compute SHA-256 hex digest for forensic document identification."""
+    import hashlib
+
+    return hashlib.sha256(content_bytes).hexdigest()
+
+
 def validate_guideline_file(filename: str, content_bytes: bytes, mime_type: str | None = None) -> str:
     """Validate file type and non-empty content. Returns normalized extension (.pdf or .docx)."""
     if not content_bytes or len(content_bytes.strip()) == 0:
         raise GuidelineExtractionError(
             f"The uploaded guideline file '{filename}' is completely empty (0 bytes).",
             hint="Please upload a valid PDF or DOCX campaign guideline document.",
+        )
+
+    if len(content_bytes) > MAX_GUIDELINE_SIZE:
+        raise GuidelineExtractionError(
+            f"The guideline file '{filename}' ({len(content_bytes)} bytes) exceeds the maximum allowed size of 50MB.",
+            hint="Please provide a document smaller than 50MB.",
         )
 
     ext = Path(filename).suffix.lower()
@@ -274,6 +291,23 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     elif "1:1" in lower_text or "square" in lower_text:
         aspect_ratio = "1:1"
 
+    # 8. Caption preset preference
+    caption_preset = "bold_pop"
+    if "karaoke" in lower_text:
+        caption_preset = "karaoke_fill"
+    elif "boxed" in lower_text:
+        caption_preset = "boxed"
+    elif "clean" in lower_text or "lower" in lower_text:
+        caption_preset = "clean_lower"
+
+    # 9. Brand & Key concepts
+    brand_match = re.search(r"(?:brand|product|company)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if brand_match:
+        brand_terms = [b.strip() for b in re.split(r"[,;•|]+", brand_match.group(1)) if b.strip()]
+        for b in brand_terms:
+            if b and b not in required_concepts:
+                required_concepts.append(b)
+
     # Context summary (first 500 chars)
     topic_context = raw_text[:500].strip()
 
@@ -297,6 +331,6 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         cta_types=cta_types,
         tone=tone,
         aspect_ratio=aspect_ratio,
-        caption_preset="bold_pop",
+        caption_preset=caption_preset,
         output_count=5,
     )

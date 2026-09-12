@@ -24,11 +24,17 @@ export function Ingest() {
   const videoInputRef = useRef<HTMLInputElement>(null)
   const [videoDragging, setVideoDragging] = useState(false)
 
-  // Input 2: Campaign Guidelines (PDF or DOCX)
+  // Input 2: Campaign Guidelines (PDF, DOCX, or Google Drive)
   const [uploadedGuideline, setUploadedGuideline] = useState<CampaignGuideline | null>(null)
   const [guidelineUploading, setGuidelineUploading] = useState(false)
   const guidelineInputRef = useRef<HTMLInputElement>(null)
   const [guidelineDragging, setGuidelineDragging] = useState(false)
+  const [guidelineTab, setGuidelineTab] = useState<'upload' | 'drive'>('upload')
+  const [driveUrl, setDriveUrl] = useState('')
+  const [driveLoading, setDriveLoading] = useState(false)
+
+  // Destinations & Archival
+  const [publishDestinations, setPublishDestinations] = useState<string[]>(['telegram', 'drive'])
 
   // Job Submission & Lifecycle State
   const [busy, setBusy] = useState<string | null>(null)
@@ -112,6 +118,31 @@ export function Ingest() {
       return next
     })
     if (guidelineInputRef.current) guidelineInputRef.current.value = ''
+    setDriveUrl('')
+  }
+
+  // Handle Google Drive Document Retrieval & Parsing
+  const handleFetchDriveGuideline = async () => {
+    if (!driveUrl.trim()) return
+    setError(null)
+    setDriveLoading(true)
+    try {
+      const guideline = await api.uploadDriveGuideline(driveUrl.trim())
+      setUploadedGuideline(guideline)
+      if (guideline.parsed_brief) {
+        setOverrides((prev) => ({
+          ...prev,
+          campaign: guideline.parsed_brief as any,
+          min_duration_s: guideline.parsed_brief.minimum_duration ?? prev.min_duration_s,
+          max_duration_s: guideline.parsed_brief.maximum_duration ?? prev.max_duration_s,
+          max_clips: guideline.parsed_brief.output_count ?? prev.max_clips,
+        }))
+      }
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setDriveLoading(false)
+    }
   }
 
   // Handle Complete Autonomous Job Submission
@@ -143,9 +174,13 @@ export function Ingest() {
 
       setBusy('Creating autonomous job...')
       const guidelineId = uploadedGuideline?.id || null
+      const jobOverrides: any = {
+        ...overrides,
+        destinations: publishDestinations,
+      }
       const job = await api.createJob(
         sourceId,
-        overrides,
+        jobOverrides,
         overrides.campaign,
         guidelineId,
       )
@@ -316,134 +351,258 @@ export function Ingest() {
           </div>
         </div>
 
-        {/* INPUT 2: Campaign Guidelines (PDF or DOCX) */}
+        {/* INPUT 2: Campaign Guidelines (PDF, DOCX, or Google Drive) */}
         <div className="rounded-lg border border-ink-800 bg-ink-900/60 p-6 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
                 INPUT 2 · Campaign Guidelines
               </span>
-              <span className="text-[11px] text-ink-400 bg-ink-800/60 px-2 py-0.5 rounded">
-                PDF or DOCX
-              </span>
+              <div className="flex rounded border border-ink-800 bg-ink-950 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setGuidelineTab('upload')}
+                  className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    guidelineTab === 'upload'
+                      ? 'bg-ink-800 text-ink-100'
+                      : 'text-ink-400 hover:text-ink-200'
+                  }`}
+                >
+                  Upload File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGuidelineTab('drive')}
+                  className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    guidelineTab === 'drive'
+                      ? 'bg-ink-800 text-ink-100'
+                      : 'text-ink-400 hover:text-ink-200'
+                  }`}
+                >
+                  Google Drive
+                </button>
+              </div>
             </div>
 
             <p className="mt-2 text-xs text-ink-400">
-              Upload your campaign document. AutoClip automatically parses topics, audience, duration limits, and CTA rules.
+              {guidelineTab === 'upload'
+                ? 'Upload your PDF or Word DOCX guideline document.'
+                : 'Provide a Google Drive share link, Google Docs link, or File ID.'}
             </p>
 
             <div className="mt-4">
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setGuidelineDragging(true)
-                }}
-                onDragLeave={() => setGuidelineDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  setGuidelineDragging(false)
-                  const file = e.dataTransfer.files[0]
-                  if (file) handleGuidelineFile(file)
-                }}
-                onClick={() => guidelineInputRef.current?.click()}
-                className={`flex min-h-32 cursor-pointer flex-col items-center justify-center rounded border border-dashed p-4 text-center transition-colors ${
-                  guidelineDragging
-                    ? 'border-sodium-500 bg-sodium-500/10'
-                    : uploadedGuideline
-                    ? 'border-sodium-500/60 bg-sodium-500/5'
-                    : 'border-ink-700 hover:border-ink-600 bg-ink-850/40'
-                }`}
-              >
-                {guidelineUploading ? (
-                  <span className="text-sm text-sodium-400 animate-pulse">
-                    Extracting requirements from document…
-                  </span>
-                ) : uploadedGuideline ? (
-                  <div className="text-left w-full px-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-sodium-400 truncate max-w-[200px]">
-                        📄 {uploadedGuideline.filename}
+              {guidelineTab === 'upload' ? (
+                <div>
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setGuidelineDragging(true)
+                    }}
+                    onDragLeave={() => setGuidelineDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setGuidelineDragging(false)
+                      const file = e.dataTransfer.files[0]
+                      if (file) handleGuidelineFile(file)
+                    }}
+                    onClick={() => guidelineInputRef.current?.click()}
+                    className={`flex min-h-32 cursor-pointer flex-col items-center justify-center rounded border border-dashed p-4 text-center transition-colors ${
+                      guidelineDragging
+                        ? 'border-sodium-500 bg-sodium-500/10'
+                        : uploadedGuideline
+                        ? 'border-sodium-500/60 bg-sodium-500/5'
+                        : 'border-ink-700 hover:border-ink-600 bg-ink-850/40'
+                    }`}
+                  >
+                    {guidelineUploading ? (
+                      <span className="text-sm text-sodium-400 animate-pulse">
+                        Extracting requirements from document…
                       </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          clearGuideline()
-                        }}
-                        className="text-xs text-signal-bad hover:underline ml-2"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="mt-2 text-[11px] space-y-1 text-ink-300 bg-ink-950/40 p-2.5 rounded border border-ink-800">
+                    ) : uploadedGuideline ? (
+                      <div className="text-left w-full px-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-sodium-400 truncate max-w-[200px]">
+                            📄 {uploadedGuideline.filename}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              clearGuideline()
+                            }}
+                            className="text-xs text-signal-bad hover:underline ml-2"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div className="mt-2 text-[11px] space-y-1 text-ink-300 bg-ink-950/40 p-2.5 rounded border border-ink-800">
+                          <div>
+                            <span className="text-ink-500">Campaign: </span>
+                            <span className="text-ink-100 font-medium">
+                              {uploadedGuideline.parsed_brief?.name || 'Extracted Campaign'}
+                            </span>
+                          </div>
+                          {uploadedGuideline.parsed_brief?.target_audience && (
+                            <div>
+                              <span className="text-ink-500">Audience: </span>
+                              <span>{uploadedGuideline.parsed_brief.target_audience}</span>
+                            </div>
+                          )}
+                          {uploadedGuideline.parsed_brief?.required_topics?.length > 0 && (
+                            <div>
+                              <span className="text-ink-500">Topics: </span>
+                              <span>{uploadedGuideline.parsed_brief.required_topics.slice(0, 3).join(', ')}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between text-[10px] text-ink-500 pt-1 border-t border-ink-800/60">
+                            <span>
+                              Duration: {uploadedGuideline.parsed_brief?.minimum_duration}s - {uploadedGuideline.parsed_brief?.maximum_duration}s
+                            </span>
+                            <span>
+                              CTA: {uploadedGuideline.parsed_brief?.cta_required ? 'Required' : 'Optional'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
                       <div>
-                        <span className="text-ink-500">Campaign: </span>
-                        <span className="text-ink-100 font-medium">
-                          {uploadedGuideline.parsed_brief?.name || 'Extracted Campaign'}
+                        <span className="text-sm font-medium text-ink-200 block">
+                          Drop guideline document (.pdf or .docx)
+                        </span>
+                        <span className="text-xs text-ink-500 block mt-1">
+                          Or click to browse from device
                         </span>
                       </div>
-                      {uploadedGuideline.parsed_brief?.target_audience && (
-                        <div>
-                          <span className="text-ink-500">Audience: </span>
-                          <span>{uploadedGuideline.parsed_brief.target_audience}</span>
-                        </div>
-                      )}
-                      {uploadedGuideline.parsed_brief?.required_topics?.length > 0 && (
-                        <div>
-                          <span className="text-ink-500">Topics: </span>
-                          <span>{uploadedGuideline.parsed_brief.required_topics.slice(0, 3).join(', ')}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between text-[10px] text-ink-500 pt-1 border-t border-ink-800/60">
-                        <span>
-                          Duration: {uploadedGuideline.parsed_brief?.minimum_duration}s - {uploadedGuideline.parsed_brief?.maximum_duration}s
-                        </span>
-                        <span>
-                          CTA: {uploadedGuideline.parsed_brief?.cta_required ? 'Required' : 'Optional'}
-                        </span>
+                    )}
+                  </div>
+                  <input
+                    ref={guidelineInputRef}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) handleGuidelineFile(file)
+                      e.target.value = ''
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={driveUrl}
+                      onChange={(e) => setDriveUrl(e.target.value)}
+                      placeholder="Paste Google Drive link or Doc URL..."
+                      className="field text-xs font-mono"
+                    />
+                    <button
+                      type="button"
+                      disabled={driveLoading || !driveUrl.trim()}
+                      onClick={handleFetchDriveGuideline}
+                      className="btn btn-secondary shrink-0 text-xs"
+                    >
+                      {driveLoading ? 'Fetching…' : 'Fetch'}
+                    </button>
+                  </div>
+                  {uploadedGuideline && uploadedGuideline.source_type === 'google_drive' ? (
+                    <div className="text-left w-full bg-ink-950/40 p-2.5 rounded border border-sodium-500/40 text-[11px]">
+                      <div className="flex items-center justify-between text-sodium-400 font-medium">
+                        <span>✓ Drive Document: {uploadedGuideline.filename}</span>
+                        <button
+                          type="button"
+                          onClick={clearGuideline}
+                          className="text-xs text-signal-bad hover:underline"
+                        >
+                          Remove
+                        </button>
                       </div>
+                      <p className="mt-1 text-ink-300">
+                        Campaign: {uploadedGuideline.parsed_brief?.name} · {uploadedGuideline.parsed_brief?.required_topics?.slice(0, 2).join(', ')}
+                      </p>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <span className="text-sm font-medium text-ink-200 block">
-                      Drop guideline document (.pdf or .docx)
-                    </span>
-                    <span className="text-xs text-ink-500 block mt-1">
-                      Or click to browse from device
-                    </span>
-                  </div>
-                )}
-              </div>
-              <input
-                ref={guidelineInputRef}
-                type="file"
-                className="hidden"
-                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) handleGuidelineFile(file)
-                  e.target.value = ''
-                }}
-              />
+                  ) : (
+                    <p className="text-[11px] text-ink-500">
+                      Supports Google Drive files (.pdf, .docx) and native Google Docs documents.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-ink-800/80 flex items-center justify-between text-xs text-ink-500">
             <span>Status:</span>
             <span className={uploadedGuideline ? 'text-sodium-400 font-medium' : 'text-ink-500'}>
-              {guidelineUploading
+              {guidelineUploading || driveLoading
                 ? 'Extracting…'
                 : uploadedGuideline
-                ? '✓ Requirements Extracted'
+                ? `✓ ${uploadedGuideline.source_type === 'google_drive' ? 'Drive Document' : 'Document'} Extracted`
                 : 'Optional (defaults to viral highlighting)'}
             </span>
           </div>
         </div>
       </div>
 
+      {/* INPUT 3: Publishing Destinations */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400 block mb-3">
+          Publishing & Archival Destinations
+        </span>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <label className="flex items-center gap-2.5 p-3 rounded border border-ink-700 bg-ink-850/50 cursor-pointer hover:border-ink-600">
+            <input
+              type="checkbox"
+              checked={publishDestinations.includes('telegram')}
+              onChange={(e) => {
+                if (e.target.checked) setPublishDestinations([...publishDestinations, 'telegram'])
+                else setPublishDestinations(publishDestinations.filter(d => d !== 'telegram'))
+              }}
+              className="rounded border-ink-600 text-sodium-500"
+            />
+            <div>
+              <span className="font-semibold text-ink-100 block">Telegram Channel</span>
+              <span className="text-[11px] text-ink-400 block">Verified production publication</span>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-2.5 p-3 rounded border border-ink-700 bg-ink-850/50 cursor-pointer hover:border-ink-600">
+            <input
+              type="checkbox"
+              checked={publishDestinations.includes('youtube')}
+              onChange={(e) => {
+                if (e.target.checked) setPublishDestinations([...publishDestinations, 'youtube'])
+                else setPublishDestinations(publishDestinations.filter(d => d !== 'youtube'))
+              }}
+              className="rounded border-ink-600 text-sodium-500"
+            />
+            <div>
+              <span className="font-semibold text-ink-100 block">YouTube Shorts</span>
+              <span className="text-[11px] text-ink-400 block">Safe Dry-Run Mode</span>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-2.5 p-3 rounded border border-ink-700 bg-ink-850/50 cursor-pointer hover:border-ink-600">
+            <input
+              type="checkbox"
+              checked={publishDestinations.includes('drive')}
+              onChange={(e) => {
+                if (e.target.checked) setPublishDestinations([...publishDestinations, 'drive'])
+                else setPublishDestinations(publishDestinations.filter(d => d !== 'drive'))
+              }}
+              className="rounded border-ink-600 text-sodium-500"
+            />
+            <div>
+              <span className="font-semibold text-ink-100 block">Google Drive Vault</span>
+              <span className="text-[11px] text-ink-400 block">Durable media archival</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
       {/* Autonomous Launch Action Button */}
-      <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-lg border border-ink-800 bg-ink-900/40 p-5">
+      <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-lg border border-ink-800 bg-ink-900/40 p-5">
         <div>
           <div className="flex items-center gap-2">
             <span className="size-2 rounded-full bg-signal-good animate-pulse"></span>
@@ -452,7 +611,11 @@ export function Ingest() {
             </span>
           </div>
           <p className="text-xs text-ink-400 mt-1">
-            Cloud on-demand worker handles Whisper audio extraction, MediaPipe face tracking, and FFmpeg 9:16 export.
+            Cloud worker handles Whisper audio extraction, MediaPipe face tracking, 9:16 reframe, and publication.
+          </p>
+          <p className="text-[11px] text-sodium-400/90 mt-1 flex items-center gap-1.5">
+            <span>🛡️</span>
+            <span><strong>Client Disconnect Safe:</strong> Jobs run autonomously on cloud runners. You may safely close this tab at any time.</span>
           </p>
         </div>
 

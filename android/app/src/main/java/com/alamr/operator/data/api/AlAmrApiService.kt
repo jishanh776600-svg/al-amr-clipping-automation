@@ -31,6 +31,16 @@ interface AlAmrApiService {
         @Part file: MultipartBody.Part
     ): CampaignGuidelineResponse
 
+    @POST("api/jobs/guidelines/drive")
+    suspend fun uploadDriveGuideline(
+        @Body request: DriveGuidelineRequest
+    ): CampaignGuidelineResponse
+
+    @POST("api/jobs/create-autonomous")
+    suspend fun createAutonomousJob(
+        @Body request: AutonomousJobRequest
+    ): Job
+
     @POST("api/jobs")
     suspend fun createJob(
         @Query("source_id") sourceId: String,

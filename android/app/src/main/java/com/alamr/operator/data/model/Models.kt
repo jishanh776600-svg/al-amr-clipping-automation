@@ -172,6 +172,24 @@ data class CampaignGuidelineResponse(
     val mime_type: String = "",
     val size_bytes: Long = 0L,
     val status: String = "extracted",
-    val parsed_brief: Map<String, Any?>? = null
+    val parsed_brief: Map<String, Any?>? = null,
+    val source_type: String? = null,
+    val drive_file_id: String? = null,
+    val sha256: String? = null,
+    val word_count: Int = 0,
+    val char_count: Int = 0
+)
+
+data class DriveGuidelineRequest(
+    val drive_url: String
+)
+
+data class AutonomousJobRequest(
+    val video_url: String? = null,
+    val source_id: String? = null,
+    val guideline_id: String? = null,
+    val drive_guideline_url: String? = null,
+    val destinations: List<String> = listOf("telegram", "youtube", "drive"),
+    val settings: Map<String, Any?> = emptyMap()
 )
 

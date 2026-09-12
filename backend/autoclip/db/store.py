@@ -789,9 +789,10 @@ def create_guideline(guideline: CampaignGuideline) -> CampaignGuideline:
             """
             INSERT INTO campaign_guidelines (
                 id, job_id, filename, mime_type, size_bytes, storage_path,
-                extracted_text, parsed_brief, status, error, created_at
+                extracted_text, parsed_brief, status, error, created_at,
+                source_type, drive_file_id, sha256, word_count, char_count
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 guideline.id,
@@ -805,6 +806,11 @@ def create_guideline(guideline: CampaignGuideline) -> CampaignGuideline:
                 guideline.status,
                 guideline.error,
                 guideline.created_at,
+                guideline.source_type,
+                guideline.drive_file_id,
+                guideline.sha256,
+                guideline.word_count,
+                guideline.char_count,
             ),
         )
     return guideline

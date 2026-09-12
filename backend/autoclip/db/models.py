@@ -356,9 +356,15 @@ class CampaignGuideline:
     status: str = "extracted"  # "extracted", "failed"
     error: str | None = None
     created_at: str = field(default_factory=utcnow)
+    source_type: str = "upload_pdf"  # "upload_pdf", "upload_docx", "google_drive"
+    drive_file_id: str | None = None
+    sha256: str | None = None
+    word_count: int = 0
+    char_count: int = 0
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> CampaignGuideline:
+        keys = row.keys()
         return cls(
             id=row["id"],
             job_id=row["job_id"],
@@ -371,5 +377,10 @@ class CampaignGuideline:
             status=row["status"],
             error=row["error"],
             created_at=row["created_at"],
+            source_type=row["source_type"] if "source_type" in keys else "upload_pdf",
+            drive_file_id=row["drive_file_id"] if "drive_file_id" in keys else None,
+            sha256=row["sha256"] if "sha256" in keys else None,
+            word_count=row["word_count"] if "word_count" in keys else 0,
+            char_count=row["char_count"] if "char_count" in keys else 0,
         )
 

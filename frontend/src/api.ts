@@ -69,6 +69,11 @@ export interface CampaignGuideline {
   filename: string
   mime_type: string
   size_bytes: number
+  source_type?: string
+  drive_file_id?: string | null
+  sha256?: string | null
+  word_count?: number
+  char_count?: number
   extracted_text: string
   parsed_brief: Record<string, any>
   status: string
@@ -497,6 +502,12 @@ export const api = {
       body: form,
     })
   },
+
+  uploadDriveGuideline: (driveUrl: string) =>
+    request<CampaignGuideline>('/api/jobs/guidelines/drive', {
+      method: 'POST',
+      body: JSON.stringify({ drive_url: driveUrl }),
+    }),
 
   createAutonomousJob: (form: FormData) =>
     request<Job>('/api/jobs/create-autonomous', {

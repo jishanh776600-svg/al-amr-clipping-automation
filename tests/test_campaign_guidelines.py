@@ -282,3 +282,123 @@ def test_provider_resolution_fallback_to_autonomous(fake_keyring):
     # build_provider with autonomous explicitly
     p_auto = build_provider("autonomous")
     assert p_auto.name == "autonomous"
+
+
+def test_extract_drive_id_patterns():
+    from autoclip.campaign.drive_retriever import extract_drive_id
+
+    # Google Docs URL
+    doc_url = "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit?usp=sharing"
+    assert extract_drive_id(doc_url) == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+
+    # Google Drive file URL
+    file_url = "https://drive.google.com/file/d/1A2B3C4D5E6F7G8H9I0J/view?usp=drivesdk"
+    assert extract_drive_id(file_url) == "1A2B3C4D5E6F7G8H9I0J"
+
+    # Open ID URL
+    open_url = "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz"
+    assert extract_drive_id(open_url) == "1AbCdEfGhIjKlMnOpQrStUvWxYz"
+
+    # Raw file ID
+    raw_id = "1AbCdEfGhIjKlMnOpQrStUvWxYz"
+    assert extract_drive_id(raw_id) == "1AbCdEfGhIjKlMnOpQrStUvWxYz"
+
+    # Invalid string
+    assert extract_drive_id("not a drive link") is None
+
+
+def test_guideline_file_size_limit():
+    from autoclip.campaign.extractor import MAX_GUIDELINE_SIZE_BYTES
+
+    # 50MB + 1 byte must be rejected
+    oversized = b"A" * (MAX_GUIDELINE_SIZE_BYTES + 1)
+    with pytest.raises(GuidelineExtractionError, match="maximum allowed size"):
+        validate_guideline_file("huge.pdf", oversized)
+
+
+def test_guideline_drive_endpoint_and_provenance(client):
+    raw_docx = _make_sample_docx(
+        title="Google Drive Retrieved Campaign",
+        audience="Global Creators",
+        topics=["Cloud Clipping", "Auto Thumbnails"],
+    )
+
+    with patch("autoclip.api.jobs.retrieve_drive_guideline") as mock_retrieve:
+        mock_retrieve.return_value = (
+            "google_drive_campaign.docx",
+            raw_docx,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+        )
+
+        res = client.post(
+            "/api/jobs/guidelines/drive",
+            json={"drive_url": "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"},
+        )
+        assert res.status_code == 201
+        data = res.json()
+        assert data["filename"] == "google_drive_campaign.docx"
+        assert data["source_type"] == "drive"
+        assert data["drive_file_id"] == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+        assert data["sha256"] is not None
+        assert len(data["sha256"]) == 64
+        assert data["word_count"] > 0
+        assert data["char_count"] > 0
+        assert data["parsed_brief"]["name"] == "Google Drive Retrieved Campaign"
+
+        # Check database record
+        persisted = store.get_guideline(data["id"])
+        assert persisted is not None
+        assert persisted.source_type == "drive"
+        assert persisted.drive_file_id == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+        assert persisted.sha256 == data["sha256"]
+
+
+def test_create_autonomous_job_with_drive_and_destinations(client):
+    raw_docx = _make_sample_docx(
+        title="Autonomous Drive Pipeline Campaign",
+        topics=["Autonomous Orchestration"],
+    )
+
+    mock_src = Source(
+        id=new_id(),
+        type="youtube",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        path="dummy.mp4",
+        title="Rick Astley Autonomous",
+        duration_s=212.0,
+    )
+
+    with patch("autoclip.pipeline.ingest.ingest_url", return_value=mock_src), \
+         patch("autoclip.api.jobs.retrieve_drive_guideline") as mock_retrieve:
+        mock_retrieve.return_value = (
+            "campaign_from_drive.docx",
+            raw_docx,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "drive_doc_id_999",
+        )
+
+        res = client.post(
+            "/api/jobs/create-autonomous",
+            json={
+                "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "drive_guideline_url": "https://docs.google.com/document/d/drive_doc_id_999/edit",
+                "destinations": ["telegram", "youtube", "drive"],
+            },
+        )
+        assert res.status_code == 201
+        job_data = res.json()
+        job_id = job_data["id"]
+        assert job_data["status"] == "queued"
+        assert job_data["guideline"]["filename"] == "campaign_from_drive.docx"
+        assert job_data["guideline"]["source_type"] == "drive"
+        assert job_data["guideline"]["drive_file_id"] == "drive_doc_id_999"
+
+        # Authoritative manifest check
+        man_res = client.get(f"/api/jobs/{job_id}/manifest")
+        assert man_res.status_code == 200
+        manifest = man_res.json()
+        assert manifest["destinations"] == ["telegram", "youtube", "drive"]
+        assert manifest["guideline"]["source_type"] == "drive"
+        assert manifest["guideline"]["drive_file_id"] == "drive_doc_id_999"
+        assert manifest["guideline"]["sha256"] is not None

@@ -84,6 +84,11 @@ class CampaignGuidelineOut(BaseModel):
     filename: str
     mime_type: str
     size_bytes: int
+    source_type: str = "upload_pdf"
+    drive_file_id: str | None = None
+    sha256: str | None = None
+    word_count: int = 0
+    char_count: int = 0
     extracted_text: str = ""
     parsed_brief: dict[str, Any] = Field(default_factory=dict)
     status: str = "extracted"
@@ -98,12 +103,21 @@ class CampaignGuidelineOut(BaseModel):
             filename=guideline.filename,
             mime_type=guideline.mime_type,
             size_bytes=guideline.size_bytes,
+            source_type=getattr(guideline, "source_type", "upload_pdf"),
+            drive_file_id=getattr(guideline, "drive_file_id", None),
+            sha256=getattr(guideline, "sha256", None),
+            word_count=getattr(guideline, "word_count", 0),
+            char_count=getattr(guideline, "char_count", 0),
             extracted_text=guideline.extracted_text,
             parsed_brief=guideline.parsed_brief,
             status=guideline.status,
             error=guideline.error,
             created_at=guideline.created_at,
         )
+
+
+class DriveGuidelineIn(BaseModel):
+    drive_url: str = Field(..., description="Google Drive share link, doc link, or file ID")
 
 
 class JobCreateIn(BaseModel):
@@ -280,6 +294,7 @@ class JobManifestOut(BaseModel):
     source: dict[str, Any] | None = None
     guideline: dict[str, Any] | None = None
     campaign: dict[str, Any] | None = None
+    destinations: list[str] = Field(default_factory=lambda: ["telegram", "youtube", "drive"])
     clips: list[JobManifestClipOut] = Field(default_factory=list)
 
 

@@ -370,6 +370,11 @@ def get_job_manifest(job_id: str) -> dict[str, Any] | None:
                 "filename": g.filename,
                 "mime_type": g.mime_type,
                 "size_bytes": g.size_bytes,
+                "source_type": getattr(g, "source_type", "upload_pdf"),
+                "drive_file_id": getattr(g, "drive_file_id", None),
+                "sha256": getattr(g, "sha256", None),
+                "word_count": getattr(g, "word_count", 0),
+                "char_count": getattr(g, "char_count", len(g.extracted_text)),
                 "status": g.status,
                 "error": g.error,
                 "extracted_text_chars": len(g.extracted_text),
@@ -380,5 +385,6 @@ def get_job_manifest(job_id: str) -> dict[str, Any] | None:
             else job.settings.get("guideline")
         ),
         "campaign": job.settings.get("campaign"),
+        "destinations": job.settings.get("destinations", ["telegram", "youtube", "drive"]),
         "clips": manifest_clips,
     }

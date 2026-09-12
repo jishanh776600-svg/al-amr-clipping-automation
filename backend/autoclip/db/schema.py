@@ -265,6 +265,19 @@ def _migration_v7(conn: sqlite3.Connection) -> None:
     conn.executescript(_V7)
 
 
+_V8 = """
+ALTER TABLE campaign_guidelines ADD COLUMN source_type TEXT NOT NULL DEFAULT 'upload_pdf';
+ALTER TABLE campaign_guidelines ADD COLUMN drive_file_id TEXT;
+ALTER TABLE campaign_guidelines ADD COLUMN sha256 TEXT;
+ALTER TABLE campaign_guidelines ADD COLUMN word_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE campaign_guidelines ADD COLUMN char_count INTEGER NOT NULL DEFAULT 0;
+"""
+
+
+def _migration_v8(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V8)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -275,6 +288,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v5,
     _migration_v6,
     _migration_v7,
+    _migration_v8,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
