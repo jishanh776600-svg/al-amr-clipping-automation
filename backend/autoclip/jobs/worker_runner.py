@@ -120,10 +120,19 @@ async def async_main() -> None:
     except Exception:
         brief_data = {}
 
-    try:
-        publish_targets = json.loads(args.publish_targets) if args.publish_targets else []
-    except Exception:
-        publish_targets = []
+    publish_targets: list[str] = []
+    if args.publish_targets:
+        raw_pt = str(args.publish_targets).strip()
+        try:
+            parsed = json.loads(raw_pt)
+            if isinstance(parsed, list):
+                publish_targets = [str(x).strip() for x in parsed if str(x).strip()]
+            elif isinstance(parsed, str):
+                publish_targets = [parsed.strip()]
+        except Exception:
+            cleaned = raw_pt.strip("[]()\"'").replace("\\", "").replace('"', '').replace("'", "")
+            publish_targets = [p.strip() for p in cleaned.split(",") if p.strip()]
+    log.info("Resolved publish targets: %s (raw: %r)", publish_targets, args.publish_targets)
 
     # 3. Ingest source
     report(stage="ingesting_source", progress=0.10)
