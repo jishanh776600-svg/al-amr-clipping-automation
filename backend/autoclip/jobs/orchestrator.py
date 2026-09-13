@@ -84,6 +84,14 @@ NON_RETRYABLE_PATTERNS = [
     "cancelled by operator",
     "job cancelled",
     "malformed request",
+    # YouTube fatal errors (non-retryable)
+    "youtube_invalid_url",
+    "youtube_video_unavailable",
+    "youtube_auth_required",
+    "youtube_extraction_blocked",
+    "youtube_format_error",
+    "youtube_media_invalid",
+    "youtube_download_failed",
 ]
 
 

@@ -72,13 +72,16 @@ class ClipSettings(BaseModel):
 
 
 class IngestSettings(BaseModel):
-    #: yt-dlp format selector. Default caps at 1080p to keep downloads sane.
-    ytdlp_format: str = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]"
-    #: Browser to pull YouTube cookies from ("chrome", "firefox", "edge", ...).
-    #: As of 2026 most anonymous YouTube downloads hit a bot check that only
-    #: browser cookies reliably clear, so this is a first-class setting.
+    #: yt-dlp format selector. Caps at 1080p and ensures audio+video streams merge cleanly.
+    ytdlp_format: str = (
+        "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+        "best[height<=1080][ext=mp4]/"
+        "best[height<=1080]/"
+        "best"
+    )
+    #: Optional browser to pull cookies from (deprecated; cloud workers run browserless).
     cookies_from_browser: str = ""
-    #: Path to Netscape-format cookies.txt file for headless server environments.
+    #: Optional path to Netscape-format cookies.txt file for authenticated server sessions.
     cookies_file: str = ""
     #: Offer YouTube's own auto-captions as a fast path, skipping Whisper.
     prefer_youtube_captions: bool = False

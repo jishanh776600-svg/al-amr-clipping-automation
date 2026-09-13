@@ -47,11 +47,53 @@ class IngestError(RuntimeError):
 
     def __init__(self, message: str, *, hint: str = "") -> None:
         super().__init__(message)
+        self.message = message
         self.hint = hint
 
     def __str__(self) -> str:
         base = super().__str__()
         return f"{base}\n\n{self.hint}" if self.hint else base
+
+
+class YouTubeErrorCode:
+    """Canonical error codes for YouTube ingestion."""
+
+    INVALID_URL = "YOUTUBE_INVALID_URL"
+    VIDEO_UNAVAILABLE = "YOUTUBE_VIDEO_UNAVAILABLE"
+    AUTH_REQUIRED = "YOUTUBE_AUTH_REQUIRED"
+    EXTRACTION_BLOCKED = "YOUTUBE_EXTRACTION_BLOCKED"
+    NETWORK_ERROR = "YOUTUBE_NETWORK_ERROR"
+    FORMAT_ERROR = "YOUTUBE_FORMAT_ERROR"
+    DOWNLOAD_FAILED = "YOUTUBE_DOWNLOAD_FAILED"
+    MEDIA_INVALID = "YOUTUBE_MEDIA_INVALID"
+
+
+YOUTUBE_INVALID_URL = YouTubeErrorCode.INVALID_URL
+YOUTUBE_VIDEO_UNAVAILABLE = YouTubeErrorCode.VIDEO_UNAVAILABLE
+YOUTUBE_AUTH_REQUIRED = YouTubeErrorCode.AUTH_REQUIRED
+YOUTUBE_EXTRACTION_BLOCKED = YouTubeErrorCode.EXTRACTION_BLOCKED
+YOUTUBE_NETWORK_ERROR = YouTubeErrorCode.NETWORK_ERROR
+YOUTUBE_FORMAT_ERROR = YouTubeErrorCode.FORMAT_ERROR
+YOUTUBE_DOWNLOAD_FAILED = YouTubeErrorCode.DOWNLOAD_FAILED
+YOUTUBE_MEDIA_INVALID = YouTubeErrorCode.MEDIA_INVALID
+
+
+class YouTubeIngestError(IngestError):
+    """Structured YouTube ingestion failure with explicit classification code."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = YouTubeErrorCode.DOWNLOAD_FAILED,
+        hint: str = "",
+    ) -> None:
+        super().__init__(message, hint=hint)
+        self.code = code
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        return f"[{self.code}] {base}"
 
 
 def is_youtube_url(url: str) -> bool:
@@ -211,18 +253,93 @@ def ingest_url(
 # --------------------------------------------------------------------------
 
 
+def validate_downloaded_media(path: Path) -> ffmpeg.MediaInfo:
+    """Rigorous post-download media validation ensuring valid container, audio, and video streams."""
+    if not path.exists():
+        raise YouTubeIngestError(
+            f"Downloaded media file does not exist: {path.name}",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+        )
+    if not path.is_file():
+        raise YouTubeIngestError(
+            f"Target path is not a regular file: {path.name}",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+        )
+
+    size_bytes = path.stat().st_size
+    if size_bytes == 0:
+        raise YouTubeIngestError(
+            f"Downloaded media file {path.name} is completely empty (0 bytes).",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+            hint="The download was interrupted or produced an empty response.",
+        )
+
+    # Check for HTML / error pages masquerading as media files
+    try:
+        with path.open("rb") as f:
+            header_sample = f.read(512).lower()
+        if b"<!doctype html" in header_sample or b"<html" in header_sample or b"<head" in header_sample:
+            raise YouTubeIngestError(
+                f"Downloaded file {path.name} is an HTML document, not valid video.",
+                code=YouTubeErrorCode.MEDIA_INVALID,
+                hint="YouTube or a proxy returned an HTML block page instead of media stream.",
+            )
+    except OSError as exc:
+        raise YouTubeIngestError(
+            f"Failed reading downloaded file header: {exc}",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+        ) from exc
+
+    # Run ffprobe validation
+    try:
+        info = ffmpeg.probe(path)
+    except ffmpeg.FFmpegError as exc:
+        raise YouTubeIngestError(
+            f"{path.name} could not be parsed as valid media by FFprobe.",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+            hint=str(exc),
+        ) from exc
+
+    if info.duration_s <= 0:
+        raise YouTubeIngestError(
+            f"{path.name} reports invalid or zero duration ({info.duration_s}s).",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+            hint="The media stream is corrupt or truncated.",
+        )
+
+    if not info.has_video:
+        raise YouTubeIngestError(
+            f"{path.name} contains no video stream.",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+            hint="A valid video stream is required for vertical clipping and framing.",
+        )
+
+    if not info.has_audio:
+        raise YouTubeIngestError(
+            f"{path.name} has no audio stream.",
+            code=YouTubeErrorCode.MEDIA_INVALID,
+            hint="AutoClip finds clips by transcribing speech, so an audio stream is required.",
+        )
+
+    return info
+
+
 def ingest_youtube(
     url: str,
     settings: IngestSettings | None = None,
     *,
     on_progress: Callable[[float], None] | None = None,
 ) -> Source:
-    """Download a YouTube video and return a validated source record.
+    """Download a YouTube video using upstream yt-dlp and return a validated source record.
 
     Preconditions:
         url points at content the user owns or has the rights to process.
     """
     import yt_dlp
+
+    # Validate URL structure
+    if not url or not str(url).strip():
+        raise YouTubeIngestError("No YouTube URL provided.", code=YouTubeErrorCode.INVALID_URL)
 
     settings = settings or IngestSettings()
     source_id = new_id()
@@ -255,10 +372,18 @@ def ingest_youtube(
         },
     }
 
-    # Handle cookies: check explicit file, env var, or env text secret
+    # Detect external JavaScript runtime for yt-dlp / yt-dlp-ejs challenge execution
+    for candidate in ("deno", "node", "nodejs", "bun"):
+        if shutil.which(candidate):
+            options["js_engine"] = candidate
+            log.info("Upstream yt-dlp: JavaScript runtime '%s' discovered for challenges", candidate)
+            break
+
+    # Handle optional server-side cookies (explicit file or environment secret)
     cookies_file = settings.cookies_file or os.environ.get("AUTOCLIP_COOKIES_FILE")
     env_cookies_text = os.environ.get("YOUTUBE_COOKIES_TEXT") or os.environ.get("YOUTUBE_COOKIES")
 
+    tmp_cookies: Path | None = None
     if env_cookies_text and not cookies_file:
         tmp_cookies = target_dir / "cookies.txt"
         tmp_cookies.write_text(env_cookies_text, encoding="utf-8")
@@ -266,7 +391,7 @@ def ingest_youtube(
     elif cookies_file and Path(cookies_file).expanduser().is_file():
         options["cookiefile"] = str(Path(cookies_file).expanduser())
     elif settings.cookies_from_browser:
-        # Check if browser cookies can be accessed or if running on headless Linux/CI
+        # Legacy local desktop fallback ONLY; cloud workers run browserless
         is_ci_or_headless = bool(
             os.environ.get("CI")
             or os.environ.get("GITHUB_ACTIONS")
@@ -274,10 +399,7 @@ def ingest_youtube(
             or (os.name != "nt" and not os.environ.get("DISPLAY"))
         )
         if not is_ci_or_headless:
-            # yt-dlp expects a tuple; only the browser name is required.
             options["cookiesfrombrowser"] = (settings.cookies_from_browser,)
-        else:
-            log.info("Headless/cloud environment detected; skipping browser cookie extraction for '%s'.", settings.cookies_from_browser)
 
     if settings.prefer_youtube_captions:
         options["writeautomaticsub"] = True
@@ -285,36 +407,35 @@ def ingest_youtube(
         options["subtitlesformat"] = "json3"
 
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            metadata = ydl.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as exc:
-        # If failed with browser cookie error or player client error, retry once with android client alone without browser cookies
-        err_msg = str(exc).lower()
-        if "cookies" in err_msg or "cookie" in err_msg or "browser" in err_msg or "sign in" in err_msg:
-            log.warning("yt-dlp primary attempt encountered cookie/auth error (%s); retrying with android client.", exc)
-            fallback_options = dict(options)
-            fallback_options.pop("cookiesfrombrowser", None)
-            fallback_options.pop("cookiefile", None)
-            fallback_options["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-            try:
-                with yt_dlp.YoutubeDL(fallback_options) as fallback_ydl:
-                    metadata = fallback_ydl.extract_info(url, download=True)
-            except Exception as retry_exc:
-                shutil.rmtree(target_dir, ignore_errors=True)
-                raise _translate_ytdlp_error(retry_exc, settings) from retry_exc
-        else:
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                metadata = ydl.extract_info(url, download=True)
+        except yt_dlp.utils.DownloadError as exc:
             shutil.rmtree(target_dir, ignore_errors=True)
             raise _translate_ytdlp_error(exc, settings) from exc
-    except Exception as exc:
-        shutil.rmtree(target_dir, ignore_errors=True)
-        raise IngestError(f"Could not download {url}: {exc}") from exc
+        except Exception as exc:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise _translate_ytdlp_error(exc, settings) from exc
+    finally:
+        if tmp_cookies and tmp_cookies.is_file():
+            try:
+                tmp_cookies.unlink()
+            except Exception:
+                pass
 
     downloaded = _find_downloaded_file(target_dir)
     if downloaded is None:
         shutil.rmtree(target_dir, ignore_errors=True)
-        raise IngestError("yt-dlp reported success but produced no media file.")
+        raise YouTubeIngestError(
+            "yt-dlp reported success but produced no media file.",
+            code=YouTubeErrorCode.DOWNLOAD_FAILED,
+        )
 
-    info = _probe_and_validate(downloaded)
+    try:
+        info = validate_downloaded_media(downloaded)
+    except Exception:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise
 
     return Source(
         id=source_id,
@@ -333,49 +454,106 @@ def ingest_youtube(
     )
 
 
-def _translate_ytdlp_error(exc: Exception, settings: IngestSettings) -> IngestError:
-    """Turn a yt-dlp failure into something the user can act on."""
+def _translate_ytdlp_error(exc: Exception, settings: IngestSettings) -> YouTubeIngestError:
+    """Classify yt-dlp failures into canonical error codes with actionable operator guidance."""
     message = str(exc).lower()
 
-    if any(marker in message for marker in _BOT_CHECK_MARKERS):
-        if settings.cookies_from_browser:
-            hint = (
-                f"Cookies are already being read from {settings.cookies_from_browser}, but "
-                "YouTube still refused. Make sure you are signed in to YouTube in that "
-                "browser and that the browser is fully closed — it locks its cookie "
-                "database while running."
-            )
-        else:
-            hint = (
-                "YouTube is asking for proof you're not a bot. Set a browser to pull "
-                "cookies from — in Settings, or via config.json's "
-                '`ingest.cookies_from_browser` (e.g. "chrome", "firefox", "edge"). '
-                "You must be signed in to YouTube in that browser, and it must be closed "
-                "while AutoClip downloads."
-            )
-        return IngestError("YouTube blocked this download with a bot check.", hint=hint)
-
-    if "private video" in message or "members-only" in message:
-        return IngestError(
-            "This video is private or members-only.",
-            hint="AutoClip only downloads content you can access and have the rights to use.",
+    if "unsupported url" in message or "not a valid url" in message:
+        return YouTubeIngestError(
+            "Invalid or unsupported YouTube URL.",
+            code=YouTubeErrorCode.INVALID_URL,
+            hint="Please verify the YouTube link format (e.g. https://www.youtube.com/watch?v=...).",
         )
-    if "unavailable" in message or "removed" in message:
-        return IngestError("This video is unavailable or has been removed.")
+
+    if "private video" in message or "members-only" in message or "is private" in message:
+        return YouTubeIngestError(
+            "This YouTube video is private or members-only.",
+            code=YouTubeErrorCode.AUTH_REQUIRED,
+            hint="AL AMR could not retrieve this YouTube video automatically. The video requires authentication. You can upload the source video directly.",
+        )
+
+    if "sign in" in message or "login required" in message or "age-restricted" in message or "confirm your age" in message:
+        return YouTubeIngestError(
+            "YouTube authentication required to access this video.",
+            code=YouTubeErrorCode.AUTH_REQUIRED,
+            hint="AL AMR could not retrieve this YouTube video automatically. The video may require authentication or YouTube may currently be refusing automated retrieval. You can upload the source video directly.",
+        )
+
+    if (
+        "unavailable" in message
+        or "removed" in message
+        or "does not exist" in message
+        or "deleted" in message
+        or "404" in message
+        or "not found" in message
+    ):
+        return YouTubeIngestError(
+            "This YouTube video is unavailable or has been removed.",
+            code=YouTubeErrorCode.VIDEO_UNAVAILABLE,
+            hint="Please verify the video URL exists and is publicly accessible.",
+        )
+
+    if (
+        any(marker in message for marker in _BOT_CHECK_MARKERS)
+        or "bot" in message
+        or "captcha" in message
+        or "429" in message
+        or "403" in message
+        or "forbidden" in message
+        or "too many requests" in message
+        or "blocking" in message
+        or "blocked" in message
+    ):
+        return YouTubeIngestError(
+            "YouTube blocked automated retrieval for this video.",
+            code=YouTubeErrorCode.EXTRACTION_BLOCKED,
+            hint="AL AMR could not retrieve this YouTube video automatically. The video may require authentication or YouTube may currently be refusing automated retrieval. You can upload the source video directly.",
+        )
+
     if "drm" in message:
-        return IngestError(
-            "This content is DRM-protected.",
-            hint="AutoClip does not and will not circumvent DRM.",
+        return YouTubeIngestError(
+            "This content is DRM-protected and cannot be retrieved.",
+            code=YouTubeErrorCode.AUTH_REQUIRED,
+            hint="AL AMR does not circumvent DRM. Please upload unencrypted source media directly.",
         )
 
-    return IngestError(
-        "yt-dlp could not download this video.",
-        hint=(
-            "YouTube changes frequently and yt-dlp is updated often. Try "
-            "`autoclip update-ytdlp` to pull the latest version.\n\n"
-            f"Original error: {exc}"
-        ),
+    if any(
+        net in message
+        for net in (
+            "timed out",
+            "timeout",
+            "connection reset",
+            "connection closed",
+            "closed connection",
+            "remote end closed",
+            "name resolution",
+            "temporary failure",
+            "network is unreachable",
+            "500",
+            "502",
+            "503",
+            "504",
+        )
+    ):
+        return YouTubeIngestError(
+            f"Transient network error during YouTube extraction: {exc}",
+            code=YouTubeErrorCode.NETWORK_ERROR,
+            hint="The network connection to YouTube failed temporarily. AL AMR will retry.",
+        )
+
+    if "format" in message or "requested format" in message:
+        return YouTubeIngestError(
+            f"YouTube format selection error: {exc}",
+            code=YouTubeErrorCode.FORMAT_ERROR,
+            hint="No compatible video/audio format could be extracted.",
+        )
+
+    return YouTubeIngestError(
+        f"YouTube download failed: {exc}",
+        code=YouTubeErrorCode.DOWNLOAD_FAILED,
+        hint="AL AMR could not retrieve this YouTube video automatically. The video may require authentication or YouTube may currently be refusing automated retrieval. You can upload the source video directly.",
     )
+
 
 
 def _find_downloaded_file(directory: Path) -> Path | None:

@@ -40,7 +40,7 @@ def test_cookie_abstraction_precedence(monkeypatch, tmp_path):
     dummy_cookie.write_text("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\txyz\n")
 
     # Case 1: IngestSettings with cookies_file
-    settings = IngestSettings(cookies_file=str(dummy_cookie), cookies_from_browser="chrome")
+    settings = IngestSettings(cookies_file=str(dummy_cookie))
     with patch("yt_dlp.YoutubeDL") as mock_ydl:
         mock_instance = MagicMock()
         mock_instance.extract_info.return_value = {"id": "123"}
@@ -48,7 +48,7 @@ def test_cookie_abstraction_precedence(monkeypatch, tmp_path):
 
         # Mock downloaded file finding
         with patch("autoclip.pipeline.ingest._find_downloaded_file", return_value=dummy_cookie):
-            with patch("autoclip.pipeline.ingest._probe_and_validate", return_value=MagicMock()):
+            with patch("autoclip.pipeline.ingest.validate_downloaded_media", return_value=MagicMock()):
                 ingest.ingest_youtube("https://youtube.com/watch?v=123", settings)
 
         opts = mock_ydl.call_args[0][0]
@@ -57,39 +57,36 @@ def test_cookie_abstraction_precedence(monkeypatch, tmp_path):
 
     # Case 2: Environment variable override AUTOCLIP_COOKIES_FILE
     monkeypatch.setenv("AUTOCLIP_COOKIES_FILE", str(dummy_cookie))
-    settings_no_cookie = IngestSettings(cookies_from_browser="firefox")
+    settings_no_cookie = IngestSettings()
     with patch("yt_dlp.YoutubeDL") as mock_ydl:
         mock_instance = MagicMock()
         mock_instance.extract_info.return_value = {"id": "123"}
         mock_ydl.return_value.__enter__.return_value = mock_instance
 
         with patch("autoclip.pipeline.ingest._find_downloaded_file", return_value=dummy_cookie):
-            with patch("autoclip.pipeline.ingest._probe_and_validate", return_value=MagicMock()):
+            with patch("autoclip.pipeline.ingest.validate_downloaded_media", return_value=MagicMock()):
                 ingest.ingest_youtube("https://youtube.com/watch?v=123", settings_no_cookie)
 
         opts = mock_ydl.call_args[0][0]
         assert opts.get("cookiefile") == str(dummy_cookie)
         assert "cookiesfrombrowser" not in opts
 
-    # Case 3: No cookies_file, fallback to cookies_from_browser
+    # Case 3: No cookies provided -> headless mode, never cookiesfrombrowser
     monkeypatch.delenv("AUTOCLIP_COOKIES_FILE", raising=False)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.delenv("RENDER", raising=False)
-    monkeypatch.setenv("DISPLAY", ":0")
-    settings_browser = IngestSettings(cookies_from_browser="edge")
+    monkeypatch.delenv("YOUTUBE_COOKIES_TEXT", raising=False)
+    settings_headless = IngestSettings()
     with patch("yt_dlp.YoutubeDL") as mock_ydl:
         mock_instance = MagicMock()
         mock_instance.extract_info.return_value = {"id": "123"}
         mock_ydl.return_value.__enter__.return_value = mock_instance
 
         with patch("autoclip.pipeline.ingest._find_downloaded_file", return_value=dummy_cookie):
-            with patch("autoclip.pipeline.ingest._probe_and_validate", return_value=MagicMock()):
-                ingest.ingest_youtube("https://youtube.com/watch?v=123", settings_browser)
+            with patch("autoclip.pipeline.ingest.validate_downloaded_media", return_value=MagicMock()):
+                ingest.ingest_youtube("https://youtube.com/watch?v=123", settings_headless)
 
         opts = mock_ydl.call_args[0][0]
         assert "cookiefile" not in opts
-        assert opts.get("cookiesfrombrowser") == ("edge",)
+        assert "cookiesfrombrowser" not in opts
 
 
 def test_provider_env_overrides(monkeypatch):
