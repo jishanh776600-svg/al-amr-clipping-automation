@@ -677,12 +677,23 @@ async def worker_callback(
     payload: WorkerCallbackIn,
 ) -> JobOut:
     """Receive live execution, heartbeat, and completion updates from on-demand worker."""
-    job = await asyncio.to_thread(store.get_job, job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
-
     if not is_valid_token(payload.token):
         raise HTTPException(status_code=401, detail="Unauthorized worker callback.")
+
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        source = Source(id=new_id(), type="youtube", path="", title="Cloud Worker Ingest", url="")
+        await asyncio.to_thread(store.create_source, source)
+        job = Job(
+            id=job_id,
+            source_id=source.id,
+            status=payload.stage or "running",
+            stage=payload.stage,
+            progress=payload.progress or 0.0,
+            dispatch_mode="github",
+            github_run_id=payload.github_run_id,
+        )
+        await asyncio.to_thread(store.create_job, job)
 
     now = store.utcnow()
     update_kwargs: dict[str, Any] = {

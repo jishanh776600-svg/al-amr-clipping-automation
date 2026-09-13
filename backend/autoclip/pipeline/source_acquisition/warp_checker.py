@@ -69,16 +69,49 @@ def check_warp_status(proxy_url: str | None = None, timeout: float = 5.0) -> dic
             "error": "No egress proxy configured and local WARP sidecar (127.0.0.1:1080) is closed.",
         }
 
-    # Test connectivity through proxy to Cloudflare CDN trace endpoint
     start_time = time.perf_counter()
+    text = ""
+    err_msg = ""
+
+    # Attempt 1: httpx with SOCKS / HTTP proxy support
     try:
         with httpx.Client(proxy=effective_proxy, timeout=timeout) as client:
             resp = client.get("https://cloudflare.com/cdn-cgi/trace")
             resp.raise_for_status()
             text = resp.text
+    except Exception as exc:
+        err_msg = str(exc)
+        log.debug("httpx probe through %s failed (%s), attempting curl fallback...", effective_proxy, err_msg)
 
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 1)
+    # Attempt 2: System curl fallback (universal SOCKS5 and HTTP proxy support)
+    if not text:
+        import shutil
+        import subprocess
 
+        curl_bin = shutil.which("curl")
+        if curl_bin:
+            try:
+                proxy_arg = effective_proxy
+                if proxy_arg.startswith("socks5://"):
+                    proxy_arg = "socks5h://" + proxy_arg[len("socks5://"):]
+                cmd = [
+                    curl_bin,
+                    "-s",
+                    "--max-time", str(max(int(timeout), 5)),
+                    "--proxy", proxy_arg,
+                    "https://cloudflare.com/cdn-cgi/trace",
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 3)
+                if proc.returncode == 0 and "ip=" in proc.stdout:
+                    text = proc.stdout
+                elif proc.stderr:
+                    err_msg = f"{err_msg}; curl: {proc.stderr.strip()}"
+            except Exception as curl_exc:
+                err_msg = f"{err_msg}; curl error: {curl_exc}"
+
+    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 1)
+
+    if text and "ip=" in text:
         trace_data: dict[str, str] = {}
         for line in text.splitlines():
             if "=" in line:
@@ -110,17 +143,14 @@ def check_warp_status(proxy_url: str | None = None, timeout: float = 5.0) -> dic
             "error": None,
         }
 
-    except Exception as exc:
-        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 1)
-        err_msg = str(exc)
-        log.warning("WARP proxy probe failed via %s: %s", effective_proxy, err_msg)
-        return {
-            "active": False,
-            "proxy_url": effective_proxy,
-            "client_ip": "",
-            "location": "",
-            "warp_status": "off",
-            "warp_on": False,
-            "latency_ms": elapsed_ms,
-            "error": err_msg,
-        }
+    log.warning("WARP proxy probe failed via %s: %s", effective_proxy, err_msg)
+    return {
+        "active": False,
+        "proxy_url": effective_proxy,
+        "client_ip": "",
+        "location": "",
+        "warp_status": "off",
+        "warp_on": False,
+        "latency_ms": elapsed_ms,
+        "error": err_msg,
+    }

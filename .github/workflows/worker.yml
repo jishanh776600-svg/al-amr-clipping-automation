@@ -83,7 +83,7 @@ jobs:
       - name: Install AL AMR Python Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install -e .
+          python -m pip install -e . "httpx[socks]" "socksio"
           python -m pip install google-api-python-client google-auth
 
       - name: Verify Multimedia & YouTube Extraction Runtime
