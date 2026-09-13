@@ -130,8 +130,21 @@ class ServerDownloaderEngine:
                     except Exception:
                         pass
 
+        selected_format = (
+            job_context.settings.ytdlp_format
+            if job_context and getattr(job_context, "settings", None) and hasattr(job_context.settings, "ytdlp_format")
+            else (
+                "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo[height<=1080]+bestaudio/"
+                "bestvideo+bestaudio/"
+                "best[height<=1080][ext=mp4]/"
+                "best[height<=1080]/"
+                "best"
+            )
+        )
+
         ydl_opts: dict[str, Any] = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
+            "format": selected_format,
             "outtmpl": out_template,
             "merge_output_format": "mp4",
             "noplaylist": True,
@@ -180,11 +193,15 @@ class ServerDownloaderEngine:
                 opts = dict(ydl_opts)
                 if extractor_args:
                     opts["extractor_args"] = extractor_args
+                log.info("Server-downloader attempting strategy '%s' for URL: %s", s_name, source_url)
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
-                        return ydl.extract_info(source_url, download=True)
+                        res = ydl.extract_info(source_url, download=True)
+                        log.info("Server-downloader strategy '%s' succeeded for URL: %s", s_name, source_url)
+                        return res
                 except Exception as exc:
                     last_exc = exc
+                    log.warning("Server-downloader strategy '%s' failed: %s", s_name, exc)
                     exc_str = str(exc).lower()
                     if "not found" in exc_str or "does not exist" in exc_str:
                         raise exc
