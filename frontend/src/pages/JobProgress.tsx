@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
-import { api, formatDuration } from '../api'
+import { api, formatBytes, formatDuration } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { useJobStream } from '../useJobStream'
 
@@ -9,7 +9,7 @@ import { AuthModal } from '../components/AuthModal'
 
 /** Stage order and labels, mirroring autoclip.pipeline.Stage. */
 const STAGES = [
-  { key: 'prepare', label: 'Prepare', note: 'Extracting audio and thumbnails' },
+  { key: 'prepare', label: 'Prepare & Ingest', note: 'Source acquisition, audio and thumbnails' },
   { key: 'transcribe', label: 'Transcribe', note: 'Word-level timing' },
   { key: 'highlights', label: 'Highlights', note: 'Choosing the moments worth cutting' },
   { key: 'reframe', label: 'Reframe', note: 'Tracking the speaker into vertical' },
@@ -20,10 +20,11 @@ const STAGES = [
 export function JobProgress() {
   const { jobId } = useParams()
   const navigate = useNavigate()
-  const { job, progress, error: streamError } = useJobStream(jobId)
+  const { job, progress, acquisition, error: streamError } = useJobStream(jobId)
   const [cancelling, setCancelling] = useState(false)
   const [actionError, setActionError] = useState<Error | null>(null)
   const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showAcquisitionDetails, setShowAcquisitionDetails] = useState(false)
 
   useEffect(() => {
     if (job?.status === 'done') {
@@ -64,7 +65,7 @@ export function JobProgress() {
     return <p className="pt-24 text-sm text-ink-500">Loading…</p>
   }
 
-  const activeIndex = STAGES.findIndex((s) => s.key === job.current_stage)
+  const activeIndex = job.current_stage === 'acquiring' ? 0 : STAGES.findIndex((s) => s.key === job.current_stage)
   const percent = Math.round((progress?.overall ?? job.progress) * 100)
 
   const cancel = async () => {
@@ -169,6 +170,131 @@ export function JobProgress() {
       {actionError && (
         <div className="mt-8 max-w-3xl">
           <ErrorNote error={actionError} onDismiss={() => setActionError(null)} />
+        </div>
+      )}
+
+      {/* Live Source Acquisition Status & Fallback Telemetry */}
+      {(acquisition || job.settings?.acquisition_telemetry || job.current_stage === 'acquiring') && (
+        <div className="mt-8 max-w-3xl rounded-xl border border-sodium-500/30 bg-ink-900/90 p-5 shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-800 pb-3">
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  acquisition?.status === 'completed' || (job.status === 'running' && job.current_stage !== 'acquiring' && job.current_stage !== 'prepare')
+                    ? 'bg-emerald-400'
+                    : acquisition?.status === 'failed' || job.status === 'failed'
+                      ? 'bg-rose-500'
+                      : 'bg-sodium-400 animate-pulse'
+                }`}
+              />
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-300">
+                Source Media Acquisition
+              </span>
+              {(acquisition?.provider || job.settings?.acquisition_telemetry?.provider) && (
+                <span className="rounded bg-sodium-500/10 px-2 py-0.5 text-[11px] font-mono text-sodium-300 border border-sodium-500/20">
+                  {acquisition?.provider || job.settings?.acquisition_telemetry?.provider}
+                </span>
+              )}
+            </div>
+            {acquisition?.attempt && acquisition?.totalAttempts && (
+              <span className="text-xs font-mono text-ink-400">
+                Provider {acquisition.attempt} of {acquisition.totalAttempts}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-3 text-sm text-ink-200 font-medium">
+            {acquisition?.message ||
+              (job.settings?.acquisition_telemetry
+                ? `Acquired via ${job.settings.acquisition_telemetry.provider} in ${job.settings.acquisition_telemetry.acquisition_duration}s`
+                : 'Acquiring source media...')}
+          </div>
+
+          {/* Download progress bar */}
+          {acquisition?.phase === 'DOWNLOADING' && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-xs text-ink-400 mb-1">
+                <span>
+                  {acquisition.bytesDownloaded ? formatBytes(acquisition.bytesDownloaded) : ''}
+                  {acquisition.totalBytes ? ` / ${formatBytes(acquisition.totalBytes)}` : ''}
+                  {acquisition.downloadSpeed ? ` · ${(acquisition.downloadSpeed / (1024 * 1024)).toFixed(1)} MB/s` : ''}
+                </span>
+                <span className="font-mono text-sodium-400">
+                  {acquisition.progressPercent !== undefined && acquisition.progressPercent !== null
+                    ? `${Math.round(acquisition.progressPercent)}%`
+                    : ''}
+                  {acquisition.etaSeconds ? ` (ETA ${Math.round(acquisition.etaSeconds)}s)` : ''}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-ink-800 overflow-hidden">
+                <div
+                  className="h-full bg-sodium-500 transition-all duration-300 ease-out"
+                  style={{ width: `${Math.min(100, Math.max(0, acquisition.progressPercent ?? 0))}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Expandable Acquisition Details */}
+          <div className="mt-4 pt-3 border-t border-ink-800/60">
+            <button
+              type="button"
+              onClick={() => setShowAcquisitionDetails(!showAcquisitionDetails)}
+              className="text-xs text-ink-400 hover:text-ink-200 flex items-center gap-1.5 font-mono"
+            >
+              <span>{showAcquisitionDetails ? '▼ Hide' : '▶ Show'} Acquisition Details & Fallback Telemetry</span>
+            </button>
+
+            {showAcquisitionDetails && (
+              <div className="mt-3 rounded bg-ink-950/80 p-3 border border-ink-800 text-xs font-mono space-y-2 text-ink-300">
+                <div>
+                  <span className="text-ink-500">Source URL:</span>{' '}
+                  <span className="text-ink-200 break-all">{job.source?.url || '—'}</span>
+                </div>
+                {(acquisition?.provider || job.settings?.acquisition_telemetry?.provider) && (
+                  <div>
+                    <span className="text-ink-500">Active Provider:</span>{' '}
+                    <span className="text-sodium-300">
+                      {acquisition?.provider || job.settings?.acquisition_telemetry?.provider}
+                    </span>
+                  </div>
+                )}
+                {acquisition?.instance && (
+                  <div>
+                    <span className="text-ink-500">Instance:</span>{' '}
+                    <span className="text-ink-200">{acquisition.instance}</span>
+                  </div>
+                )}
+
+                {/* Fallback history */}
+                {(() => {
+                  const history =
+                    acquisition?.telemetry?.fallback_history ||
+                    acquisition?.telemetry?.attempts_history ||
+                    job.settings?.acquisition_telemetry?.fallback_history ||
+                    job.settings?.acquisition_telemetry?.attempts_history ||
+                    []
+                  if (!history.length) return null
+                  return (
+                    <div className="mt-2 pt-2 border-t border-ink-900">
+                      <div className="text-ink-400 font-semibold mb-1">Provider Fallback Log:</div>
+                      <div className="space-y-1">
+                        {history.map((att: any, idx: number) => (
+                          <div key={idx} className="text-[11px] flex items-start gap-2">
+                            <span className="text-rose-400">✕</span>
+                            <span className="text-ink-200 font-bold">{att.provider}:</span>
+                            <span className="text-ink-400">
+                              [{att.code}] {att.message}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

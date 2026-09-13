@@ -204,10 +204,67 @@ class PipelineRunner:
 
     # -- stages ------------------------------------------------------------
 
+    def _stage_acquire(self) -> Path:
+        self._check_cancelled()
+        if self.source.path and Path(self.source.path).is_file():
+            return Path(self.source.path)
+
+        if not self.source.url:
+            raise PipelineError("Source media file does not exist and no URL was provided.", stage=Stage.PREPARE)
+
+        from .source_acquisition import JobContext, get_default_registry
+
+        registry = get_default_registry(self.settings.ingest)
+        target_dir = paths.sources_dir() / self.source.id
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        job_ctx = JobContext(
+            job_id=self.job.id,
+            source_id=self.source.id,
+            settings=self.settings.ingest,
+        )
+
+        result = registry.acquire(
+            source_url=self.source.url,
+            target_dir=target_dir,
+            job_context=job_ctx,
+        )
+
+        media_info = result.media_info
+        duration = result.duration
+        w = media_info.width if media_info else None
+        h = media_info.height if media_info else None
+        fps = media_info.fps if media_info else None
+        has_audio = media_info.has_audio if media_info else True
+        has_video = media_info.has_video if media_info else True
+
+        updated_source = store.update_source(
+            self.source.id,
+            path=str(result.local_media_path),
+            filename=result.local_media_path.name,
+            duration_s=duration,
+            width=w,
+            height=h,
+            fps=fps,
+            has_audio=has_audio,
+            has_video=has_video,
+        )
+        if updated_source:
+            self.source = updated_source
+        else:
+            self.source.path = str(result.local_media_path)
+            self.source.duration_s = duration
+
+        if "provenance" in result.provider_metadata:
+            self.job.settings["acquisition_telemetry"] = result.provider_metadata["provenance"]
+            store.update_job(self.job.id, settings=self.job.settings)
+
+        return result.local_media_path
+
     def _stage_prepare(self) -> Path:
         stage = Stage.PREPARE
         self._check_cancelled()
-        source_path = Path(self.source.path)
+        source_path = self._stage_acquire()
 
         if self.workspace.audio.exists() and self.workspace.audio.stat().st_size > 0:
             log.info("Reusing existing audio for job %s.", self.job.id)

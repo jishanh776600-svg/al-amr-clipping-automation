@@ -75,6 +75,67 @@ def list_sources(limit: int = 50) -> list[Source]:
     return [Source.from_row(r) for r in rows]
 
 
+def update_source(
+    source_id: str,
+    *,
+    path: str | None = None,
+    title: str | None = None,
+    filename: str | None = None,
+    channel: str | None = None,
+    duration_s: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    fps: float | None = None,
+    has_audio: bool | None = None,
+    has_video: bool | None = None,
+) -> Source | None:
+    """Update fields on an existing source record."""
+    assignments: list[str] = []
+    params: list[Any] = []
+
+    if path is not None:
+        assignments.append("path = ?")
+        params.append(path)
+    if title is not None:
+        assignments.append("title = ?")
+        params.append(title)
+    if filename is not None:
+        assignments.append("filename = ?")
+        params.append(filename)
+    if channel is not None:
+        assignments.append("channel = ?")
+        params.append(channel)
+    if duration_s is not None:
+        assignments.append("duration_s = ?")
+        params.append(duration_s)
+    if width is not None:
+        assignments.append("width = ?")
+        params.append(width)
+    if height is not None:
+        assignments.append("height = ?")
+        params.append(height)
+    if fps is not None:
+        assignments.append("fps = ?")
+        params.append(fps)
+    if has_audio is not None:
+        assignments.append("has_audio = ?")
+        params.append(int(has_audio))
+    if has_video is not None:
+        assignments.append("has_video = ?")
+        params.append(int(has_video))
+
+    if not assignments:
+        return get_source(source_id)
+
+    params.append(source_id)
+    with connection() as conn:
+        conn.execute(
+            f"UPDATE sources SET {', '.join(assignments)} WHERE id = ?",
+            tuple(params),
+        )
+    return get_source(source_id)
+
+
 # --------------------------------------------------------------------------
 # Jobs
 # --------------------------------------------------------------------------

@@ -161,30 +161,38 @@ export function Ingest() {
 
     setBusy('launching')
     try {
-      let sourceId = ''
-      if (sourceMode === 'url') {
-        setBusy('Fetching source video...')
-        const source = await api.ingestYouTube(url.trim())
-        sourceId = source.id
-      } else if (selectedVideoFile) {
-        setBusy('Uploading source video...')
-        const source = await api.uploadSource(selectedVideoFile)
-        sourceId = source.id
-      }
-
-      setBusy('Creating autonomous job...')
-      const guidelineId = uploadedGuideline?.id || null
       const jobOverrides: any = {
         ...overrides,
         destinations: publishDestinations,
       }
-      const job = await api.createJob(
-        sourceId,
-        jobOverrides,
-        overrides.campaign,
-        guidelineId,
-      )
-      navigate(`/jobs/${job.id}`)
+
+      if (sourceMode === 'url') {
+        setBusy('Launching autonomous pipeline...')
+        const form = new FormData()
+        form.append('url', url.trim())
+        if (uploadedGuideline?.id) {
+          form.append('guideline_id', uploadedGuideline.id)
+        } else if (driveUrl.trim()) {
+          form.append('drive_guideline_url', driveUrl.trim())
+        }
+        form.append('destinations', JSON.stringify(publishDestinations))
+        form.append('overrides', JSON.stringify(jobOverrides))
+
+        const job = await api.createAutonomousJob(form)
+        navigate(`/jobs/${job.id}`)
+      } else if (selectedVideoFile) {
+        setBusy('Uploading source video...')
+        const source = await api.uploadSource(selectedVideoFile)
+        setBusy('Creating autonomous job...')
+        const guidelineId = uploadedGuideline?.id || null
+        const job = await api.createJob(
+          source.id,
+          jobOverrides,
+          overrides.campaign,
+          guidelineId,
+        )
+        navigate(`/jobs/${job.id}`)
+      }
     } catch (err) {
       setError(err as Error)
       setBusy(null)

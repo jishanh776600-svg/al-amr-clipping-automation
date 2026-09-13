@@ -130,6 +130,44 @@ def progress_event(job_id: str, event) -> Event:
     )
 
 
+def acquisition_event(
+    job_id: str,
+    phase: str,
+    status: str = "active",
+    provider: str | None = None,
+    instance: str | None = None,
+    message: str = "",
+    progress_percent: float | None = None,
+    bytes_downloaded: int | None = None,
+    total_bytes: int | None = None,
+    download_speed: float | None = None,
+    eta_seconds: float | None = None,
+    attempt: int | None = None,
+    total_attempts: int | None = None,
+    telemetry: dict[str, Any] | None = None,
+) -> Event:
+    """Emit granular, real-time source acquisition telemetry for frontend SSE streaming."""
+    return Event(
+        type="acquisition",
+        job_id=job_id,
+        data={
+            "phase": phase,
+            "status": status,
+            "provider": provider,
+            "instance": instance,
+            "message": message,
+            "progress_percent": progress_percent,
+            "bytes_downloaded": bytes_downloaded,
+            "total_bytes": total_bytes,
+            "download_speed": download_speed,
+            "eta_seconds": eta_seconds,
+            "attempt": attempt,
+            "total_attempts": total_attempts,
+            "telemetry": telemetry or {},
+        },
+    )
+
+
 def as_dict(event: Event) -> dict[str, Any]:
     return asdict(event)
 

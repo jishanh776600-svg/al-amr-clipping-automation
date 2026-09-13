@@ -47,7 +47,7 @@ class PipedAcquisitionProvider(SourceAcquisitionProvider):
         self,
         *,
         instances: list[str] | None = None,
-        connect_timeout_s: float = 10.0,
+        connect_timeout_s: float = 4.0,
         read_timeout_s: float = 60.0,
         max_size_bytes: int = 2 * 1024 * 1024 * 1024,  # 2 GiB
     ) -> None:

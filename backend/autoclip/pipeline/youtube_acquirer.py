@@ -408,11 +408,10 @@ class YouTubeSourceAcquirer:
         # Strategy 6 (Fallback): TV client.
         strategies: list[tuple[str, dict[str, Any] | None]] = [
             ("cloud_resilient_innertube", {"youtube": {"player_client": ["default", "-web"]}}),
-            ("mobile_innertube", {"youtube": {"player_client": ["android"], "player_skip": ["webpage"]}}),
-            ("pot_provider_innertube", {"youtube": {"player_client": ["web", "mweb"], "fetch_pot": ["always"], "player_skip": ["webpage"]}}),
-            ("mobile_extended_innertube", {"youtube": {"player_client": ["android", "ios"], "player_skip": ["webpage", "configs"]}}),
+            ("mobile_innertube", {"youtube": {"player_client": ["android", "ios"]}}),
+            ("pot_provider_innertube", {"youtube": {"player_client": ["web", "mweb"], "fetch_pot": ["always"]}}),
             ("default_unconstrained", None),
-            ("tv_client", {"youtube": {"player_client": ["tv"]}}),
+            ("tv_innertube", {"youtube": {"player_client": ["tv"]}}),
         ]
 
 

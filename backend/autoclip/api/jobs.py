@@ -26,7 +26,7 @@ from ..campaign.extractor import (
 )
 from ..config import load as load_settings
 from ..db import models, store
-from ..db.models import CampaignGuideline, Job, new_id
+from ..db.models import CampaignGuideline, Job, Source, new_id
 from ..jobs import orchestrator
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
 from ..jobs.events import Event, broker
@@ -218,15 +218,27 @@ async def create_autonomous_job(
     source = None
     if url and str(url).strip():
         clean_url = str(url).strip()
-        settings = load_settings().ingest
+        from ..pipeline.source_acquisition.security import validate_remote_url
         try:
-            source = await asyncio.to_thread(ingest.ingest_url, clean_url, settings)
-            await asyncio.to_thread(store.create_source, source)
-        except ingest.IngestError as exc:
+            validate_remote_url(clean_url)
+        except Exception as exc:
+            hint = getattr(exc, "hint", "Please provide a valid public YouTube or remote video link.")
+            msg = getattr(exc, "message", str(exc))
             raise HTTPException(
                 status_code=422,
-                detail={"message": str(exc), "hint": exc.hint},
+                detail={"message": msg, "hint": hint},
             ) from exc
+
+        # Immediate non-blocking source creation: media will be acquired asynchronously
+        # by the worker pipeline while streaming real-time events to the operator UI
+        source = Source(
+            id=new_id(),
+            type="youtube",
+            path="",
+            title=clean_url,
+            url=clean_url,
+        )
+        await asyncio.to_thread(store.create_source, source)
     elif video_file and hasattr(video_file, "filename") and video_file.filename:
         suffix = Path(video_file.filename).suffix.lower()
         if suffix not in ingest.ACCEPTED_SUFFIXES:

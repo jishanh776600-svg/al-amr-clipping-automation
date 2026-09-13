@@ -67,7 +67,7 @@ async def ingest_url(payload: UrlIngestIn) -> SourceOut:
         source = await asyncio.to_thread(ingest.ingest_url, payload.url, settings)
     except ingest.IngestError as exc:
         raise HTTPException(
-            status_code=422, detail={"message": str(exc), "hint": exc.hint}
+            status_code=422, detail={"message": exc.message, "hint": exc.hint}
         ) from exc
 
     await asyncio.to_thread(store.create_source, source)

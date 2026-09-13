@@ -144,6 +144,12 @@ class ServerDownloaderEngine:
             "nocheckcertificate": False,
         }
 
+        # Discover JS runtimes (Deno, Node) for challenge execution
+        for candidate in ("deno", "node", "nodejs", "bun"):
+            if shutil.which(candidate):
+                ydl_opts["js_runtimes"] = {candidate: {}}
+                break
+
         # Check for optional cookies file if specified in settings or env
         cookies_file = None
         if job_context and job_context.settings.cookies_file:
@@ -154,10 +160,36 @@ class ServerDownloaderEngine:
         if cookies_file and Path(cookies_file).exists():
             ydl_opts["cookiefile"] = str(cookies_file)
 
+        is_youtube = any(h in domain for h in ("youtube.com", "youtu.be"))
+        if is_youtube:
+            strategies = [
+                ("pot_web", {"youtube": {"player_client": ["web"], "fetch_pot": ["always"]}}),
+                ("pot_mweb", {"youtube": {"player_client": ["mweb"], "fetch_pot": ["always"]}}),
+                ("android", {"youtube": {"player_client": ["android"]}}),
+                ("ios", {"youtube": {"player_client": ["ios"]}}),
+                ("default", None),
+            ]
+        else:
+            strategies = [("default", None)]
+
         # 4. Execute download with timeout guard in separate thread
         def _execute_ydl() -> dict[str, Any]:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(source_url, download=True)
+            last_exc = None
+            for s_name, extractor_args in strategies:
+                opts = dict(ydl_opts)
+                if extractor_args:
+                    opts["extractor_args"] = extractor_args
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(source_url, download=True)
+                except Exception as exc:
+                    last_exc = exc
+                    exc_str = str(exc).lower()
+                    if "not found" in exc_str or "does not exist" in exc_str:
+                        raise exc
+            if last_exc:
+                raise last_exc
+            raise RuntimeError("Download produced no result")
 
         info_dict: dict[str, Any] | None = None
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:

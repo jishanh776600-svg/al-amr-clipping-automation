@@ -8,6 +8,22 @@ export interface StageProgress {
   message: string
 }
 
+export interface AcquisitionProgress {
+  phase: string
+  status: 'active' | 'completed' | 'failed'
+  provider?: string | null
+  instance?: string | null
+  message: string
+  progressPercent?: number | null
+  bytesDownloaded?: number | null
+  totalBytes?: number | null
+  downloadSpeed?: number | null
+  etaSeconds?: number | null
+  attempt?: number | null
+  totalAttempts?: number | null
+  telemetry?: Record<string, any>
+}
+
 /**
  * Subscribe to a job's Server-Sent Event stream.
  *
@@ -19,6 +35,7 @@ export interface StageProgress {
 export function useJobStream(jobId: string | undefined) {
   const [job, setJob] = useState<Job | null>(null)
   const [progress, setProgress] = useState<StageProgress | null>(null)
+  const [acquisition, setAcquisition] = useState<AcquisitionProgress | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<any>(null)
   const sourceRef = useRef<EventSource | null>(null)
@@ -76,6 +93,30 @@ export function useJobStream(jobId: string | undefined) {
       )
     })
 
+    source.addEventListener('acquisition', (event) => {
+      try {
+        const raw = JSON.parse((event as MessageEvent).data)
+        const data: AcquisitionProgress = {
+          phase: raw.phase,
+          status: raw.status || 'active',
+          provider: raw.provider,
+          instance: raw.instance,
+          message: raw.message || '',
+          progressPercent: raw.progress_percent,
+          bytesDownloaded: raw.bytes_downloaded,
+          totalBytes: raw.total_bytes,
+          downloadSpeed: raw.download_speed,
+          etaSeconds: raw.eta_seconds,
+          attempt: raw.attempt,
+          totalAttempts: raw.total_attempts,
+          telemetry: raw.telemetry || {},
+        }
+        setAcquisition(data)
+      } catch {
+        /* Ignore malformed event */
+      }
+    })
+
     const terminal = (status: Job['status']) => (event: Event) => {
       const data = JSON.parse((event as MessageEvent).data ?? '{}')
       setJob((current) =>
@@ -99,5 +140,5 @@ export function useJobStream(jobId: string | undefined) {
     }
   }, [jobId])
 
-  return { job, progress, connected, setJob, error }
+  return { job, progress, acquisition, connected, setJob, error }
 }

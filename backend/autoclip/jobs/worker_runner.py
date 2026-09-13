@@ -164,13 +164,13 @@ async def async_main() -> None:
         source = ingest.ingest_file(Path(source_url), move=False, title=Path(source_url).stem)
     elif ingest.is_youtube_url(source_url):
         log.info("Source is YouTube URL: %s", source_url)
-        source = ingest.ingest_youtube(source_url, settings.ingest, on_progress=on_progress)
+        source = ingest.ingest_youtube(source_url, settings.ingest, job_id=args.job_id, on_progress=on_progress)
         report(stage="validating_source", progress=0.10)
     else:
         log.info("Source is generic URL: %s", source_url)
         # Check if direct file download
         try:
-            source = ingest.ingest_url(source_url, settings.ingest, on_progress=on_progress)
+            source = ingest.ingest_url(source_url, settings.ingest, job_id=args.job_id, on_progress=on_progress)
             report(stage="validating_source", progress=0.10)
         except Exception:
             # Fallback direct download

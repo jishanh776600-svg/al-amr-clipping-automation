@@ -169,6 +169,7 @@ def ingest_url(
     url: str,
     settings: IngestSettings | None = None,
     *,
+    job_id: str = "",
     on_progress: Callable[[float], None] | None = None,
 ) -> Source:
     """Ingest any media URL — YouTube, streaming sites via yt-dlp, or direct HTTP files."""
@@ -187,7 +188,7 @@ def ingest_url(
 
     # Try yt-dlp for YouTube and other supported streaming services
     try:
-        return ingest_youtube(url, settings, on_progress=on_progress)
+        return ingest_youtube(url, settings, job_id=job_id, on_progress=on_progress)
     except IngestError as exc:
         msg = str(exc).lower()
         # Fall back to direct HTTP streaming if yt-dlp doesn't recognise extractor
@@ -224,6 +225,7 @@ def ingest_youtube(
     url: str,
     settings: IngestSettings | None = None,
     *,
+    job_id: str = "",
     on_progress: Callable[[float], None] | None = None,
 ) -> Source:
     """Download a YouTube video using YouTubeSourceAcquirer and return a validated source record.
@@ -236,7 +238,7 @@ def ingest_youtube(
     target_dir = paths.source_media_dir(source_id)
 
     registry = get_default_registry(settings)
-    job_context = JobContext(source_id=source_id, settings=settings)
+    job_context = JobContext(job_id=job_id, source_id=source_id, settings=settings)
     result = registry.acquire(url, target_dir, job_context=job_context, on_progress=on_progress)
 
     downloaded = result.local_media_path

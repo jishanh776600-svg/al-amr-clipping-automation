@@ -82,12 +82,34 @@ class SourceAcquisitionRegistry:
         start_time = time.time()
         domain = urlparse(source_url).netloc.lower()
 
+        job_id = job_context.job_id if job_context else ""
+        from ...jobs.events import acquisition_event, broker
+
+        def _notify_event(phase: str, status: str = "active", **kwargs: Any) -> None:
+            if not job_id:
+                return
+            try:
+                event = acquisition_event(job_id=job_id, phase=phase, status=status, **kwargs)
+                broker.publish(event)
+            except Exception as e:
+                log.debug("Failed to publish acquisition event: %s", e)
+
+        _notify_event(
+            phase="VALIDATING_URL",
+            status="active",
+            message="Validating source URL and accessibility...",
+        )
 
         attempts_history: list[dict[str, Any]] = []
         last_error: SourceAcquisitionError | None = None
 
         configured_providers = [p for p in self._providers if p.is_configured()]
         if not configured_providers:
+            _notify_event(
+                phase="FAILED",
+                status="failed",
+                message="No source acquisition providers are configured.",
+            )
             raise SourceAcquisitionError(
                 "No source acquisition providers are configured.",
                 code=SourceErrorCode.SOURCE_PROVIDER_UNAVAILABLE,
@@ -103,18 +125,57 @@ class SourceAcquisitionRegistry:
                 source_url,
             )
 
+            _notify_event(
+                phase="TRYING_PROVIDER",
+                status="active",
+                provider=provider.provider_name,
+                attempt=attempt_index,
+                total_attempts=len(configured_providers),
+                message=f"Attempting acquisition via {provider.provider_name} (provider {attempt_index} of {len(configured_providers)})...",
+                telemetry={"fallback_history": attempts_history},
+            )
+
             # Isolated subdirectory per provider attempt to avoid file collisions
             provider_work_dir = target_dir / f"_attempt_{provider.provider_name}"
             safe_target_path(target_dir, f"_attempt_{provider.provider_name}")
             shutil.rmtree(provider_work_dir, ignore_errors=True)
             provider_work_dir.mkdir(parents=True, exist_ok=True)
 
+            def _wrapped_progress(pct: float, **kw: Any) -> None:
+                if on_progress:
+                    try:
+                        on_progress(pct)
+                    except Exception:
+                        pass
+                _notify_event(
+                    phase="DOWNLOADING",
+                    status="active",
+                    provider=provider.provider_name,
+                    progress_percent=round(pct, 1),
+                    bytes_downloaded=kw.get("bytes_downloaded"),
+                    total_bytes=kw.get("total_bytes"),
+                    download_speed=kw.get("download_speed"),
+                    eta_seconds=kw.get("eta_seconds"),
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"Downloading media stream via {provider.provider_name} ({pct:.1f}%)...",
+                )
+
             try:
                 result = provider.acquire(
                     source_url=source_url,
                     target_dir=provider_work_dir,
                     job_context=job_context,
-                    on_progress=on_progress,
+                    on_progress=_wrapped_progress,
+                )
+
+                _notify_event(
+                    phase="VALIDATING_MEDIA",
+                    status="active",
+                    provider=provider.provider_name,
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"Verifying media stream integrity and container from {provider.provider_name}...",
                 )
 
                 # Move downloaded media to root target_dir / source.<ext>
@@ -154,13 +215,23 @@ class SourceAcquisitionRegistry:
                     "fallback_history": attempts_history,
                     "attempts_history": attempts_history,
                     "source_domain": domain,
-
-                    "job_id": job_context.job_id if job_context else None,
+                    "job_id": job_id or None,
                     "file_size": result.file_size,
                     "duration_s": result.duration,
                 }
                 combined_meta = dict(result.provider_metadata)
                 combined_meta["provenance"] = provenance
+
+                _notify_event(
+                    phase="SOURCE_ACQUIRED",
+                    status="completed",
+                    provider=provider.provider_name,
+                    progress_percent=100.0,
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"Source media acquired successfully via {provider.provider_name} ({result.file_size / (1024 * 1024):.1f} MB).",
+                    telemetry=provenance,
+                )
 
                 return AcquisitionResult(
                     success=True,
@@ -194,6 +265,13 @@ class SourceAcquisitionRegistry:
                 )
                 # If URL is fundamentally malformed, stop immediately
                 if exc.code == SourceErrorCode.SOURCE_INVALID_URL:
+                    _notify_event(
+                        phase="FAILED",
+                        status="failed",
+                        provider=provider.provider_name,
+                        message=exc.message,
+                        telemetry={"fallback_history": attempts_history},
+                    )
                     raise exc
 
             except Exception as exc:
@@ -219,6 +297,14 @@ class SourceAcquisitionRegistry:
             source_url,
             attempts_history,
         )
+
+        _notify_event(
+            phase="FAILED",
+            status="failed",
+            message="AL AMR could not acquire source media automatically from this URL across all configured providers.",
+            telemetry={"fallback_history": attempts_history},
+        )
+
         raise SourceAcquisitionError(
             "AL AMR could not acquire source media automatically from this URL across all configured providers.",
             code=summary_code,
