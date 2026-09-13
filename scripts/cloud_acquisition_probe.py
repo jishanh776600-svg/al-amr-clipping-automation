@@ -80,7 +80,7 @@ def probe_url(name: str, endpoint: str, test_url: str) -> dict:
         elif name == "Direct Remote Video URL (Public Baseline)":
             temp_path = Path("/tmp/probe_direct.mp4") if os.name != "nt" else Path("probe_direct.mp4")
             with httpx.Client(timeout=20.0, follow_redirects=True) as client:
-                with client.stream("GET", test_url) as stream_resp:
+                with client.stream("GET", test_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}) as stream_resp:
                     res["cloud_reachable"] = True
                     res["http_status"] = stream_resp.status_code
                     res["content_type"] = stream_resp.headers.get("content-type")
@@ -134,7 +134,7 @@ def main():
     print("================================================================")
 
     youtube_test_url = "https://youtu.be/jNQXAC9IVRw"
-    public_mp4_url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    public_mp4_url = "https://www.w3schools.com/html/mov_bbb.mp4"
 
     results = []
 
