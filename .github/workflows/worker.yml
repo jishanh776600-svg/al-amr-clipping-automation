@@ -93,6 +93,13 @@ jobs:
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
+      - name: Start Proof-of-Origin Token Provider Server
+        run: |
+          docker run --name bgutil-provider -d --init \
+            -p 127.0.0.1:4416:4416 brainicism/bgutil-ytdlp-pot-provider
+          sleep 5
+          curl -s http://127.0.0.1:4416/ping || true
+
       - name: Diagnostic YouTube Probe
         run: |
           python -c '

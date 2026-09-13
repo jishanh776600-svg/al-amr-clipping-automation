@@ -38,6 +38,7 @@ dependencies = [
   # Ingest
   "yt-dlp>=2026.1.1",
   "yt-dlp-ejs>=0.8.0",
+  "bgutil-ytdlp-pot-provider>=2.0.0",
   # Transcription
   "faster-whisper>=1.1",
   # Reframe
