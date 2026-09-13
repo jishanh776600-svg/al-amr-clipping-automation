@@ -684,11 +684,13 @@ async def worker_callback(
     if job is None:
         source = Source(id=new_id(), type="youtube", path="", title="Cloud Worker Ingest", url="")
         await asyncio.to_thread(store.create_source, source)
+        valid_statuses = ("queued", "dispatching", "running", "processing", "uploading", "publishing", "done", "failed", "cancelled")
+        initial_status = payload.status if payload.status in valid_statuses else "running"
         job = Job(
             id=job_id,
             source_id=source.id,
-            status=payload.stage or "running",
-            stage=payload.stage,
+            status=initial_status,
+            current_stage=payload.stage or "",
             progress=payload.progress or 0.0,
             dispatch_mode="github",
             github_run_id=payload.github_run_id,
