@@ -64,9 +64,9 @@ class HttpApiAcquisitionProvider(SourceAcquisitionProvider):
                 provider_name=self.provider_name,
             )
 
-        # Validate security perimeter on both input URL and endpoint
+        # Validate security perimeter on both input URL and endpoint (require HTTPS for endpoint)
         validate_remote_url(source_url)
-        validate_remote_url(self._endpoint)
+        validate_remote_url(self._endpoint, require_https=True)
 
         target_file = target_dir / "source.mp4"
         headers: dict[str, str] = {
@@ -86,6 +86,8 @@ class HttpApiAcquisitionProvider(SourceAcquisitionProvider):
             "Attempting source acquisition via HTTP API provider: endpoint=%s",
             self._endpoint,
         )
+
+        max_size = 2 * 1024 * 1024 * 1024  # 2 GiB
 
         try:
             with httpx.Client(follow_redirects=True, timeout=self._timeout_s) as client:
@@ -116,12 +118,26 @@ class HttpApiAcquisitionProvider(SourceAcquisitionProvider):
                     content_len = response.headers.get("content-length")
                     if content_len and content_len.isdigit():
                         total_bytes = int(content_len)
+                        if total_bytes > max_size:
+                            raise SourceAcquisitionError(
+                                f"Remote media payload ({total_bytes} bytes) exceeds limit ({max_size} bytes).",
+                                code=SourceErrorCode.SOURCE_MEDIA_INVALID,
+                                hint="Source video file is too large.",
+                                provider_name=self.provider_name,
+                            )
 
                     downloaded = 0
                     with target_file.open("wb") as f:
                         for chunk in response.iter_bytes(chunk_size=65536):
-                            f.write(chunk)
                             downloaded += len(chunk)
+                            if downloaded > max_size:
+                                raise SourceAcquisitionError(
+                                    f"Downloaded media stream exceeded maximum limit of {max_size} bytes.",
+                                    code=SourceErrorCode.SOURCE_MEDIA_INVALID,
+                                    hint="Source video file is too large.",
+                                    provider_name=self.provider_name,
+                                )
+                            f.write(chunk)
                             if on_progress and total_bytes and total_bytes > 0:
                                 on_progress(min(1.0, downloaded / total_bytes))
 

@@ -20,21 +20,28 @@ export function useJobStream(jobId: string | undefined) {
   const [job, setJob] = useState<Job | null>(null)
   const [progress, setProgress] = useState<StageProgress | null>(null)
   const [connected, setConnected] = useState(false)
+  const [error, setError] = useState<any>(null)
   const sourceRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
     if (!jobId) return
 
     let cancelled = false
+    setError(null)
 
     // Fetch once up front so the page renders immediately rather than waiting
     // for the stream's first message.
     api
       .getJob(jobId)
       .then((initial) => {
-        if (!cancelled) setJob(initial)
+        if (!cancelled) {
+          setJob(initial)
+          setError(null)
+        }
       })
-      .catch(() => undefined)
+      .catch((err) => {
+        if (!cancelled) setError(err)
+      })
 
     const token = getStoredToken() || API_KEY
     const tokenParam = token ? `?token=${encodeURIComponent(token)}` : ''
@@ -92,5 +99,5 @@ export function useJobStream(jobId: string | undefined) {
     }
   }, [jobId])
 
-  return { job, progress, connected, setJob }
+  return { job, progress, connected, setJob, error }
 }

@@ -49,6 +49,7 @@ from .youtube_acquirer import (
 )
 from .source_acquisition import (
     AcquisitionResult as SourceAcquisitionResult,
+    IngestError,
     JobContext,
     SourceAcquisitionError,
     SourceAcquisitionRegistry,

@@ -5,6 +5,8 @@ import { api, formatDuration } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 import { useJobStream } from '../useJobStream'
 
+import { AuthModal } from '../components/AuthModal'
+
 /** Stage order and labels, mirroring autoclip.pipeline.Stage. */
 const STAGES = [
   { key: 'prepare', label: 'Prepare', note: 'Extracting audio and thumbnails' },
@@ -18,9 +20,10 @@ const STAGES = [
 export function JobProgress() {
   const { jobId } = useParams()
   const navigate = useNavigate()
-  const { job, progress } = useJobStream(jobId)
+  const { job, progress, error: streamError } = useJobStream(jobId)
   const [cancelling, setCancelling] = useState(false)
   const [actionError, setActionError] = useState<Error | null>(null)
+  const [showAuthModal, setShowAuthModal] = useState(false)
 
   useEffect(() => {
     if (job?.status === 'done') {
@@ -31,6 +34,33 @@ export function JobProgress() {
   }, [job?.status, job?.id, navigate])
 
   if (!job) {
+    if (streamError?.status === 401) {
+      return (
+        <div className="pt-16 max-w-lg">
+          <div className="rounded-xl border border-sodium-500/40 bg-ink-850 p-6 shadow-xl">
+            <h2 className="font-display text-lg font-bold text-ink-100">Operator Authentication Required</h2>
+            <p className="mt-2 text-xs text-ink-400">Access to job status requires an authorized operator token.</p>
+            <button onClick={() => setShowAuthModal(true)} className="btn btn-primary mt-4 text-xs">
+              Authenticate
+            </button>
+          </div>
+          <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} onSuccess={() => window.location.reload()} />
+        </div>
+      )
+    }
+    if (streamError?.status === 404) {
+      return (
+        <div className="pt-16 max-w-lg">
+          <div className="rounded-xl border border-ink-800 bg-ink-850 p-6">
+            <h2 className="font-display text-lg font-bold text-ink-100">Job Not Found</h2>
+            <p className="mt-2 text-xs text-ink-400">The requested job does not exist on this server.</p>
+            <button onClick={() => navigate('/jobs')} className="btn btn-secondary mt-4 text-xs">
+              View All Jobs
+            </button>
+          </div>
+        </div>
+      )
+    }
     return <p className="pt-24 text-sm text-ink-500">Loading…</p>
   }
 
