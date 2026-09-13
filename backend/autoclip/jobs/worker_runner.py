@@ -147,7 +147,7 @@ async def async_main() -> None:
     log.info("Resolved publish targets: %s (raw: %r)", publish_targets, args.publish_targets)
 
     # 3. Ingest source
-    report(stage="ingesting_source", progress=0.10)
+    report(stage="acquiring_source", progress=0.05)
     settings = load_settings()
     settings.whisper.model = args.whisper_model
     settings.clips.max_clips = args.max_clips
@@ -155,17 +155,23 @@ async def async_main() -> None:
     source: Source
     source_url = args.source_url.strip()
 
+    def on_progress(p: float) -> None:
+        report(stage="acquiring_source", progress=round(0.05 + 0.04 * max(0.0, min(1.0, p)), 3))
+
     if Path(source_url).exists():
         log.info("Source is local file: %s", source_url)
+        report(stage="validating_source", progress=0.10)
         source = ingest.ingest_file(Path(source_url), move=False, title=Path(source_url).stem)
     elif ingest.is_youtube_url(source_url):
         log.info("Source is YouTube URL: %s", source_url)
-        source = ingest.ingest_youtube(source_url, settings.ingest)
+        source = ingest.ingest_youtube(source_url, settings.ingest, on_progress=on_progress)
+        report(stage="validating_source", progress=0.10)
     else:
         log.info("Source is generic URL: %s", source_url)
         # Check if direct file download
         try:
-            source = ingest.ingest_url(source_url, settings.ingest)
+            source = ingest.ingest_url(source_url, settings.ingest, on_progress=on_progress)
+            report(stage="validating_source", progress=0.10)
         except Exception:
             # Fallback direct download
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -183,9 +189,11 @@ async def async_main() -> None:
                 with open(tmp_path, "wb") as f:
                     for chunk in r.iter_bytes(chunk_size=1024 * 1024):
                         f.write(chunk)
+            report(stage="validating_source", progress=0.10)
             source = ingest.ingest_file(tmp_path, move=True, title="remote_source")
 
     store.create_source(source)
+    report(stage="source_acquired", progress=0.12)
     log.info("Source ingested successfully: ID=%s, Title=%s, Duration=%.1fs", source.id, source.title, source.duration_s)
 
     # Optional: Archive source to Google Drive
