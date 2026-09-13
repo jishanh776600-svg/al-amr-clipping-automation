@@ -11,22 +11,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.autoclip.app import create_app
-from backend.autoclip.pipeline.ffmpeg import MediaInfo
-from backend.autoclip.pipeline.source_acquisition.base import (
+from autoclip.app import create_app
+from autoclip.pipeline.ffmpeg import MediaInfo
+from autoclip.pipeline.source_acquisition.base import (
     AcquisitionResult,
     JobContext,
     SourceAcquisitionError,
     SourceErrorCode,
 )
-from backend.autoclip.pipeline.source_acquisition.registry import SourceAcquisitionRegistry
-from backend.autoclip.pipeline.source_acquisition.server_downloader.engine import (
+from autoclip.pipeline.source_acquisition.registry import SourceAcquisitionRegistry
+from autoclip.pipeline.source_acquisition.server_downloader.engine import (
     AcquisitionTelemetry,
     ServerDownloaderEngine,
 )
-from backend.autoclip.pipeline.source_acquisition.server_downloader.provider import (
+from autoclip.pipeline.source_acquisition.server_downloader.provider import (
     ServerDownloaderProvider,
 )
+
 
 SAMPLE_MP4 = Path(__file__).parent / "test_media" / "felix_speech.mp4"
 
