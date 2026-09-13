@@ -218,7 +218,7 @@ class PipelineRunner:
         from .source_acquisition import JobContext, get_default_registry
 
         registry = get_default_registry(self.settings.ingest)
-        target_dir = paths.sources_dir() / self.source.id
+        target_dir = paths.source_media_dir(self.source.id)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         job_ctx = JobContext(

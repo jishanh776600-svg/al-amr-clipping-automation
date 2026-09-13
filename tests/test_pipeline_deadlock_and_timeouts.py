@@ -114,3 +114,42 @@ def test_transcribe_fallback_on_oom(tmp_path):
         assert transcript.model == "base"
         assert len(transcript.words) == 1
         assert transcript.words[0].text == "hello"
+
+
+def test_runner_stage_acquire_path_resolution(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOCLIP_HOME", str(tmp_path))
+    from autoclip.db.models import Job, Source
+    from autoclip.pipeline.runner import PipelineRunner
+
+    source = Source(
+        id="src_test_paths",
+        type="youtube",
+        url="https://www.youtube.com/watch?v=dummy",
+        path="",
+        filename="",
+    )
+    job = Job(
+        id="job_test_paths",
+        source_id="src_test_paths",
+        status="queued",
+    )
+    runner = PipelineRunner(job, source)
+
+    with patch("autoclip.pipeline.source_acquisition.get_default_registry") as mock_reg:
+        mock_registry_inst = MagicMock()
+        mock_result = MagicMock()
+        mock_result.local_media_path = tmp_path / "media" / "src_test_paths" / "video.mp4"
+        mock_result.local_media_path.parent.mkdir(parents=True, exist_ok=True)
+        mock_result.local_media_path.write_bytes(b"dummy video")
+        mock_result.media_info = None
+        mock_result.duration = 10.0
+        mock_result.provider_metadata = {}
+        mock_registry_inst.acquire.return_value = mock_result
+        mock_reg.return_value = mock_registry_inst
+
+        with patch("autoclip.db.store.update_source"):
+            acquired = runner._stage_acquire()
+            assert acquired == mock_result.local_media_path
+            _, kwargs = mock_registry_inst.acquire.call_args
+            assert kwargs["target_dir"] == tmp_path / "media" / "src_test_paths"
+

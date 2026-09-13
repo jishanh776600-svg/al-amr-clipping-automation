@@ -129,3 +129,10 @@ def test_per_job_and_per_source_directories_are_namespaced(autoclip_home: Path) 
     assert paths.job_work_dir("job123").name == "job123"
     assert paths.job_work_dir("job123").parent == paths.work_dir()
     assert paths.source_media_dir("src456").parent == paths.media_dir()
+
+
+def test_sources_dir_compatibility_alias(autoclip_home: Path) -> None:
+    assert hasattr(paths, "sources_dir")
+    assert paths.sources_dir() == paths.media_dir()
+    assert paths.sources_dir() / "src123" == paths.source_media_dir("src123")
+

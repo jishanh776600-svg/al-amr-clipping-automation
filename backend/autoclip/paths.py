@@ -63,6 +63,14 @@ def media_dir() -> Path:
     return root() / "media"
 
 
+def sources_dir() -> Path:
+    """Return the root directory holding source media.
+
+    Canonical alias for :func:`media_dir` to ensure backwards compatibility.
+    """
+    return media_dir()
+
+
 def work_dir() -> Path:
     return root() / "work"
 
