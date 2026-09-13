@@ -100,12 +100,13 @@ def create_app() -> FastAPI:
     async def auth_middleware(request: Request, call_next):
         if get_valid_api_keys():
             path = request.url.path
-            # Check if this path requires authentication (only /api routes, excluding public ones and worker-callback which verifies payload)
+            # Check if this path requires authentication (only /api and /internal routes, excluding public ones and worker-callback which verifies payload)
             if (
-                path.startswith("/api")
+                (path.startswith("/api") or path.startswith("/internal"))
                 and not any(path == p or path.startswith(f"{p}/") for p in PUBLIC_PREFIXES)
                 and not path.endswith("/worker-callback")
             ):
+
                 auth_header = request.headers.get("Authorization")
                 api_key_header = request.headers.get("X-API-Key")
                 token = None

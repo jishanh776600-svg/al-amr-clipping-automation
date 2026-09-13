@@ -17,6 +17,7 @@ from .providers.http_api_provider import HttpApiAcquisitionProvider
 from .providers.ytdlp_provider import YtDlpAcquisitionProvider
 from .registry import SourceAcquisitionRegistry, get_default_registry
 from .security import safe_target_path, validate_remote_url
+from .server_downloader import ServerDownloaderEngine, ServerDownloaderProvider
 from .validation import validate_media_gate
 
 __all__ = [
@@ -26,6 +27,8 @@ __all__ = [
     "SourceAcquisitionError",
     "SourceAcquisitionProvider",
     "SourceErrorCode",
+    "ServerDownloaderEngine",
+    "ServerDownloaderProvider",
     "YtDlpAcquisitionProvider",
     "HttpApiAcquisitionProvider",
     "SourceAcquisitionRegistry",
@@ -34,3 +37,4 @@ __all__ = [
     "safe_target_path",
     "validate_media_gate",
 ]
+

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from ...config import IngestSettings
 from .base import (
@@ -19,6 +21,7 @@ from .base import (
 from .providers.http_api_provider import HttpApiAcquisitionProvider
 from .providers.ytdlp_provider import YtDlpAcquisitionProvider
 from .security import safe_target_path, validate_remote_url
+from .server_downloader import ServerDownloaderProvider
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +33,13 @@ class SourceAcquisitionRegistry:
         if providers is not None:
             self._providers = list(providers)
         else:
-            # Default deterministic order: Primary yt-dlp -> Secondary HTTP API
+            # Deterministic priority: Server Downloader -> yt-dlp -> Secondary HTTP API
             self._providers = [
+                ServerDownloaderProvider(),
                 YtDlpAcquisitionProvider(),
                 HttpApiAcquisitionProvider(),
             ]
+
 
     @property
     def providers(self) -> list[SourceAcquisitionProvider]:
@@ -69,6 +74,10 @@ class SourceAcquisitionRegistry:
         validate_remote_url(source_url)
         target_dir = Path(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
+
+        start_time = time.time()
+        domain = urlparse(source_url).netloc.lower()
+
 
         attempts_history: list[dict[str, Any]] = []
         last_error: SourceAcquisitionError | None = None
@@ -128,11 +137,21 @@ class SourceAcquisitionRegistry:
                     result.sha256[:16],
                 )
 
+                elapsed_s = time.time() - start_time
                 provenance = {
                     "provider": provider.provider_name,
                     "attempts": attempt_index,
-                    "attempts_history": attempts_history,
+                    "acquisition_duration": round(elapsed_s, 2),
+                    "bytes": result.file_size,
                     "sha256": result.sha256,
+                    "media_duration": result.duration,
+                    "final_status": "SUCCESS",
+                    "failure_code": None,
+                    "fallback_history": attempts_history,
+                    "attempts_history": attempts_history,
+                    "source_domain": domain,
+
+                    "job_id": job_context.job_id if job_context else None,
                     "file_size": result.file_size,
                     "duration_s": result.duration,
                 }
@@ -217,8 +236,10 @@ def get_default_registry(settings: IngestSettings | None = None) -> SourceAcquis
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = SourceAcquisitionRegistry(
             providers=[
+                ServerDownloaderProvider(),
                 YtDlpAcquisitionProvider(settings=settings),
                 HttpApiAcquisitionProvider(),
             ]
         )
     return _DEFAULT_REGISTRY
+

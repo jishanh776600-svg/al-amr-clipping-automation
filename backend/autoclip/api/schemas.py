@@ -292,10 +292,12 @@ class JobManifestOut(BaseModel):
     github: dict[str, Any] = Field(default_factory=dict)
     timestamps: dict[str, Any] = Field(default_factory=dict)
     source: dict[str, Any] | None = None
+    source_acquisition: dict[str, Any] | None = None
     guideline: dict[str, Any] | None = None
     campaign: dict[str, Any] | None = None
     destinations: list[str] = Field(default_factory=lambda: ["telegram", "youtube", "drive"])
     clips: list[JobManifestClipOut] = Field(default_factory=list)
+
 
 
 class WordOut(BaseModel):

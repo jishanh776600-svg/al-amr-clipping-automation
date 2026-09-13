@@ -32,33 +32,35 @@ The **Source Acquisition Subsystem** is an isolated, multi-provider abstraction 
                 |    - Manages Fallback Orchestration   |
                 +-------------------+-------------------+
                                     |
-            +-----------------------+-----------------------+
-            | (Attempt 1)                                   | (Attempt 2 - Fallback)
-            v                                               v
-+-------------------------------+               +-------------------------------+
-|    YtDlpAcquisitionProvider   |               |  HttpApiAcquisitionProvider   |
-|  - Upstream yt-dlp            |  [On Block]   |  - Legitimate Media Proxy/API |
-|  - 6 InnerTube Strategies     | ------------> |  - Configured via Environment |
-|  - Server-side cookie support |               |  - Chunked Stream Ingestion   |
-+---------------+---------------+               +---------------+---------------+
-                |                                               |
-                +-----------------------+-----------------------+
-                                        |
-                                        v
-                        +-------------------------------+
-                        |    Unified Media Gate         |
-                        |  - Non-empty (size > 0)       |
-                        |  - Disguised HTML rejection   |
-                        |  - FFprobe Container/Stream   |
-                        |  - Compute Provenance SHA-256 |
-                        +---------------+---------------+
-                                        |
-                                        v
-                        +-------------------------------+
-                        |       Validated Source        |
-                        |    (Continues Pipeline)       |
-                        +-------------------------------+
+         +--------------------------+--------------------------+
+         | (Priority 1)             | (Priority 2)             | (Priority 3)
+         v                          v                          v
++-----------------------+  +-----------------------+  +-----------------------+
+| ServerDownloader      |  | YtDlpAcquisition      |  | HttpApiAcquisition    |
+| - yt-dlp-server (MIT) |  | - 6 InnerTube Clients |  | - Legitimate Proxy   |
+| - MeTube patterns     |  | - BotGuard PO Tokens  |  | - Chunked Streaming  |
+| - MP4 remuxing        |  | - Deno Challenges     |  | - Optional Endpoints  |
+| - Timeout watchdogs   |  |                       |  |                       |
++-----------+-----------+  +-----------+-----------+  +-----------+-----------+
+            |                          |                          |
+            +--------------------------+--------------------------+
+                                       |
+                                       v
+                       +-------------------------------+
+                       |    Unified Media Gate         |
+                       |  - Non-empty (size > 0)       |
+                       |  - Disguised HTML rejection   |
+                       |  - FFprobe Container/Stream   |
+                       |  - Compute Provenance SHA-256 |
+                       +---------------+---------------+
+                                       |
+                                       v
+                       +-------------------------------+
+                       |       Validated Source        |
+                       |    (Continues Pipeline)       |
+                       +-------------------------------+
 ```
+
 
 ---
 
