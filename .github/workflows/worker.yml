@@ -93,6 +93,26 @@ jobs:
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
+      - name: Diagnostic YouTube Probe
+        run: |
+          python -c '
+          import yt_dlp
+          for client in ["default", "android", "ios", "mweb", "tv", "visionos"]:
+              for skip in [[], ["webpage"]]:
+                  skip_str = "+".join(skip) or "none"
+                  try:
+                      args = {"youtube": {"player_client": [client]}}
+                      if skip:
+                          args["youtube"]["player_skip"] = skip
+                      ydl = yt_dlp.YoutubeDL({"extractor_args": args, "quiet": True})
+                      info = ydl.extract_info("https://www.youtube.com/watch?v=ZXsQAXx_ao0", download=False)
+                      fmts = len(info.get("formats", []))
+                      print(f"DIAG [{client}] (skip={skip_str}): SUCCESS ({fmts} formats)")
+                  except Exception as e:
+                      err_line = str(e).splitlines()[0] if str(e) else "unknown"
+                      print(f"DIAG [{client}] (skip={skip_str}): FAILED -> {err_line[:120]}")
+          '
+
       - name: Run AL AMR Worker Runner
         env:
           GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}

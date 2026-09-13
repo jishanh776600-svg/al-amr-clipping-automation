@@ -430,10 +430,10 @@ class YouTubeSourceAcquirer:
                     last_error = exc
                     classified = translate_ytdlp_error(exc, self.settings)
                     log.warning(
-                        "YouTube acquisition strategy %s failed: [%s] %s",
+                        "YouTube acquisition strategy %s failed: [%s] exc=%r",
                         strategy_name,
                         classified.code,
-                        classified.message,
+                        str(exc),
                     )
                     # If the video is non-existent, invalid URL, or permanently private/members-only,
                     # trying another client will not help.
