@@ -328,11 +328,11 @@ def get_default_registry(settings: IngestSettings | None = None) -> SourceAcquis
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = SourceAcquisitionRegistry(
             providers=[
+                ServerDownloaderProvider(),
+                YtDlpAcquisitionProvider(settings=settings),
                 CobaltAcquisitionProvider(),
                 PipedAcquisitionProvider(),
                 InvidiousAcquisitionProvider(),
-                ServerDownloaderProvider(),
-                YtDlpAcquisitionProvider(settings=settings),
                 HttpApiAcquisitionProvider(),
             ]
         )

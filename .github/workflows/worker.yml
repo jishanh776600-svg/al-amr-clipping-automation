@@ -93,6 +93,26 @@ jobs:
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
+      - name: Start Cloudflare WARP Egress Sidecar
+        run: |
+          docker run --name warp -d \
+            --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -p 127.0.0.1:1080:1080 \
+            caomingjun/warp
+          
+          echo "Waiting for WARP egress sidecar to initialize..."
+          for i in {1..20}; do
+            TRACE=$(curl -s --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            if echo "$TRACE" | grep -q "warp=on\|warp=plus"; then
+              echo "WARP egress sidecar active (attempt $i)."
+              echo "$TRACE" | grep -E '^(ip|loc|warp)='
+              break
+            fi
+            sleep 2
+          done
+
       - name: Start Proof-of-Origin Token Provider Server
         run: |
           docker run --name bgutil-provider -d --init \
@@ -124,6 +144,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          AUTOCLIP_PROXY: socks5://127.0.0.1:1080
         run: |
           python -m autoclip.jobs.worker_runner \
             --job-id "${{ github.event.inputs.job_id }}" \
@@ -135,9 +156,12 @@ jobs:
             --whisper-model "${{ github.event.inputs.whisper_model }}" \
             --max-clips "${{ github.event.inputs.max_clips }}"
 
-      - name: Proof-of-Origin Token Provider Server Logs
+      - name: Container Logs (WARP & POT Provider)
         if: always()
         run: |
+          echo "=== WARP EGRESS LOGS ==="
+          docker logs warp || true
+          echo "=== POT PROVIDER LOGS ==="
           docker logs bgutil-provider || true
 
 

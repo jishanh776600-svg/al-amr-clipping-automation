@@ -398,6 +398,30 @@ class YouTubeSourceAcquirer:
             base_options["subtitleslangs"] = ["en.*"]
             base_options["subtitlesformat"] = "json3"
 
+        # Resolve egress proxy (explicit setting, env var, or local WARP sidecar auto-detection)
+        proxy = (
+            self.settings.proxy
+            or os.environ.get("AUTOCLIP_PROXY")
+            or os.environ.get("YTDLP_PROXY")
+            or os.environ.get("ALL_PROXY")
+            or ""
+        ).strip()
+        if not proxy:
+            import socket
+
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(0.3)
+                    if sock.connect_ex(("127.0.0.1", 1080)) == 0:
+                        proxy = "socks5://127.0.0.1:1080"
+                        log.info("YouTube acquirer auto-detected local WARP SOCKS5 sidecar at %s", proxy)
+            except Exception:
+                pass
+
+        if proxy:
+            base_options["proxy"] = proxy
+            log.info("YouTube acquirer configured with egress proxy: %s", proxy)
+
         # Multi-strategy acquisition order:
         # Strategy 1 (Primary): Cloud-resilient InnerTube clients excluding desktop web
         #                       (desktop web triggers bot check on datacenter IPs).

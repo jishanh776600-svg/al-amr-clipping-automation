@@ -173,6 +173,30 @@ class ServerDownloaderEngine:
         if cookies_file and Path(cookies_file).exists():
             ydl_opts["cookiefile"] = str(cookies_file)
 
+        # Resolve egress proxy (explicit setting, env var, or local WARP sidecar auto-detection)
+        proxy = (
+            (job_context.settings.proxy if job_context and getattr(job_context, "settings", None) and hasattr(job_context.settings, "proxy") else "")
+            or os.environ.get("AUTOCLIP_PROXY")
+            or os.environ.get("YTDLP_PROXY")
+            or os.environ.get("ALL_PROXY")
+            or ""
+        ).strip()
+        if not proxy:
+            import socket
+
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(0.3)
+                    if sock.connect_ex(("127.0.0.1", 1080)) == 0:
+                        proxy = "socks5://127.0.0.1:1080"
+                        log.info("Server-downloader auto-detected local WARP SOCKS5 sidecar at %s", proxy)
+            except Exception:
+                pass
+
+        if proxy:
+            ydl_opts["proxy"] = proxy
+            log.info("Server-downloader configured with egress proxy: %s", proxy)
+
         is_youtube = any(h in domain for h in ("youtube.com", "youtu.be"))
         if is_youtube:
             strategies = [

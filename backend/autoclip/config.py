@@ -87,6 +87,8 @@ class IngestSettings(BaseModel):
     cookies_file: str = ""
     #: Offer YouTube's own auto-captions as a fast path, skipping Whisper.
     prefer_youtube_captions: bool = False
+    #: Optional egress proxy URL (e.g. socks5://127.0.0.1:1080 for WARP sidecar).
+    proxy: str = ""
 
 
 class ExportSettings(BaseModel):

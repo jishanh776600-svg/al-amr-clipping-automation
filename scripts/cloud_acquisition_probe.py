@@ -117,6 +117,35 @@ def probe_url(name: str, endpoint: str, test_url: str) -> dict:
                             if temp_path.exists():
                                 temp_path.unlink()
 
+        elif name.startswith("Cloud yt-dlp"):
+            import shutil
+            from autoclip.pipeline.youtube_acquirer import YouTubeSourceAcquirer
+
+            temp_dir = Path("/tmp/probe_ytdlp") if os.name != "nt" else Path("probe_ytdlp")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                acquirer = YouTubeSourceAcquirer()
+                acq_result = acquirer.acquire(test_url, temp_dir)
+                res["cloud_reachable"] = True
+                res["url_accepted"] = True
+                res["media_bytes_returned"] = True
+                res["content_type"] = "video/mp4"
+                res["http_status"] = 200
+                res["downloaded_size"] = acq_result.media_path.stat().st_size
+                res["duration"] = acq_result.media_info.duration_s
+                res["video_stream"] = acq_result.media_info.has_video
+                res["audio_stream"] = acq_result.media_info.has_audio
+                res["ffprobe_valid"] = acq_result.media_info.duration_s > 0 and acq_result.media_info.has_video
+                res["result"] = "SUCCESS_VALIDATED"
+                res["notes"] = f"Method: {acq_result.method}, size: {res['downloaded_size']} bytes, duration: {res['duration']}s"
+            except Exception as ytdlp_err:
+                res["cloud_reachable"] = True
+                res["result"] = "ACQUISITION_FAILED"
+                res["notes"] = f"yt-dlp extraction failed: {ytdlp_err}"
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
     except Exception as exc:
         res["notes"] = f"Exception: {exc}"
         res["result"] = "CONNECTION_FAILED"
@@ -149,6 +178,9 @@ def main():
 
     # 4. Direct Public Remote Video (Validates unblocked egress & FFprobe pipeline)
     results.append(probe_url("Direct Remote Video URL (Public Baseline)", public_mp4_url, public_mp4_url))
+
+    # 5. Cloud yt-dlp Autonomous Acquisition (InnerTube + Egress Tunnel)
+    results.append(probe_url("Cloud yt-dlp Acquisition (InnerTube + Egress Tunnel)", "YouTubeSourceAcquirer", youtube_test_url))
 
     print("\n================================================================")
     print("PROBE SUMMARY MATRIX")
