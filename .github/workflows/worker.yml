@@ -100,33 +100,6 @@ jobs:
           sleep 5
           curl -s http://127.0.0.1:4416/ping || true
 
-      - name: Diagnostic YouTube Probe
-        run: |
-          echo "=== PING PROVIDER ==="
-          curl -s http://127.0.0.1:4416/ping
-          echo ""
-          echo "=== GET POT TEST ==="
-          curl -s -X POST -H 'Content-Type: application/json' --data '{}' http://127.0.0.1:4416/get_pot || true
-          echo ""
-          echo "=== TEST 1: fetch_pot=always (web,mweb) ==="
-          python -m yt_dlp -v --simulate \
-            --extractor-args "youtube:player-client=web,mweb;fetch_pot=always" \
-            "https://www.youtube.com/watch?v=ZXsQAXx_ao0" || true
-          echo ""
-          echo "=== TEST 2: fetch_pot=always + player_skip=webpage ==="
-          python -m yt_dlp -v --simulate \
-            --extractor-args "youtube:player-client=web,mweb;fetch_pot=always;player_skip=webpage" \
-            "https://www.youtube.com/watch?v=ZXsQAXx_ao0" || true
-          echo ""
-          echo "=== TEST 3: tv_embedded ==="
-          python -m yt_dlp -v --simulate \
-            --extractor-args "youtube:player-client=tv_embedded" \
-            "https://www.youtube.com/watch?v=ZXsQAXx_ao0" || true
-          echo ""
-          echo "=== DOCKER LOGS PROVIDER ==="
-          docker logs bgutil-provider || true
-
-
       - name: Run AL AMR Worker Runner
         env:
           GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
@@ -157,4 +130,10 @@ jobs:
             --publish-targets '${{ github.event.inputs.publish_targets }}' \
             --whisper-model "${{ github.event.inputs.whisper_model }}" \
             --max-clips "${{ github.event.inputs.max_clips }}"
+
+      - name: Proof-of-Origin Token Provider Server Logs
+        if: always()
+        run: |
+          docker logs bgutil-provider || true
+
 

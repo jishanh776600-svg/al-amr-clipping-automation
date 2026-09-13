@@ -402,12 +402,16 @@ class YouTubeSourceAcquirer:
         #                       (bypasses datacenter IP webpage blocks).
         # Strategy 3 (Extended Fallback): Multi-client mobile without webpage/configs.
         # Strategy 4 (Unconstrained): Default unconstrained yt-dlp negotiation.
+        # Strategy 5 (Fallback): TV client.
         strategies: list[tuple[str, dict[str, Any] | None]] = [
             ("cloud_resilient_innertube", {"youtube": {"player_client": ["default", "-web"]}}),
             ("mobile_innertube", {"youtube": {"player_client": ["android"], "player_skip": ["webpage"]}}),
             ("mobile_extended_innertube", {"youtube": {"player_client": ["android", "ios"], "player_skip": ["webpage", "configs"]}}),
             ("default_unconstrained", None),
+            ("tv_client", {"youtube": {"player_client": ["tv"]}}),
         ]
+
+
 
         last_error: Exception | None = None
         metadata: dict[str, Any] | None = None
