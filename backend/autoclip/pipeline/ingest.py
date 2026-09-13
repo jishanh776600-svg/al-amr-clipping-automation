@@ -47,6 +47,14 @@ from .youtube_acquirer import (
     YOUTUBE_NETWORK_ERROR,
     YOUTUBE_VIDEO_UNAVAILABLE,
 )
+from .source_acquisition import (
+    AcquisitionResult as SourceAcquisitionResult,
+    JobContext,
+    SourceAcquisitionError,
+    SourceAcquisitionRegistry,
+    SourceErrorCode,
+    get_default_registry,
+)
 
 
 def is_direct_media_url(url: str) -> bool:
@@ -226,28 +234,32 @@ def ingest_youtube(
     source_id = new_id()
     target_dir = paths.source_media_dir(source_id)
 
-    acquirer = YouTubeSourceAcquirer(settings)
-    result = acquirer.acquire(url, target_dir, on_progress=on_progress)
+    registry = get_default_registry(settings)
+    job_context = JobContext(source_id=source_id, settings=settings)
+    result = registry.acquire(url, target_dir, job_context=job_context, on_progress=on_progress)
 
-    downloaded = result.media_path
+    downloaded = result.local_media_path
     info = result.media_info
-    metadata = result.metadata
+    metadata = result.provider_metadata or {}
 
-    return Source(
+    source = Source(
         id=source_id,
         type="youtube",
         url=url,
         path=str(downloaded),
         filename=downloaded.name,
-        title=(metadata or {}).get("title") or downloaded.stem,
-        channel=(metadata or {}).get("uploader") or (metadata or {}).get("channel"),
-        duration_s=info.duration_s or float((metadata or {}).get("duration") or 0.0),
-        width=info.width,
-        height=info.height,
-        fps=info.fps,
-        has_audio=info.has_audio,
-        has_video=info.has_video,
+        title=metadata.get("title") or downloaded.stem,
+        channel=metadata.get("channel") or "",
+        duration_s=(getattr(info, "duration_s", 0.0) if info else result.duration) or result.duration,
+        width=getattr(info, "width", None) if info else None,
+        height=getattr(info, "height", None) if info else None,
+        fps=getattr(info, "fps", None) if info else None,
+        has_audio=getattr(info, "has_audio", True) if info else True,
+        has_video=getattr(info, "has_video", True) if info else True,
     )
+    if "provenance" in metadata:
+        setattr(source, "source_acquisition", metadata["provenance"])
+    return source
 
 
 # --------------------------------------------------------------------------

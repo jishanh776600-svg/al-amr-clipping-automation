@@ -371,6 +371,7 @@ def get_job_manifest(job_id: str) -> dict[str, Any] | None:
             "title": source.title,
             "duration_s": source.duration_s,
             "type": source.type,
+            "source_acquisition": getattr(source, "source_acquisition", None) or (job.settings.get("source_acquisition") if job.settings else None),
         } if source else None,
         "guideline": (
             {

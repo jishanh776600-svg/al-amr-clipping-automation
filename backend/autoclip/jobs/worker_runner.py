@@ -216,6 +216,8 @@ async def async_main() -> None:
         job_settings["campaign"] = brief_data
     if publish_targets:
         job_settings["publish_targets"] = publish_targets
+    if hasattr(source, "source_acquisition") and source.source_acquisition:
+        job_settings["source_acquisition"] = source.source_acquisition
 
     job = Job(
         id=args.job_id,
