@@ -168,7 +168,7 @@ def test_ytdlp_js_runtime_discovery_deno(tmp_path):
                     ingest.ingest_youtube("https://www.youtube.com/watch?v=test_deno", IngestSettings())
 
             opts = mock_ydl.call_args[0][0]
-            assert opts.get("js_engine") == "deno"
+            assert opts.get("js_runtimes") == ["deno"]
 
 
 def test_ytdlp_js_runtime_discovery_node(tmp_path):
@@ -187,7 +187,7 @@ def test_ytdlp_js_runtime_discovery_node(tmp_path):
                     ingest.ingest_youtube("https://www.youtube.com/watch?v=test_node", IngestSettings())
 
             opts = mock_ydl.call_args[0][0]
-            assert opts.get("js_engine") == "node"
+            assert opts.get("js_runtimes") == ["node"]
 
 
 # ---------------------------------------------------------------------------

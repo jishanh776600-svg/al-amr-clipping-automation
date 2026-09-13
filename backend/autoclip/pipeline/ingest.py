@@ -364,17 +364,12 @@ def ingest_youtube(
         "progress_hooks": [hook],
         "retries": 3,
         "fragment_retries": 3,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "mweb", "web"],
-            }
-        },
     }
 
     # Detect external JavaScript runtime for yt-dlp / yt-dlp-ejs challenge execution
     for candidate in ("deno", "node", "nodejs", "bun"):
         if shutil.which(candidate):
-            options["js_engine"] = candidate
+            options["js_runtimes"] = [candidate]
             log.info("Upstream yt-dlp: JavaScript runtime '%s' discovered for challenges", candidate)
             break
 
