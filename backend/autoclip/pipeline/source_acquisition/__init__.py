@@ -13,6 +13,7 @@ from .base import (
     SourceAcquisitionProvider,
     SourceErrorCode,
 )
+from .providers.cobalt_provider import CobaltAcquisitionProvider
 from .providers.http_api_provider import HttpApiAcquisitionProvider
 from .providers.invidious_provider import InvidiousAcquisitionProvider
 from .providers.piped_provider import PipedAcquisitionProvider
@@ -30,6 +31,7 @@ __all__ = [
     "SourceAcquisitionError",
     "SourceAcquisitionProvider",
     "SourceErrorCode",
+    "CobaltAcquisitionProvider",
     "PipedAcquisitionProvider",
     "InvidiousAcquisitionProvider",
     "ServerDownloaderEngine",

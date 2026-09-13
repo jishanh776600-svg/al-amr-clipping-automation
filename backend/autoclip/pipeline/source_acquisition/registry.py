@@ -18,6 +18,7 @@ from .base import (
     SourceAcquisitionProvider,
     SourceErrorCode,
 )
+from .providers.cobalt_provider import CobaltAcquisitionProvider
 from .providers.http_api_provider import HttpApiAcquisitionProvider
 from .providers.invidious_provider import InvidiousAcquisitionProvider
 from .providers.piped_provider import PipedAcquisitionProvider
@@ -35,8 +36,9 @@ class SourceAcquisitionRegistry:
         if providers is not None:
             self._providers = list(providers)
         else:
-            # Deterministic priority: Piped -> Invidious -> Server Downloader -> yt-dlp -> Secondary HTTP API
+            # Deterministic priority: Cobalt -> Piped -> Invidious -> Server Downloader -> yt-dlp -> Secondary HTTP API
             self._providers = [
+                CobaltAcquisitionProvider(),
                 PipedAcquisitionProvider(),
                 InvidiousAcquisitionProvider(),
                 ServerDownloaderProvider(),

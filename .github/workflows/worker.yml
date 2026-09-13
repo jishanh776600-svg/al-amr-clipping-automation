@@ -100,6 +100,10 @@ jobs:
           sleep 5
           curl -s http://127.0.0.1:4416/ping || true
 
+      - name: Run Cloud Media Acquisition Acceptance Probe
+        run: |
+          python scripts/cloud_acquisition_probe.py
+
       - name: Run AL AMR Worker Runner
         env:
           GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}

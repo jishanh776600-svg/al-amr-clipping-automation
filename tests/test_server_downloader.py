@@ -187,7 +187,7 @@ class TestRegistryWithServerDownloader:
     def test_deterministic_priority_order(self):
         reg = SourceAcquisitionRegistry()
         names = [p.provider_name for p in reg.providers]
-        assert names == ["piped", "invidious", "server-downloader", "yt-dlp", "http-api"]
+        assert names == ["cobalt", "piped", "invidious", "server-downloader", "yt-dlp", "http-api"]
 
     def test_fallback_when_server_downloader_fails(self, tmp_dir):
         provider1 = MagicMock(spec=ServerDownloaderProvider)
