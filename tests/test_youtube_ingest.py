@@ -204,7 +204,7 @@ def test_ytdlp_js_runtime_discovery_node(tmp_path):
         ("Sign in to confirm your age", YOUTUBE_AUTH_REQUIRED),
         ("Private video. Sign in if you've been granted access", YOUTUBE_AUTH_REQUIRED),
         ("Join this channel to get access to members-only content", YOUTUBE_AUTH_REQUIRED),
-        ("Sign in to confirm you're not a bot", YOUTUBE_AUTH_REQUIRED),
+        ("Sign in to confirm you're not a bot", YOUTUBE_EXTRACTION_BLOCKED),
         ("HTTP Error 429: Too Many Requests", YOUTUBE_EXTRACTION_BLOCKED),
         ("HTTP Error 403: Forbidden", YOUTUBE_EXTRACTION_BLOCKED),
         ("YouTube is blocking automated requests from this IP", YOUTUBE_EXTRACTION_BLOCKED),

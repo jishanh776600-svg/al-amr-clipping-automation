@@ -200,6 +200,19 @@ def translate_ytdlp_error(exc: Exception, settings: IngestSettings | None = None
             hint="Age-restricted videos cannot be retrieved anonymously. You can upload the source video directly.",
         )
 
+    if (
+        any(marker in message for marker in _BOT_CHECK_MARKERS)
+        or "403" in message
+        or "forbidden" in message
+        or "confirm you’re not a bot" in message
+        or "confirm you're not a bot" in message
+    ):
+        return YouTubeIngestError(
+            "AL AMR attempted to retrieve the source media automatically, but YouTube refused automated retrieval from the cloud environment.",
+            code=YouTubeErrorCode.EXTRACTION_BLOCKED,
+            hint="YouTube is currently restricting automated access from this cloud IP. You can upload the source video directly.",
+        )
+
     if "sign in" in message or "login required" in message:
         return YouTubeIngestError(
             "YouTube authentication required to access this video.",
@@ -207,16 +220,6 @@ def translate_ytdlp_error(exc: Exception, settings: IngestSettings | None = None
             hint="AL AMR could not retrieve this YouTube video automatically. The video may require authentication or YouTube may currently be refusing automated retrieval. You can upload the source video directly.",
         )
 
-    if (
-        any(marker in message for marker in _BOT_CHECK_MARKERS)
-        or "403" in message
-        or "forbidden" in message
-    ):
-        return YouTubeIngestError(
-            "AL AMR attempted to retrieve the source media automatically, but YouTube refused automated retrieval from the cloud environment.",
-            code=YouTubeErrorCode.EXTRACTION_BLOCKED,
-            hint="YouTube is currently restricting automated access from this cloud IP. You can upload the source video directly.",
-        )
 
     if (
         "unavailable" in message
