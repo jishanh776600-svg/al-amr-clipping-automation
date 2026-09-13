@@ -75,6 +75,8 @@ class IngestSettings(BaseModel):
     #: yt-dlp format selector. Caps at 1080p and ensures audio+video streams merge cleanly.
     ytdlp_format: str = (
         "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+        "bestvideo[height<=1080]+bestaudio/"
+        "bestvideo+bestaudio/"
         "best[height<=1080][ext=mp4]/"
         "best[height<=1080]/"
         "best"

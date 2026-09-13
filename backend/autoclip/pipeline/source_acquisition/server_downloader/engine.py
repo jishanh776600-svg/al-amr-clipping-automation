@@ -163,9 +163,10 @@ class ServerDownloaderEngine:
         is_youtube = any(h in domain for h in ("youtube.com", "youtu.be"))
         if is_youtube:
             strategies = [
+                ("visionos", {"youtube": {"player_client": ["visionos"]}}),
+                ("android", {"youtube": {"player_client": ["android"]}}),
                 ("pot_web", {"youtube": {"player_client": ["web"], "fetch_pot": ["always"]}}),
                 ("pot_mweb", {"youtube": {"player_client": ["mweb"], "fetch_pot": ["always"]}}),
-                ("android", {"youtube": {"player_client": ["android"]}}),
                 ("ios", {"youtube": {"player_client": ["ios"]}}),
                 ("default", None),
             ]

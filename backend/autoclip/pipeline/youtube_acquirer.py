@@ -407,7 +407,7 @@ class YouTubeSourceAcquirer:
         # Strategy 5 (Unconstrained): Default unconstrained yt-dlp negotiation.
         # Strategy 6 (Fallback): TV client.
         strategies: list[tuple[str, dict[str, Any] | None]] = [
-            ("cloud_resilient_innertube", {"youtube": {"player_client": ["default", "-web"]}}),
+            ("cloud_resilient_innertube", {"youtube": {"player_client": ["visionos", "android", "ios"]}}),
             ("mobile_innertube", {"youtube": {"player_client": ["android", "ios"]}}),
             ("pot_provider_innertube", {"youtube": {"player_client": ["web", "mweb"], "fetch_pot": ["always"]}}),
             ("default_unconstrained", None),
