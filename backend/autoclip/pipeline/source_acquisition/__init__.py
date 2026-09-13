@@ -14,11 +14,14 @@ from .base import (
     SourceErrorCode,
 )
 from .providers.http_api_provider import HttpApiAcquisitionProvider
+from .providers.invidious_provider import InvidiousAcquisitionProvider
+from .providers.piped_provider import PipedAcquisitionProvider
 from .providers.ytdlp_provider import YtDlpAcquisitionProvider
 from .registry import SourceAcquisitionRegistry, get_default_registry
 from .security import safe_target_path, validate_remote_url
 from .server_downloader import ServerDownloaderEngine, ServerDownloaderProvider
 from .validation import validate_media_gate
+from .youtube_utils import extract_youtube_id, is_youtube_url
 
 __all__ = [
     "AcquisitionResult",
@@ -27,6 +30,8 @@ __all__ = [
     "SourceAcquisitionError",
     "SourceAcquisitionProvider",
     "SourceErrorCode",
+    "PipedAcquisitionProvider",
+    "InvidiousAcquisitionProvider",
     "ServerDownloaderEngine",
     "ServerDownloaderProvider",
     "YtDlpAcquisitionProvider",
@@ -36,5 +41,7 @@ __all__ = [
     "validate_remote_url",
     "safe_target_path",
     "validate_media_gate",
+    "extract_youtube_id",
+    "is_youtube_url",
 ]
 

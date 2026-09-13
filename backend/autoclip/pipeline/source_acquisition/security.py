@@ -37,8 +37,16 @@ BLOCKED_HOSTNAMES = frozenset({
 ALLOWED_SCHEMES = frozenset({"http", "https"})
 
 
+NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+
+
 def is_ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True if the IP address belongs to a private, loopback, or metadata subnet."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_PREFIX:
+        # RFC 6052 Well-Known Prefix: unwrap embedded IPv4 address
+        embedded_v4 = ipaddress.IPv4Address(ip.packed[-4:])
+        return is_ip_blocked(embedded_v4)
+
     return bool(
         ip.is_loopback
         or ip.is_private

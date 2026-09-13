@@ -19,6 +19,8 @@ from .base import (
     SourceErrorCode,
 )
 from .providers.http_api_provider import HttpApiAcquisitionProvider
+from .providers.invidious_provider import InvidiousAcquisitionProvider
+from .providers.piped_provider import PipedAcquisitionProvider
 from .providers.ytdlp_provider import YtDlpAcquisitionProvider
 from .security import safe_target_path, validate_remote_url
 from .server_downloader import ServerDownloaderProvider
@@ -33,8 +35,10 @@ class SourceAcquisitionRegistry:
         if providers is not None:
             self._providers = list(providers)
         else:
-            # Deterministic priority: Server Downloader -> yt-dlp -> Secondary HTTP API
+            # Deterministic priority: Piped -> Invidious -> Server Downloader -> yt-dlp -> Secondary HTTP API
             self._providers = [
+                PipedAcquisitionProvider(),
+                InvidiousAcquisitionProvider(),
                 ServerDownloaderProvider(),
                 YtDlpAcquisitionProvider(),
                 HttpApiAcquisitionProvider(),
@@ -236,6 +240,8 @@ def get_default_registry(settings: IngestSettings | None = None) -> SourceAcquis
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = SourceAcquisitionRegistry(
             providers=[
+                PipedAcquisitionProvider(),
+                InvidiousAcquisitionProvider(),
                 ServerDownloaderProvider(),
                 YtDlpAcquisitionProvider(settings=settings),
                 HttpApiAcquisitionProvider(),
