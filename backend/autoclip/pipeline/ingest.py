@@ -366,8 +366,7 @@ def ingest_youtube(
         "fragment_retries": 3,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["ios", "android", "mweb", "web"],
             }
         },
     }
