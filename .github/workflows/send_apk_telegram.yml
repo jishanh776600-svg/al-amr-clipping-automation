@@ -50,13 +50,11 @@ jobs:
           fi
 
           echo "Uploading $APK_PATH to Telegram chat $TARGET_CHAT..."
+          CAPTION="🚀 AL AMR Operator App (Release APK) - Step 11 Production Build"
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -F "chat_id=${TARGET_CHAT}" \
             -F "document=@${APK_PATH}" \
-            -F "caption=🚀 AL AMR Operator App (Release APK)
-Step 11 Production Build
-Package: com.alamr.operator
-Size: $(du -h "$APK_PATH" | cut -f1)" \
+            -F "caption=${CAPTION}" \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument")
 
           HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d':' -f2)
