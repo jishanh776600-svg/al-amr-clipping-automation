@@ -25,8 +25,8 @@ DEFAULT_REF = "main"
 
 
 def get_dispatch_mode() -> str:
-    """Return 'github' or 'local'."""
-    return os.environ.get("AUTOCLIP_DISPATCH_MODE", "local").strip().lower()
+    """Return 'github', 'auto', or 'local'."""
+    return os.environ.get("AUTOCLIP_DISPATCH_MODE", "auto").strip().lower()
 
 
 def is_github_dispatch_enabled() -> bool:

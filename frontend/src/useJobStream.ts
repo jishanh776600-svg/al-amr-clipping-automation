@@ -133,8 +133,26 @@ export function useJobStream(jobId: string | undefined) {
 
     source.onerror = () => setConnected(false)
 
+    // Polling fallback every 3s ensures state updates even if SSE disconnects or proxy drops stream
+    const pollInterval = setInterval(() => {
+      if (cancelled) return
+      api
+        .getJob(jobId)
+        .then((latest) => {
+          if (!cancelled && latest) {
+            setJob(latest)
+            if (['done', 'failed', 'cancelled'].includes(latest.status)) {
+              close()
+              clearInterval(pollInterval)
+            }
+          }
+        })
+        .catch(() => {})
+    }, 3000)
+
     return () => {
       cancelled = true
+      clearInterval(pollInterval)
       source.close()
       sourceRef.current = null
     }

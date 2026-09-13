@@ -113,24 +113,45 @@ def transcribe(
         ) from exc
 
     device, compute_type = resolve_compute(settings)
-    log.info(
-        "Transcribing with model=%s device=%s compute_type=%s",
-        settings.model,
-        device,
-        compute_type,
-    )
 
-    try:
-        whisper_cache_dir = paths.models_dir() / "whisper"
-        whisper_cache_dir.mkdir(parents=True, exist_ok=True)
-        model = WhisperModel(
-            settings.model,
-            device=device,
-            compute_type=compute_type,
-            download_root=str(whisper_cache_dir),
-        )
-    except Exception as exc:
-        raise _model_load_error(exc, device, compute_type) from exc
+    model = None
+    candidate_models = [settings.model]
+    if settings.model not in ("base", "tiny"):
+        candidate_models.extend(["base", "tiny"])
+
+    last_load_exc: Exception | None = None
+    whisper_cache_dir = paths.models_dir() / "whisper"
+    whisper_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    for cand in candidate_models:
+        try:
+            log.info(
+                "Loading Whisper model=%s device=%s compute_type=%s",
+                cand,
+                device,
+                compute_type,
+            )
+            model = WhisperModel(
+                cand,
+                device=device,
+                compute_type=compute_type,
+                download_root=str(whisper_cache_dir),
+            )
+            settings.model = cand
+            break
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            last_load_exc = exc
+            if any(term in err_msg for term in ["memory", "alloc", "oom", "resource", "out of memory"]):
+                log.warning("Whisper model %s failed with memory error (%s). Trying fallback candidate...", cand, exc)
+                continue
+            if cand != candidate_models[-1]:
+                log.warning("Whisper model %s failed (%s). Retrying with fallback model...", cand, exc)
+                continue
+            break
+
+    if model is None:
+        raise _model_load_error(last_load_exc or RuntimeError("Failed to load Whisper model"), device, compute_type) from last_load_exc
 
     segments_iter, info = model.transcribe(
         str(audio),
@@ -140,6 +161,7 @@ def transcribe(
         # Trims long silences before decoding, which both speeds things up and
         # stops Whisper hallucinating text into empty audio.
         vad_parameters={"min_silence_duration_ms": 500},
+        condition_on_previous_text=False,
     )
 
     total = duration_s or getattr(info, "duration", 0.0) or 0.0
@@ -149,9 +171,20 @@ def transcribe(
         source="whisper",
     )
 
+    import time
+    start_time = time.monotonic()
+    max_duration_s = max(300.0, (duration_s or 60.0) * 6.0)
+
     for segment in segments_iter:
         if cancelled is not None and cancelled():
             raise TranscriptionError("Transcription cancelled.")
+
+        if time.monotonic() - start_time > max_duration_s:
+            log.warning(
+                "Transcription reached bounded timeout (%.1fs). Terminating segment iteration early.",
+                max_duration_s,
+            )
+            break
 
         first_word = len(transcript.words)
         for word in getattr(segment, "words", None) or []:

@@ -47,24 +47,39 @@ def extract_audio(
     duration_s: float | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> Path:
-    """Extract mono 16 kHz PCM WAV from any input."""
+    """Extract mono 16 kHz PCM WAV from any input atomically."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    ffmpeg.run(
-        [
-            "-i",
-            str(source),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            str(AUDIO_SAMPLE_RATE),
-            "-c:a",
-            "pcm_s16le",
-            str(destination),
-        ],
-        total_duration_s=duration_s,
-        on_progress=on_progress,
-    )
+    temp_destination = destination.with_suffix(".tmp.wav")
+
+    timeout_s = max(60.0, (duration_s or 60.0) * 3.0)
+    try:
+        ffmpeg.run(
+            [
+                "-i",
+                str(source),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(AUDIO_SAMPLE_RATE),
+                "-c:a",
+                "pcm_s16le",
+                str(temp_destination),
+            ],
+            total_duration_s=duration_s,
+            on_progress=on_progress,
+            timeout_s=timeout_s,
+        )
+        if not temp_destination.exists() or temp_destination.stat().st_size < 44:
+            raise ffmpeg.FFmpegError(
+                "Audio extraction produced empty or invalid WAV header.",
+                command=["ffmpeg", "-i", str(source), str(destination)],
+            )
+        temp_destination.replace(destination)
+    finally:
+        if temp_destination.exists():
+            temp_destination.unlink(missing_ok=True)
+
     return destination
 
 
@@ -74,14 +89,22 @@ def generate_thumbnails(
     *,
     interval_s: int = THUMBNAIL_INTERVAL_S,
     width: int = THUMBNAIL_WIDTH,
+    duration_s: float | None = None,
 ) -> list[Path]:
     """Write one thumbnail every ``interval_s`` seconds for UI scrubbing.
 
     Returns the generated files in chronological order. An audio-only source
-    yields an empty list rather than an error.
+    yields an empty list rather than an error. Idempotent: reuses existing thumbnails.
     """
     destination_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = sorted(destination_dir.glob("thumb_*.jpg"))
+    if existing:
+        log.info("Reusing %d existing thumbnails in %s.", len(existing), destination_dir)
+        return existing
+
     pattern = destination_dir / "thumb_%05d.jpg"
+    timeout_s = min(300.0, max(60.0, (duration_s or 60.0) * 2.0))
 
     try:
         ffmpeg.run(
@@ -93,12 +116,32 @@ def generate_thumbnails(
                 "-q:v",
                 "5",
                 str(pattern),
-            ]
+            ],
+            timeout_s=timeout_s,
         )
-    except ffmpeg.FFmpegError:
-        # Audio-only input has no video stream to sample.
-        log.debug("No thumbnails generated for %s (likely audio-only).", source.name)
-        return []
+    except ffmpeg.FFmpegError as exc:
+        log.warning("Full thumbnail extraction failed or timed out for %s: %s", source.name, exc)
+        # Attempt fallback single poster frame so scrubbing has at least one image
+        poster = destination_dir / "thumb_00001.jpg"
+        try:
+            ffmpeg.run(
+                [
+                    "-ss",
+                    "0",
+                    "-i",
+                    str(source),
+                    "-vframes",
+                    "1",
+                    "-vf",
+                    f"scale={width}:-2",
+                    "-q:v",
+                    "5",
+                    str(poster),
+                ],
+                timeout_s=20.0,
+            )
+        except Exception:
+            log.debug("No fallback thumbnail could be generated for %s (likely audio-only).", source.name)
 
     return sorted(destination_dir.glob("thumb_*.jpg"))
 
@@ -134,9 +177,20 @@ def detect_silences(
         "null",
         "-",
     ]
-    proc = subprocess.run(
-        command, capture_output=True, text=True, check=False, encoding="utf-8", errors="replace"
-    )
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60.0,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("silencedetect timed out after 60s; falling back to fixed padding.")
+        return []
+
     if proc.returncode != 0:
         log.warning("silencedetect failed; boundary refinement will fall back to fixed padding.")
         return []

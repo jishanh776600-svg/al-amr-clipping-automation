@@ -20,6 +20,8 @@ import json
 import logging
 import shutil
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,7 +159,7 @@ def escape_filter_value(value: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def probe(path: Path) -> MediaInfo:
+def probe(path: Path, timeout_s: float = 30.0) -> MediaInfo:
     """Inspect a media file with ffprobe.
 
     Raises :class:`FFmpegError` if the file is unreadable or not media.
@@ -172,7 +174,22 @@ def probe(path: Path) -> MediaInfo:
         "-show_streams",
         str(path),
     ]
-    proc = subprocess.run(command, capture_output=True, text=True, check=False, encoding="utf-8")
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FFmpegError(
+            f"ffprobe timed out after {timeout_s}s while inspecting {path.name}.",
+            command=command,
+            stderr=str(exc.stderr or ""),
+        ) from exc
+
     if proc.returncode != 0:
         raise FFmpegError(f"Could not read {path.name}.", command=command, stderr=proc.stderr or "")
 
@@ -280,6 +297,7 @@ def run(
     on_progress: ProgressCallback | None = None,
     cancelled: Callable[[], bool] | None = None,
     cwd: Path | None = None,
+    timeout_s: float | None = None,
 ) -> None:
     """Run ffmpeg, optionally reporting progress as a 0..1 fraction.
 
@@ -304,6 +322,13 @@ def run(
 
     log.debug("ffmpeg %s", " ".join(command[1:]))
 
+    # Calculate effective bounded timeout
+    effective_timeout_s = (
+        timeout_s
+        if timeout_s is not None
+        else max(120.0, (total_duration_s or 60.0) * 4.0)
+    )
+
     proc = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -314,23 +339,84 @@ def run(
         cwd=str(cwd) if cwd else None,
     )
 
+    stderr_chunks: list[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is not None:
+            try:
+                for line in proc.stderr:
+                    stderr_chunks.append(line)
+            except Exception:
+                pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True, name="ffmpeg-stderr-drain")
+    stderr_thread.start()
+
+    start_time = time.monotonic()
+    timed_out = False
+
     try:
         if on_progress and total_duration_s and proc.stdout is not None:
-            _pump_progress(proc, total_duration_s, on_progress, cancelled)
+            _pump_progress(proc, total_duration_s, on_progress, cancelled, start_time, effective_timeout_s)
         elif cancelled is not None:
-            _wait_cancellable(proc, cancelled)
+            _wait_cancellable(proc, cancelled, start_time, effective_timeout_s)
+        else:
+            try:
+                proc.wait(timeout=effective_timeout_s)
+            except subprocess.TimeoutExpired:
+                timed_out = True
 
-        stdout, stderr = proc.communicate()
+        # Check if process is still running after timeout
+        if proc.poll() is None:
+            if (time.monotonic() - start_time) >= effective_timeout_s:
+                timed_out = True
+            else:
+                remaining = max(1.0, effective_timeout_s - (time.monotonic() - start_time))
+                try:
+                    proc.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+
+        if timed_out:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    pass
+            stderr_thread.join(timeout=1.0)
+            stderr_text = "".join(stderr_chunks)
+            raise FFmpegError(
+                f"ffmpeg timed out after {effective_timeout_s:.1f}s.",
+                command=command,
+                stderr=stderr_text,
+            )
+
     except BaseException:
-        proc.kill()
-        proc.wait()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+        stderr_thread.join(timeout=1.0)
         raise
+
+    stderr_thread.join(timeout=2.0)
+    stderr_text = "".join(stderr_chunks)
 
     if proc.returncode != 0:
         raise FFmpegError(
             f"ffmpeg exited with code {proc.returncode}.",
             command=command,
-            stderr=stderr or "",
+            stderr=stderr_text or "",
         )
 
     if on_progress:
@@ -346,9 +432,15 @@ def _pump_progress(
     total_duration_s: float,
     on_progress: ProgressCallback,
     cancelled: Callable[[], bool] | None,
+    start_time: float,
+    timeout_s: float,
 ) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
+        if (time.monotonic() - start_time) > timeout_s:
+            proc.kill()
+            raise FFmpegError(f"ffmpeg timed out after {timeout_s:.1f}s during progress pump.", command=[])
+
         if cancelled is not None and cancelled():
             proc.kill()
             raise Cancelled("Render cancelled.")
@@ -366,8 +458,17 @@ def _pump_progress(
             on_progress(1.0)
 
 
-def _wait_cancellable(proc: subprocess.Popen[str], cancelled: Callable[[], bool]) -> None:
+def _wait_cancellable(
+    proc: subprocess.Popen[str],
+    cancelled: Callable[[], bool],
+    start_time: float,
+    timeout_s: float,
+) -> None:
     while True:
+        if (time.monotonic() - start_time) > timeout_s:
+            proc.kill()
+            raise FFmpegError(f"ffmpeg timed out after {timeout_s:.1f}s.", command=[])
+
         try:
             proc.wait(timeout=0.5)
             return

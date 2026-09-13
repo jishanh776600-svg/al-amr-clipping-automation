@@ -25,6 +25,23 @@ export function JobProgress() {
   const [actionError, setActionError] = useState<Error | null>(null)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showAcquisitionDetails, setShowAcquisitionDetails] = useState(false)
+  const [elapsed, setElapsed] = useState<string>('')
+
+  useEffect(() => {
+    if (!job?.started_at) return
+    const updateElapsed = () => {
+      const start = new Date(job.started_at!).getTime()
+      const end = job.finished_at ? new Date(job.finished_at).getTime() : Date.now()
+      const diffSec = Math.max(0, Math.floor((end - start) / 1000))
+      const mins = Math.floor(diffSec / 60)
+      const secs = diffSec % 60
+      setElapsed(`${mins}m ${secs.toString().padStart(2, '0')}s`)
+    }
+    updateElapsed()
+    if (['done', 'failed', 'cancelled'].includes(job.status)) return
+    const interval = setInterval(updateElapsed, 1000)
+    return () => clearInterval(interval)
+  }, [job?.started_at, job?.finished_at, job?.status])
 
   useEffect(() => {
     if (job?.status === 'done') {
@@ -96,6 +113,11 @@ export function JobProgress() {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="eyebrow">{job.status}</p>
+            {elapsed && (
+              <span className="rounded bg-ink-800 px-2 py-0.5 text-[10px] font-mono text-ink-300">
+                ⏱ {elapsed}
+              </span>
+            )}
             {job.attempt && (
               <span className="rounded bg-ink-800 px-2 py-0.5 text-[10px] font-mono text-ink-300">
                 Attempt {job.attempt}/{job.max_attempts ?? 3}
@@ -350,7 +372,13 @@ export function JobProgress() {
                     {stage.label}
                   </span>
                   <span
-                    className={`text-xs ${state === 'stopped' ? 'text-signal-bad' : 'text-ink-500'}`}
+                    className={`text-xs ${
+                      state === 'stopped'
+                        ? 'text-signal-bad'
+                        : state === 'active'
+                          ? 'text-sodium-400 font-medium'
+                          : 'text-ink-500'
+                    }`}
                   >
                     {state === 'stopped'
                       ? job.status === 'cancelled'

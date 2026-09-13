@@ -162,9 +162,12 @@ class PipelineRunner:
         self._completed_weight += STAGE_WEIGHTS[stage]
         self._emit(stage, 1.0, overall=self._completed_weight)
 
-    def _stage_progress(self, stage: Stage) -> Callable[[float], None]:
+    def _stage_progress(self, stage: Stage, default_message: str = "") -> Callable[[float], None]:
         def report(fraction: float) -> None:
-            self._emit(stage, max(0.0, min(1.0, fraction)))
+            msg = default_message
+            if default_message and fraction > 0:
+                msg = f"{default_message} ({int(fraction * 100)}%)"
+            self._emit(stage, max(0.0, min(1.0, fraction)), message=msg)
 
         return report
 
@@ -266,18 +269,37 @@ class PipelineRunner:
         self._check_cancelled()
         source_path = self._stage_acquire()
 
+        audio_valid = False
         if self.workspace.audio.exists() and self.workspace.audio.stat().st_size > 0:
-            log.info("Reusing existing audio for job %s.", self.job.id)
-        else:
+            try:
+                from .ffmpeg import probe
+
+                info = probe(self.workspace.audio)
+                if info.has_audio and info.duration_s > 0:
+                    audio_valid = True
+                    log.info("Reusing validated audio for job %s (%.1fs).", self.job.id, info.duration_s)
+            except Exception as exc:
+                log.warning("Existing audio file for job %s is invalid (%s), re-extracting.", self.job.id, exc)
+                try:
+                    self.workspace.audio.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        if not audio_valid:
             self._emit(stage, 0.0, "Extracting audio")
             prepare.extract_audio(
                 source_path,
                 self.workspace.audio,
                 duration_s=self.source.duration_s,
-                on_progress=self._stage_progress(stage),
+                on_progress=self._stage_progress(stage, "Extracting audio"),
             )
 
-        if self.source.has_video and not self.workspace.thumbnails.exists():
+        has_thumbnails = (
+            self.workspace.thumbnails.is_dir()
+            and any(self.workspace.thumbnails.glob("thumb_*.jpg"))
+        )
+        if self.source.has_video and not has_thumbnails:
+            self._emit(stage, 0.85, "Generating thumbnails")
             prepare.generate_thumbnails(source_path, self.workspace.thumbnails)
 
         self._finish_stage(stage)
@@ -293,12 +315,12 @@ class PipelineRunner:
             self._finish_stage(stage)
             return transcript
 
-        self._emit(stage, 0.0, "Transcribing")
+        self._emit(stage, 0.0, "Loading speech model...")
         transcript = transcribe.transcribe(
             audio,
             self.settings.whisper,
             duration_s=self.source.duration_s,
-            on_progress=self._stage_progress(stage),
+            on_progress=self._stage_progress(stage, "Transcribing speech"),
             cancelled=self._is_cancelled,
         )
 
