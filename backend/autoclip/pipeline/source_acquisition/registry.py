@@ -128,10 +128,13 @@ class SourceAcquisitionRegistry:
 
             import os
             is_cloud = bool(
-                os.environ.get("RENDER")
-                or os.environ.get("RENDER_EXTERNAL_URL")
-                or os.environ.get("GITHUB_ACTIONS")
-                or os.environ.get("KUBERNETES_SERVICE_HOST")
+                (
+                    os.environ.get("RENDER")
+                    or os.environ.get("RENDER_EXTERNAL_URL")
+                    or os.environ.get("GITHUB_ACTIONS")
+                    or os.environ.get("KUBERNETES_SERVICE_HOST")
+                )
+                and not os.environ.get("PYTEST_CURRENT_TEST")
             )
 
             if warp_diag and warp_diag["active"]:
