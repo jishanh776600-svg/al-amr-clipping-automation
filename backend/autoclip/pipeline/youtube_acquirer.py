@@ -419,7 +419,10 @@ class YouTubeSourceAcquirer:
                 pass
 
         if proxy:
+            if proxy.startswith("socks5://"):
+                proxy = "socks5h://" + proxy[len("socks5://"):]
             base_options["proxy"] = proxy
+            base_options["source_address"] = "0.0.0.0"
             log.info("YouTube acquirer configured with egress proxy: %s", proxy)
 
         # Multi-strategy acquisition order:

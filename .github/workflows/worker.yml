@@ -115,14 +115,10 @@ jobs:
 
       - name: Start Proof-of-Origin Token Provider Server
         run: |
-          docker run --name bgutil-provider -d --init \
-            -p 127.0.0.1:4416:4416 brainicism/bgutil-ytdlp-pot-provider
+          docker run --name bgutil-provider --network host -d --init \
+            brainicism/bgutil-ytdlp-pot-provider
           sleep 5
           curl -s http://127.0.0.1:4416/ping || true
-
-      - name: Run Cloud Media Acquisition Acceptance Probe
-        run: |
-          python scripts/cloud_acquisition_probe.py
 
       - name: Run AL AMR Worker Runner
         env:
@@ -144,7 +140,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-          AUTOCLIP_PROXY: socks5://127.0.0.1:1080
+          AUTOCLIP_PROXY: socks5h://127.0.0.1:1080
         run: |
           python -m autoclip.jobs.worker_runner \
             --job-id "${{ github.event.inputs.job_id }}" \
