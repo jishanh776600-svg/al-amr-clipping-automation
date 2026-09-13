@@ -29,7 +29,7 @@ from ..db import models, store
 from ..db.models import CampaignGuideline, Job, Source, new_id
 from ..jobs import orchestrator
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
-from ..jobs.events import Event, broker
+from ..jobs.events import Event, acquisition_event, broker
 from ..jobs.queue import queue
 from ..pipeline import ingest
 from .auth import is_valid_token
@@ -401,8 +401,29 @@ async def create_autonomous_job(
             "created_at": guideline.created_at,
         }
 
-    # 4. Create Job
-    dispatch_mode = "github" if is_github_dispatch_enabled() else "local"
+    # 4. Enforce Cloud YouTube Acquisition Safety
+    is_yt = source.type == "youtube" or (source.url and ingest.is_youtube_url(source.url))
+    is_cloud = bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("KUBERNETES_SERVICE_HOST")
+    )
+    from ..pipeline.source_acquisition.warp_checker import resolve_egress_proxy
+
+    has_egress_proxy = bool(resolve_egress_proxy(base_settings.ingest.proxy))
+    github_enabled = is_github_dispatch_enabled()
+
+    if is_yt and is_cloud and not github_enabled and not has_egress_proxy:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cloud YouTube acquisition requires either GitHub Actions worker dispatch (configure GITHUB_PAT in Settings or environment) "
+                "or an active WARP egress proxy (socks5://127.0.0.1:1080). "
+                "Direct local execution from cloud datacenter IPs is blocked by YouTube anti-bot protection."
+            ),
+        )
+
+    dispatch_mode = "github" if github_enabled else "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
@@ -467,7 +488,29 @@ async def create_job(
                 "created_at": guideline.created_at,
             }
 
-    dispatch_mode = "github" if is_github_dispatch_enabled() else "local"
+    # Enforce Cloud YouTube Acquisition Safety
+    is_yt = source.type == "youtube" or (source.url and ingest.is_youtube_url(source.url))
+    is_cloud = bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("KUBERNETES_SERVICE_HOST")
+    )
+    from ..pipeline.source_acquisition.warp_checker import resolve_egress_proxy
+
+    has_egress_proxy = bool(resolve_egress_proxy(settings.ingest.proxy))
+    github_enabled = is_github_dispatch_enabled()
+
+    if is_yt and is_cloud and not github_enabled and not has_egress_proxy:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cloud YouTube acquisition requires either GitHub Actions worker dispatch (configure GITHUB_PAT in Settings or environment) "
+                "or an active WARP egress proxy (socks5://127.0.0.1:1080). "
+                "Direct local execution from cloud datacenter IPs is blocked by YouTube anti-bot protection."
+            ),
+        )
+
+    dispatch_mode = "github" if github_enabled else "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
@@ -679,6 +722,31 @@ async def worker_callback(
     if payload.github_run_id is not None:
         update_kwargs["github_run_id"] = payload.github_run_id
         update_kwargs["github_run_url"] = f"https://github.com/jishanh776600-svg/al-amr-clipping-automation/actions/runs/{payload.github_run_id}"
+
+    if payload.acquisition_event:
+        event_dict = payload.acquisition_event
+        broker.publish(
+            acquisition_event(
+                job_id=job_id,
+                phase=event_dict.get("phase", "ACQUIRING"),
+                status=event_dict.get("status", "active"),
+                provider=event_dict.get("provider"),
+                instance=event_dict.get("instance"),
+                message=event_dict.get("message", ""),
+                progress_percent=event_dict.get("progress_percent"),
+                bytes_downloaded=event_dict.get("bytes_downloaded"),
+                total_bytes=event_dict.get("total_bytes"),
+                download_speed=event_dict.get("download_speed"),
+                eta_seconds=event_dict.get("eta_seconds"),
+                attempt=event_dict.get("attempt"),
+                total_attempts=event_dict.get("total_attempts"),
+                telemetry=event_dict.get("telemetry"),
+            )
+        )
+        current_settings = dict(job.settings)
+        if event_dict.get("telemetry"):
+            current_settings["acquisition_telemetry"] = event_dict["telemetry"]
+            update_kwargs["settings"] = current_settings
 
     if update_kwargs:
         await asyncio.to_thread(store.update_job, job_id, **update_kwargs)

@@ -30,7 +30,10 @@ def _settings_out(settings: config.Settings) -> SettingsOut:
         keys_present={
             name: config.get_secret(name, settings) is not None for name in config.KEYED_PROVIDERS
         }
-        | {config.HF_TOKEN_KEY: config.get_secret(config.HF_TOKEN_KEY, settings) is not None},
+        | {
+            config.HF_TOKEN_KEY: config.get_secret(config.HF_TOKEN_KEY, settings) is not None,
+            config.GITHUB_PAT_KEY: config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
+        },
     )
 
 
@@ -86,7 +89,7 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
 @router.put("/settings/secrets", status_code=204)
 async def put_secret(payload: SecretIn) -> None:
     """Store an API key or token. Values are write-only — never read back."""
-    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY)
+    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
     if payload.key not in valid:
         raise HTTPException(
             status_code=400, detail=f"Unknown secret. Expected one of: {', '.join(valid)}"

@@ -102,6 +102,71 @@ class SourceAcquisitionRegistry:
             message="Validating source URL and accessibility...",
         )
 
+        # YouTube-specific egress diagnostics
+        is_youtube = any(h in domain for h in ("youtube.com", "youtu.be"))
+        warp_diag: dict[str, Any] | None = None
+        if is_youtube:
+            _notify_event(
+                phase="WARP_INITIALIZING",
+                status="active",
+                message="Initializing Cloudflare WARP egress sidecar...",
+            )
+            from .warp_checker import check_warp_status
+
+            configured_proxy = (
+                job_context.settings.proxy
+                if job_context and getattr(job_context, "settings", None) and hasattr(job_context.settings, "proxy")
+                else ""
+            )
+
+            _notify_event(
+                phase="TESTING_PROXY",
+                status="active",
+                message="Testing egress proxy connectivity...",
+            )
+            warp_diag = check_warp_status(configured_proxy)
+
+            import os
+            is_cloud = bool(
+                os.environ.get("RENDER")
+                or os.environ.get("RENDER_EXTERNAL_URL")
+                or os.environ.get("GITHUB_ACTIONS")
+                or os.environ.get("KUBERNETES_SERVICE_HOST")
+            )
+
+            if warp_diag and warp_diag["active"]:
+                _notify_event(
+                    phase="PROXY_TESTED",
+                    status="done",
+                    message=f"Egress proxy verified ({warp_diag['client_ip']}, {warp_diag['location']}, WARP={warp_diag['warp_status']}, {warp_diag['latency_ms']}ms).",
+                    telemetry=warp_diag,
+                )
+            else:
+                err_msg = warp_diag.get("error") if warp_diag else "WARP proxy offline"
+                if is_cloud:
+                    _notify_event(
+                        phase="PROXY_FAILED",
+                        status="failed",
+                        message=f"WARP proxy check failed: {err_msg}",
+                        telemetry=warp_diag or {},
+                    )
+                    raise SourceAcquisitionError(
+                        f"WARP Egress Failure: Cloud YouTube acquisition requires an active WARP proxy, but proxy check failed: {err_msg}",
+                        code=SourceErrorCode.SOURCE_PROVIDER_UNAVAILABLE,
+                        hint=(
+                            "Cloud YouTube acquisition requires either GitHub Actions worker dispatch (configure GITHUB_PAT) "
+                            "or an active WARP egress proxy (socks5://127.0.0.1:1080). "
+                            "Direct cloud datacenter IPs are blocked by YouTube anti-bot verification."
+                        ),
+                    )
+                else:
+                    _notify_event(
+                        phase="PROXY_TESTED",
+                        status="done",
+                        message="No local egress proxy detected; proceeding with direct connection.",
+                        telemetry=warp_diag or {},
+                    )
+
         attempts_history: list[dict[str, Any]] = []
         last_error: SourceAcquisitionError | None = None
 
@@ -127,15 +192,27 @@ class SourceAcquisitionRegistry:
                 source_url,
             )
 
-            _notify_event(
-                phase="TRYING_PROVIDER",
-                status="active",
-                provider=provider.provider_name,
-                attempt=attempt_index,
-                total_attempts=len(configured_providers),
-                message=f"Attempting acquisition via {provider.provider_name} (provider {attempt_index} of {len(configured_providers)})...",
-                telemetry={"fallback_history": attempts_history},
-            )
+            proxy_label = warp_diag["proxy_url"] if warp_diag and warp_diag.get("proxy_url") else "direct"
+            if provider.provider_name in ("server-downloader", "yt-dlp") and is_youtube:
+                _notify_event(
+                    phase="YTDLP_STARTING",
+                    status="active",
+                    provider=provider.provider_name,
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"yt-dlp via WARP ({proxy_label})...",
+                    telemetry={"proxy": proxy_label, "warp_status": warp_diag.get("warp_status") if warp_diag else "unknown"},
+                )
+            else:
+                _notify_event(
+                    phase="TRYING_PROVIDER",
+                    status="active",
+                    provider=provider.provider_name,
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"Attempting acquisition via {provider.provider_name} (provider {attempt_index} of {len(configured_providers)})...",
+                    telemetry={"fallback_history": attempts_history},
+                )
 
             # Isolated subdirectory per provider attempt to avoid file collisions
             provider_work_dir = target_dir / f"_attempt_{provider.provider_name}"
@@ -143,24 +220,32 @@ class SourceAcquisitionRegistry:
             shutil.rmtree(provider_work_dir, ignore_errors=True)
             provider_work_dir.mkdir(parents=True, exist_ok=True)
 
-            def _wrapped_progress(pct: float, **kw: Any) -> None:
+            def _wrapped_progress(pct: Any, **kw: Any) -> None:
                 if on_progress:
                     try:
                         on_progress(pct)
                     except Exception:
                         pass
+                try:
+                    pct_f = float(pct)
+                    pct_pct = round(pct_f, 1)
+                    pct_msg = f"{pct_f:.1f}%"
+                except Exception:
+                    pct_pct = None
+                    pct_msg = f"{pct}%"
+
                 _notify_event(
                     phase="DOWNLOADING",
                     status="active",
                     provider=provider.provider_name,
-                    progress_percent=round(pct, 1),
+                    progress_percent=pct_pct,
                     bytes_downloaded=kw.get("bytes_downloaded"),
                     total_bytes=kw.get("total_bytes"),
                     download_speed=kw.get("download_speed"),
                     eta_seconds=kw.get("eta_seconds"),
                     attempt=attempt_index,
                     total_attempts=len(configured_providers),
-                    message=f"Downloading media stream via {provider.provider_name} ({pct:.1f}%)...",
+                    message=f"Downloading media stream via {provider.provider_name} ({pct_msg})...",
                 )
 
             try:
@@ -195,13 +280,32 @@ class SourceAcquisitionRegistry:
                 # Clean up attempt folder
                 shutil.rmtree(provider_work_dir, ignore_errors=True)
 
+                try:
+                    dur_display = f"{float(result.duration):.1f}s"
+                except Exception:
+                    dur_display = f"{result.duration}s"
+
+                try:
+                    size_display = f"{float(result.file_size) / (1024 * 1024):.1f} MB"
+                except Exception:
+                    size_display = f"{result.file_size} bytes"
+
+                _notify_event(
+                    phase="MEDIA_VALIDATED",
+                    status="done",
+                    provider=provider.provider_name,
+                    attempt=attempt_index,
+                    total_attempts=len(configured_providers),
+                    message=f"Media validated successfully (FFprobe: {dur_display}, {size_display}).",
+                )
+
                 log.info(
-                    "Source acquisition successful with provider '%s': %s (size=%d bytes, duration=%.2fs, sha256=%s)",
+                    "Source acquisition successful with provider '%s': %s (size=%s, duration=%s, sha256=%s)",
                     provider.provider_name,
                     dst_media.name,
-                    result.file_size,
-                    result.duration,
-                    result.sha256[:16],
+                    size_display,
+                    dur_display,
+                    str(getattr(result, "sha256", ""))[:16],
                 )
 
                 elapsed_s = time.time() - start_time
@@ -231,7 +335,7 @@ class SourceAcquisitionRegistry:
                     progress_percent=100.0,
                     attempt=attempt_index,
                     total_attempts=len(configured_providers),
-                    message=f"Source media acquired successfully via {provider.provider_name} ({result.file_size / (1024 * 1024):.1f} MB).",
+                    message=f"Source media acquired successfully via {provider.provider_name} ({size_display}).",
                     telemetry=provenance,
                 )
 

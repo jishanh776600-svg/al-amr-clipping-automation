@@ -16,6 +16,7 @@ const SECRET_LABELS: Record<string, string> = {
   openai: 'OpenAI-compatible API key',
   gemini: 'Google Gemini API key',
   huggingface_token: 'HuggingFace token',
+  github_pat: 'GitHub Personal Access Token (Worker Dispatch)',
 }
 
 export function Settings() {
@@ -390,11 +391,20 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section title="Ingest">
+      <Section title="Ingest" note="Media download engines, egress routing, and proxy sidecars.">
         <div className="grid gap-5 sm:grid-cols-2">
+          <Field
+            label="Egress Proxy URL"
+            hint="SOCKS5 or HTTP proxy URL for WARP egress (e.g. socks5://127.0.0.1:1080)."
+            value={settings.ingest.proxy ?? ''}
+            placeholder="socks5://127.0.0.1:1080"
+            onCommit={(value) =>
+              patch({ ingest: { ...settings.ingest, proxy: value } })
+            }
+          />
           <Select
-            label="YouTube cookies from"
-            hint="YouTube blocks most anonymous downloads. Sign in in that browser and close it before downloading."
+            label="YouTube cookies from (Local only)"
+            hint="Cloud workers run browserless and use WARP egress. For local desktop use only."
             value={settings.ingest.cookies_from_browser}
             onChange={(value) =>
               patch({ ingest: { ...settings.ingest, cookies_from_browser: value } })

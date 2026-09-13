@@ -257,6 +257,9 @@ export function JobProgress() {
             </div>
           )}
 
+          {/* Structured Acquisition Progress Checklist */}
+          <AcquisitionChecklist acquisition={acquisition} job={job} />
+
           {/* Expandable Acquisition Details */}
           <div className="mt-4 pt-3 border-t border-ink-800/60">
             <button
@@ -406,3 +409,153 @@ export function JobProgress() {
     </div>
   )
 }
+
+function AcquisitionChecklist({
+  acquisition,
+  job,
+}: {
+  acquisition: any
+  job: any
+}) {
+  const isDone =
+    acquisition?.phase === 'SOURCE_ACQUIRED' ||
+    acquisition?.status === 'completed' ||
+    (job.status === 'running' && job.current_stage !== 'acquiring' && job.current_stage !== 'prepare') ||
+    job.status === 'done'
+  const isFailed =
+    acquisition?.status === 'failed' ||
+    (job.status === 'failed' && (job.current_stage === 'acquiring' || !job.current_stage))
+  const phase = acquisition?.phase || ''
+
+  // Step 1: Initializing WARP
+  let warpStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  if (isDone) warpStep = 'done'
+  else if (phase === 'WARP_INITIALIZING') warpStep = 'active'
+  else if (
+    ['TESTING_PROXY', 'PROXY_TESTED', 'YTDLP_STARTING', 'DOWNLOADING', 'VALIDATING_MEDIA', 'MEDIA_VALIDATED'].includes(phase)
+  )
+    warpStep = 'done'
+  else if (phase === 'PROXY_FAILED' || isFailed) warpStep = 'failed'
+
+  // Step 2: Testing proxy
+  let proxyStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  if (isDone) proxyStep = 'done'
+  else if (phase === 'TESTING_PROXY') proxyStep = 'active'
+  else if (
+    ['PROXY_TESTED', 'YTDLP_STARTING', 'DOWNLOADING', 'VALIDATING_MEDIA', 'MEDIA_VALIDATED'].includes(phase)
+  )
+    proxyStep = 'done'
+  else if (phase === 'PROXY_FAILED') proxyStep = 'failed'
+  else if (isFailed && warpStep !== 'failed') proxyStep = 'failed'
+
+  // Step 3: yt-dlp via WARP
+  let ytdlpStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  if (isDone) ytdlpStep = 'done'
+  else if (['PROXY_TESTED', 'YTDLP_STARTING', 'TRYING_PROVIDER'].includes(phase)) ytdlpStep = 'active'
+  else if (['DOWNLOADING', 'VALIDATING_MEDIA', 'MEDIA_VALIDATED'].includes(phase)) ytdlpStep = 'done'
+  else if (isFailed && proxyStep === 'done') ytdlpStep = 'failed'
+
+  // Step 4: Download
+  let dlStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  let dlLabel = 'Download'
+  if (isDone) {
+    dlStep = 'done'
+  } else if (phase === 'DOWNLOADING') {
+    dlStep = 'active'
+    if (acquisition?.progressPercent !== undefined && acquisition?.progressPercent !== null) {
+      dlLabel = `Download (${Math.round(acquisition.progressPercent)}%)`
+    }
+  } else if (['VALIDATING_MEDIA', 'MEDIA_VALIDATED'].includes(phase)) {
+    dlStep = 'done'
+  } else if (isFailed && ytdlpStep === 'done') {
+    dlStep = 'failed'
+  }
+
+  // Step 5: Media validation
+  let valStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  if (isDone) valStep = 'done'
+  else if (phase === 'VALIDATING_MEDIA') valStep = 'active'
+  else if (phase === 'MEDIA_VALIDATED') valStep = 'done'
+  else if (isFailed && dlStep === 'done') valStep = 'failed'
+
+  // Step 6: Source acquired
+  let acqStep: 'done' | 'active' | 'failed' | 'pending' = 'pending'
+  if (isDone) acqStep = 'done'
+  else if (phase === 'MEDIA_VALIDATED') acqStep = 'active'
+  else if (isFailed && valStep === 'done') acqStep = 'failed'
+
+  const items = [
+    { name: 'Initializing WARP', status: warpStep, branch: '├─' },
+    { name: 'Testing proxy', status: proxyStep, branch: '├─' },
+    { name: 'yt-dlp via WARP', status: ytdlpStep, branch: '├─' },
+    {
+      name: dlLabel,
+      status: dlStep,
+      branch: '├─',
+      badge:
+        dlStep === 'active' && acquisition?.progressPercent != null
+          ? `${Math.round(acquisition.progressPercent)}%`
+          : undefined,
+    },
+    { name: 'Media validation', status: valStep, branch: '├─' },
+    { name: 'Source acquired', status: acqStep, branch: '└─' },
+  ]
+
+  return (
+    <div className="mt-4 font-mono text-xs border border-ink-800/80 rounded-lg p-3.5 bg-ink-950/60">
+      <div className="text-sodium-400 font-bold tracking-wider mb-2.5 flex items-center justify-between">
+        <span>ACQUIRE</span>
+        {acquisition?.telemetry?.warp_status && (
+          <span className="text-[10px] text-emerald-400 font-normal">
+            WARP={acquisition.telemetry.warp_status} ({acquisition.telemetry.location || 'cloudflare'})
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center justify-between text-ink-300">
+            <div className="flex items-center gap-2">
+              <span className="text-ink-600 select-none">{item.branch}</span>
+              <span
+                className={
+                  item.status === 'active'
+                    ? 'text-sodium-300 font-semibold'
+                    : item.status === 'done'
+                      ? 'text-ink-200'
+                      : item.status === 'failed'
+                        ? 'text-rose-400 font-semibold'
+                        : 'text-ink-500'
+                }
+              >
+                {item.name}
+              </span>
+            </div>
+            <div>
+              {item.status === 'done' && (
+                <span className="text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-800/30 text-[10px]">
+                  DONE
+                </span>
+              )}
+              {item.status === 'active' && (
+                <span className="text-sodium-400 font-semibold px-2 py-0.5 rounded bg-sodium-950/40 border border-sodium-800/40 animate-pulse text-[10px]">
+                  {item.badge ? item.badge : 'RUNNING'}
+                </span>
+              )}
+              {item.status === 'failed' && (
+                <span className="text-rose-400 font-semibold px-2 py-0.5 rounded bg-rose-950/40 border border-rose-800/30 text-[10px]">
+                  FAILED
+                </span>
+              )}
+              {item.status === 'pending' && (
+                <span className="text-ink-600 font-normal px-2 py-0.5 rounded text-[10px]">
+                  PENDING
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+

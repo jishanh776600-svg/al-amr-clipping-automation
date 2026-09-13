@@ -477,6 +477,7 @@ class WorkerCallbackIn(BaseModel):
     evaluations: list[dict[str, Any]] | None = None
     exports: list[dict[str, Any]] | None = None
     publishing_records: list[dict[str, Any]] | None = None
+    acquisition_event: dict[str, Any] | None = None
 
 
 class PublishingRecordOut(BaseModel):

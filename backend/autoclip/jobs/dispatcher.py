@@ -29,17 +29,32 @@ def get_dispatch_mode() -> str:
     return os.environ.get("AUTOCLIP_DISPATCH_MODE", "auto").strip().lower()
 
 
+def get_github_token() -> str | None:
+    """Resolve GitHub token from environment variables or stored application secrets."""
+    token = (
+        os.environ.get("GITHUB_PAT")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if token and token.strip():
+        return token.strip()
+    try:
+        from .. import config
+
+        secret = config.get_secret(config.GITHUB_PAT_KEY)
+        if secret and secret.strip():
+            return secret.strip()
+    except Exception as exc:
+        log.debug("Failed to read GITHUB_PAT secret: %s", exc)
+    return None
+
+
 def is_github_dispatch_enabled() -> bool:
     mode = get_dispatch_mode()
     if mode == "github":
         return True
     if mode == "auto":
-        token = (
-            os.environ.get("GITHUB_PAT")
-            or os.environ.get("GH_TOKEN")
-            or os.environ.get("GITHUB_TOKEN")
-        )
-        return bool(token)
+        return bool(get_github_token())
     return False
 
 
@@ -49,13 +64,9 @@ async def dispatch_job_to_github(
     campaign_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Trigger GitHub Actions worker.yml workflow for the given job."""
-    token = (
-        os.environ.get("GITHUB_PAT")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-    )
+    token = get_github_token()
     if not token:
-        err = "GitHub token (GITHUB_PAT or GH_TOKEN) is not configured in server environment."
+        err = "GitHub token (GITHUB_PAT or GH_TOKEN) is not configured in server environment or Settings."
         log.error(err)
         store.update_job(job.id, status="failed", error=err)
         broker.publish(Event(type="failed", job_id=job.id, data={"error": err}))

@@ -63,6 +63,7 @@ def send_callback(
     evaluations: list[dict[str, Any]] | None = None,
     exports: list[dict[str, Any]] | None = None,
     publishing_records: list[dict[str, Any]] | None = None,
+    acquisition_event: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not callback_url:
         return None
@@ -87,6 +88,8 @@ def send_callback(
         payload["exports"] = exports
     if publishing_records is not None:
         payload["publishing_records"] = publishing_records
+    if acquisition_event is not None:
+        payload["acquisition_event"] = acquisition_event
 
     headers: dict[str, str] = {}
     if token:
@@ -123,6 +126,18 @@ async def async_main() -> None:
 
     def report(**kw):
         send_callback(args.callback_url, args.callback_token, **kw)
+
+    # Listen for granular acquisition events and relay to control plane
+    from ..jobs.events import broker
+
+    def on_acquisition_event(event):
+        if event.type == "acquisition" and event.job_id == args.job_id:
+            report(
+                stage="acquiring_source",
+                acquisition_event=event.data,
+            )
+
+    broker.add_listener(on_acquisition_event)
 
     report(status="running", stage="worker_initialized", progress=0.05)
 

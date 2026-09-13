@@ -321,6 +321,7 @@ export interface Settings {
     ytdlp_format: string
     cookies_from_browser: string
     prefer_youtube_captions: boolean
+    proxy?: string
   }
   export: {
     ratio: string

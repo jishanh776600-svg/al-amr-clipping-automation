@@ -52,6 +52,16 @@ class EventBroker:
         self._subscribers: dict[str, set[asyncio.Queue[Event]]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
+        self._listeners: list[Callable[[Event], None]] = []
+
+    def add_listener(self, callback: Callable[[Event], None]) -> None:
+        """Register a synchronous listener to receive all events immediately."""
+        self._listeners.append(callback)
+
+    def remove_listener(self, callback: Callable[[Event], None]) -> None:
+        """Unregister a synchronous listener."""
+        with contextlib.suppress(ValueError):
+            self._listeners.remove(callback)
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Record the loop that owns the subscriber queues.
@@ -65,6 +75,12 @@ class EventBroker:
 
     def publish(self, event: Event) -> None:
         """Publish an event from any thread."""
+        for listener in list(self._listeners):
+            try:
+                listener(event)
+            except Exception as e:
+                log.debug("Event listener error: %s", e)
+
         loop = self._loop
         if loop is None or loop.is_closed():
             return

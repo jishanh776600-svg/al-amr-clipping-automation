@@ -41,6 +41,7 @@ KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
 
 #: Extra secrets that aren't tied to a provider.
 HF_TOKEN_KEY = "huggingface_token"
+GITHUB_PAT_KEY = "github_pat"
 
 
 class ProviderSettings(BaseModel):
