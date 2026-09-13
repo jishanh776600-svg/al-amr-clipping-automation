@@ -1,0 +1,115 @@
+name: Test Cloudflare WARP YouTube Extraction
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-warp:
+    name: Test WARP & YouTube Acquisition
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Multimedia Tools & Upstream yt-dlp
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install -U --pre "yt-dlp[default]" yt-dlp-ejs httpx
+          python -m yt_dlp --version
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 1. Baseline Runner Egress IP
+        run: |
+          echo "=== BASELINE RUNNER IP ==="
+          curl -s https://cloudflare.com/cdn-cgi/trace | grep -E '^(ip|loc|warp)=' || true
+
+      - name: 2. Baseline Direct yt-dlp Attempt (Expected to Fail on Azure)
+        run: |
+          echo "=== DIRECT YT-DLP ATTEMPT ==="
+          python -m yt_dlp -v --dump-json "https://youtu.be/jNQXAC9IVRw" > /tmp/direct_info.json || true
+          if [ -s /tmp/direct_info.json ]; then
+            echo "Direct yt-dlp SUCCEEDED unexpectedly!"
+          else
+            echo "Direct yt-dlp failed as expected on Azure runner."
+          fi
+
+      - name: 3. Start WARP SOCKS5 Container (caomingjun/warp)
+        run: |
+          echo "=== STARTING WARP DOCKER CONTAINER ==="
+          docker run --name warp -d             --cap-add NET_ADMIN             --sysctl net.ipv6.conf.all.disable_ipv6=0             --sysctl net.ipv4.conf.all.src_valid_mark=1             -p 127.0.0.1:1080:1080             caomingjun/warp
+          
+          echo "Waiting for WARP container to be ready..."
+          for i in {1..20}; do
+            TRACE=$(curl -s --socks5-hostname 127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace 2>/dev/null || true)
+            if echo "$TRACE" | grep -q "warp=on\|warp=plus"; then
+              echo "WARP proxy is UP and CONNECTED! Attempt $i"
+              echo "$TRACE" | grep -E '^(ip|loc|warp)='
+              break
+            fi
+            echo "Attempt $i: waiting for WARP... ($TRACE)"
+            sleep 2
+          done
+
+      - name: 4. Test WARP SOCKS5 yt-dlp Extraction
+        run: |
+          echo "=== TESTING YT-DLP OVER WARP SOCKS5 ==="
+          
+          echo "--- Test A: Default negotiation over WARP ---"
+          python -m yt_dlp --proxy "socks5://127.0.0.1:1080" -v --dump-json "https://youtu.be/jNQXAC9IVRw" > /tmp/warp_default.json || true
+          if [ -s /tmp/warp_default.json ]; then
+            echo "SUCCESS: Default negotiation over WARP succeeded!"
+          else
+            echo "Default negotiation over WARP failed."
+          fi
+
+          echo "--- Test B: visionos client over WARP ---"
+          python -m yt_dlp --proxy "socks5://127.0.0.1:1080" --extractor-args "youtube:player_client=visionos" -v --dump-json "https://youtu.be/jNQXAC9IVRw" > /tmp/warp_visionos.json || true
+          if [ -s /tmp/warp_visionos.json ]; then
+            echo "SUCCESS: visionos over WARP succeeded!"
+          else
+            echo "visionos over WARP failed."
+          fi
+
+          echo "--- Test C: android client over WARP ---"
+          python -m yt_dlp --proxy "socks5://127.0.0.1:1080" --extractor-args "youtube:player_client=android" -v --dump-json "https://youtu.be/jNQXAC9IVRw" > /tmp/warp_android.json || true
+          if [ -s /tmp/warp_android.json ]; then
+            echo "SUCCESS: android over WARP succeeded!"
+          else
+            echo "android over WARP failed."
+          fi
+
+          echo "--- Test D: tv client over WARP ---"
+          python -m yt_dlp --proxy "socks5://127.0.0.1:1080" --extractor-args "youtube:player_client=tv" -v --dump-json "https://youtu.be/jNQXAC9IVRw" > /tmp/warp_tv.json || true
+          if [ -s /tmp/warp_tv.json ]; then
+            echo "SUCCESS: tv over WARP succeeded!"
+          else
+            echo "tv over WARP failed."
+          fi
+
+          echo "--- Test E: Actual media byte download & FFprobe over WARP ---"
+          python -m yt_dlp --proxy "socks5://127.0.0.1:1080" -f "mp4" -o "/tmp/test_warp_dl.mp4" "https://youtu.be/jNQXAC9IVRw" || true
+          if [ -s /tmp/test_warp_dl.mp4 ]; then
+            echo "SUCCESS: Downloaded file size: $(stat -c%s /tmp/test_warp_dl.mp4) bytes"
+            ffprobe -v error -show_entries stream=codec_type,codec_name:format=duration -of json /tmp/test_warp_dl.mp4
+          else
+            echo "Media download over WARP failed or produced empty file."
+          fi
+
+      - name: WARP Container Logs
+        if: always()
+        run: |
+          echo "=== DOCKER LOGS: WARP ==="
+          docker logs warp || true
