@@ -402,17 +402,19 @@ class YouTubeSourceAcquirer:
         # Strategy 1 (Primary): Cloud-resilient InnerTube clients excluding desktop web
         #                       (desktop web triggers bot check on datacenter IPs).
         # Strategy 2 (Fallback): Mobile InnerTube client skipping HTML webpage download
-        #                       (bypasses datacenter IP webpage blocks).
-        # Strategy 3 (Extended Fallback): Multi-client mobile without webpage/configs.
-        # Strategy 4 (Unconstrained): Default unconstrained yt-dlp negotiation.
-        # Strategy 5 (Fallback): TV client.
+        # Strategy 3 (Fallback): Web & MWeb InnerTube with always-active PO Token generation.
+        # Strategy 4 (Extended Fallback): Multi-client mobile without webpage/configs.
+        # Strategy 5 (Unconstrained): Default unconstrained yt-dlp negotiation.
+        # Strategy 6 (Fallback): TV client.
         strategies: list[tuple[str, dict[str, Any] | None]] = [
             ("cloud_resilient_innertube", {"youtube": {"player_client": ["default", "-web"]}}),
             ("mobile_innertube", {"youtube": {"player_client": ["android"], "player_skip": ["webpage"]}}),
+            ("pot_provider_innertube", {"youtube": {"player_client": ["web", "mweb"], "fetch_pot": "always"}}),
             ("mobile_extended_innertube", {"youtube": {"player_client": ["android", "ios"], "player_skip": ["webpage", "configs"]}}),
             ("default_unconstrained", None),
             ("tv_client", {"youtube": {"player_client": ["tv"]}}),
         ]
+
 
 
 
