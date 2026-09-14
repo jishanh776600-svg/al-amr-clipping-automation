@@ -20,6 +20,7 @@ from .models import (
     ClipSpecificationRecord,
     ClipStatus,
     BGMAssetRecord,
+    BGMMixRecord,
     CaptionOptimizationRecord,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
@@ -1569,6 +1570,105 @@ def delete_bgm_asset(asset_id: str) -> bool:
     with connection() as conn:
         cursor = conn.execute("DELETE FROM bgm_assets WHERE id = ?", (asset_id,))
         return cursor.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# BGM Mixes (Step 21 Audio Mixing)
+# --------------------------------------------------------------------------
+
+
+def replace_bgm_mixes(
+    job_id: str, records: list[BGMMixRecord]
+) -> list[BGMMixRecord]:
+    with connection() as conn:
+        conn.execute(
+            "DELETE FROM bgm_mixes WHERE job_id = ?",
+            (job_id,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO bgm_mixes (
+                id, clip_id, job_id, bgm_asset_id, bgm_asset_name, bgm_applied,
+                clip_duration_s, bgm_duration_s, loop_trim_decision,
+                ducking_applied, ducking_parameters, normalization_applied,
+                integrated_lufs, true_peak_db, quality_score, quality_status,
+                warnings, rejection_reasons, processing_time_s,
+                mixed_audio_path, telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id,
+                    r.clip_id,
+                    r.job_id,
+                    r.bgm_asset_id,
+                    r.bgm_asset_name,
+                    1 if r.bgm_applied else 0,
+                    r.clip_duration_s,
+                    r.bgm_duration_s,
+                    r.loop_trim_decision,
+                    1 if r.ducking_applied else 0,
+                    json.dumps(r.ducking_parameters),
+                    1 if r.normalization_applied else 0,
+                    r.integrated_lufs,
+                    r.true_peak_db,
+                    r.quality_score,
+                    r.quality_status,
+                    json.dumps(r.warnings),
+                    json.dumps(r.rejection_reasons),
+                    r.processing_time_s,
+                    r.mixed_audio_path,
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                )
+                for r in records
+            ],
+        )
+    return records
+
+
+def list_bgm_mixes(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[BGMMixRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM bgm_mixes
+                WHERE job_id = ? AND quality_status IN ('MIX_PASS', 'MIX_WARN')
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM bgm_mixes
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM bgm_mixes
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [BGMMixRecord.from_row(r) for r in rows]
+
+
+def get_bgm_mix(clip_id: str) -> BGMMixRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM bgm_mixes WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return BGMMixRecord.from_row(row) if row else None
+
 
 
 

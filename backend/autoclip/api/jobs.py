@@ -53,6 +53,7 @@ from .schemas import (
     RetentionOptimizationOut,
     VisualCompositionOut,
     CaptionOptimizationOut,
+    BGMMixOut,
     WorkerCallbackIn,
 )
 
@@ -870,6 +871,23 @@ async def get_job_captions_endpoint(
         store.list_caption_optimizations, job_id, approved_only=approved_only, status=status
     )
     return [CaptionOptimizationOut.of(r) for r in records]
+
+
+@router.get("/{job_id}/audio-mix", response_model=list[BGMMixOut])
+async def get_job_audio_mix_endpoint(
+    job_id: str,
+    approved_only: bool = False,
+    status: str | None = None,
+) -> list[BGMMixOut]:
+    """Retrieve BGM mixing, sidechain ducking, and loudness normalization records for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(
+        store.list_bgm_mixes, job_id, approved_only=approved_only, status=status
+    )
+    return [BGMMixOut.of(r) for r in records]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

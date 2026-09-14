@@ -63,6 +63,7 @@ class ExportRequest:
     ratio: str = "9:16"
     burn_captions: bool = True
     ass_path: Path | None = None
+    audio_path: Path | None = None
 
     @property
     def duration_s(self) -> float:
@@ -307,27 +308,54 @@ def export_clip(
         f"{request.duration_s:.4f}",
         "-i",
         str(request.source),
-        "-filter_complex",
-        filtergraph,
-        "-map",
-        "[vout]",
-        "-map",
-        "0:a?",
-        "-af",
-        build_audio_filtergraph(settings),
-        *encoder_args(settings),
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        AUDIO_BITRATE,
-        "-ar",
-        str(AUDIO_SAMPLE_RATE),
-        "-movflags",
-        "+faststart",
-        str(request.destination),
     ]
+
+    if request.audio_path and Path(request.audio_path).is_file():
+        args.extend([
+            "-i",
+            str(request.audio_path),
+            "-filter_complex",
+            filtergraph,
+            "-map",
+            "[vout]",
+            "-map",
+            "1:a",
+            *encoder_args(settings),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            AUDIO_BITRATE,
+            "-ar",
+            str(AUDIO_SAMPLE_RATE),
+            "-movflags",
+            "+faststart",
+            str(request.destination),
+        ])
+    else:
+        args.extend([
+            "-filter_complex",
+            filtergraph,
+            "-map",
+            "[vout]",
+            "-map",
+            "0:a?",
+            "-af",
+            build_audio_filtergraph(settings),
+            *encoder_args(settings),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            AUDIO_BITRATE,
+            "-ar",
+            str(AUDIO_SAMPLE_RATE),
+            "-movflags",
+            "+faststart",
+            str(request.destination),
+        ])
 
     try:
         ffmpeg.run(

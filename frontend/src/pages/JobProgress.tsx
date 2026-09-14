@@ -15,6 +15,7 @@ const STAGES = [
   { key: 'reframe', label: 'Reframe', note: 'Tracking the speaker into vertical' },
   { key: 'retention', label: 'Retention & Pacing', note: 'Optimizing pacing, dead air & final quality' },
   { key: 'captions', label: 'Captions', note: 'Building subtitle timing' },
+  { key: 'audio_mix', label: 'Audio & BGM Mix', note: 'Ducking, looping & loudness normalization' },
   { key: 'export', label: 'Export', note: 'Rendering clips' },
 ] as const
 
@@ -617,6 +618,78 @@ export function JobProgress() {
               </div>
               <div className="text-[11px] text-blue-400/90 ml-auto">
                 Step 20: Persistent selection active · Mixing ready for Step 21
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {job.settings?.bgm_mix_telemetry && (
+        <div className="mt-6 rounded-xl border border-teal-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-teal-400">
+                Audio Mixing, Ducking & Normalization (Step 21)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.bgm_mix_telemetry.bgm_enabled
+                    ? 'bg-teal-500/20 text-teal-300 border-teal-500/30'
+                    : 'bg-ink-800 text-ink-400 border-ink-700'
+                }`}
+              >
+                {job.settings.bgm_mix_telemetry.bgm_enabled ? '✓ Mixed & Ducked' : 'Original Audio'}
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-ink-400">
+              Approved: {job.settings.bgm_mix_telemetry.approved_clips ?? 0}/{job.settings.bgm_mix_telemetry.total_clips ?? 0}
+            </span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Clips Mixed</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.bgm_mix_telemetry.total_clips ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Sidechain Ducking</div>
+              <div className="text-lg font-bold text-teal-300 mt-0.5">
+                {job.settings.bgm_mix_telemetry.bgm_enabled ? '16 dB' : 'None'}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Target Loudness</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">-14.0 LUFS</div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">True Peak Limit</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">-1.5 dBTP</div>
+            </div>
+          </div>
+
+          {job.settings.bgm_mix_telemetry.records && job.settings.bgm_mix_telemetry.records.length > 0 && (
+            <div className="mt-4 border-t border-ink-800 pt-3">
+              <div className="text-xs font-mono text-ink-400 mb-2 font-semibold">Clip Audio Mix Metrics:</div>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {job.settings.bgm_mix_telemetry.records.map((rec: any, idx: number) => (
+                  <div key={rec.id || idx} className="text-xs font-mono bg-ink-950/40 p-2 rounded flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${rec.quality_status === 'MIX_PASS' ? 'bg-emerald-400' : rec.quality_status === 'MIX_WARN' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                      <span className="text-ink-200">Clip #{idx + 1}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-ink-800 text-ink-400 uppercase">{rec.loop_trim_decision}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-ink-400 text-[11px]">
+                      <span>LUFS: <strong className="text-ink-200">{rec.integrated_lufs}</strong></span>
+                      <span>Peak: <strong className="text-ink-200">{rec.true_peak_db} dB</strong></span>
+                      <span>Score: <strong className="text-teal-400">{Math.round(rec.quality_score ?? 0)}</strong></span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${rec.quality_status === 'MIX_PASS' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : rec.quality_status === 'MIX_WARN' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-rose-950 text-rose-300 border border-rose-800'}`}>
+                        {rec.quality_status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

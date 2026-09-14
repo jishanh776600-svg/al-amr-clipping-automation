@@ -321,6 +321,32 @@ export interface BGMAsset {
   updated_at: string
 }
 
+export interface BGMMix {
+  id: string
+  clip_id: string
+  job_id: string
+  bgm_asset_id?: string | null
+  bgm_asset_name: string
+  bgm_applied: boolean
+  clip_duration_s: number
+  bgm_duration_s: number
+  loop_trim_decision: string
+  ducking_applied: boolean
+  ducking_parameters: Record<string, any>
+  normalization_applied: boolean
+  integrated_lufs: number
+  true_peak_db: number
+  quality_score: number
+  quality_status: 'MIX_PASS' | 'MIX_WARN' | 'MIX_REJECT'
+  warnings: string[]
+  rejection_reasons: string[]
+  processing_time_s: number
+  mixed_audio_path: string
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -916,6 +942,14 @@ export const api = {
     if (status) params.set('status', status)
     const qs = params.toString() ? `?${params.toString()}` : ''
     return request<CaptionOptimization[]>(`/api/jobs/${jobId}/captions${qs}`)
+  },
+
+  getJobAudioMixes: (jobId: string, approvedOnly: boolean = false, status?: string) => {
+    const params = new URLSearchParams()
+    if (approvedOnly) params.set('approved_only', 'true')
+    if (status) params.set('status', status)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<BGMMix[]>(`/api/jobs/${jobId}/audio-mix${qs}`)
   },
 
   listBGMAssets: (enabledOnly: boolean = false, genre?: string) => {

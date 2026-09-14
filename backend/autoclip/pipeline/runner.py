@@ -41,6 +41,7 @@ from ..db.models import (
     RetentionOptimizationRecord,
     VisualCompositionRecord,
     CaptionOptimizationRecord,
+    BGMMixRecord,
     new_id,
     utcnow,
 )
@@ -65,7 +66,8 @@ STAGE_WEIGHTS: dict[Stage, float] = {
     Stage.REFRAME: 0.15,
     Stage.RETENTION: 0.10,
     Stage.CAPTIONS: 0.02,
-    Stage.EXPORT: 0.23,
+    Stage.AUDIO_MIX: 0.03,
+    Stage.EXPORT: 0.20,
 }
 
 
@@ -123,6 +125,10 @@ class JobWorkspace:
     @property
     def captions_dir(self) -> Path:
         return self.root / "captions"
+
+    @property
+    def audio_mix_dir(self) -> Path:
+        return self.root / "audio_mix"
 
 
 class PipelineRunner:
@@ -234,7 +240,9 @@ class PipelineRunner:
                 return []
 
             ass_paths = self._stage_captions(final_clips, transcript, final_crop_paths)
-            self._stage_export(final_clips, transcript, final_crop_paths, ass_paths=ass_paths)
+            source_path = Path(self.source.path)
+            audio_paths = self._stage_audio_mix(final_clips, source_path)
+            self._stage_export(final_clips, transcript, final_crop_paths, ass_paths=ass_paths, audio_paths=audio_paths)
         except JobCancelled:
             store.update_job(self.job.id, status="cancelled", finished_at=utcnow(), progress=0.0)
             raise
@@ -895,12 +903,88 @@ class PipelineRunner:
         self._finish_stage(stage)
         return ass_paths
 
+    def _stage_audio_mix(
+        self,
+        clips: list[Clip],
+        source_path: Path,
+    ) -> dict[str, Path]:
+        stage = Stage.AUDIO_MIX
+        self._check_cancelled()
+
+        from .audio_mix import BGMMixingEngine
+
+        bgm_enabled = bool(self.job.settings.get("bgm_enabled", False))
+        bgm_asset_id = self.job.settings.get("bgm_asset_id")
+        bgm_asset = None
+
+        if bgm_enabled:
+            if bgm_asset_id:
+                bgm_asset = store.get_bgm_asset(bgm_asset_id)
+            if not bgm_asset or not Path(bgm_asset.file_path).is_file():
+                asset_name = self.job.settings.get("bgm_asset_name", bgm_asset_id or "Unknown")
+                raise RuntimeError(
+                    f"BGM audio dependency failed: asset '{asset_name}' ({bgm_asset_id}) was not found on disk."
+                )
+
+        engine = BGMMixingEngine()
+        audio_paths: dict[str, Path] = {}
+        mix_records: list[BGMMixRecord] = []
+        total = len(clips)
+
+        self.workspace.audio_mix_dir.mkdir(parents=True, exist_ok=True)
+
+        for index, clip in enumerate(clips):
+            self._check_cancelled()
+            clip_dur = clip.end_s - clip.start_s
+            clip_dir = self.workspace.audio_mix_dir / clip.id
+            clip_dir.mkdir(parents=True, exist_ok=True)
+            clip_audio_out = clip_dir / "mixed_audio.m4a"
+
+            self._emit(stage, index / max(1, total), f"Mixing background audio for clip {index + 1}/{total}")
+
+            record = engine.mix_clip(
+                clip=clip,
+                speech_input_path=source_path,
+                speech_start_offset_s=clip.start_s,
+                duration_s=clip_dur,
+                bgm_asset=bgm_asset,
+                output_path=clip_audio_out,
+            )
+            mix_records.append(record)
+            if clip_audio_out.is_file():
+                audio_paths[clip.id] = clip_audio_out
+
+            log.info(
+                "Clip %s audio mix complete: status=%s, lufs=%.1f, peak=%.1f dB, applied=%s",
+                clip.id, record.quality_status, record.integrated_lufs, record.true_peak_db, record.bgm_applied
+            )
+            self._emit(stage, (index + 1) / max(1, total), f"Audio ready for clip {index + 1}/{total}")
+
+        if mix_records:
+            store.replace_bgm_mixes(self.job.id, mix_records)
+
+        approved_count = sum(1 for r in mix_records if r.is_approved)
+        telemetry = {
+            "bgm_enabled": bgm_enabled,
+            "bgm_asset_id": bgm_asset_id,
+            "bgm_asset_name": bgm_asset.name if bgm_asset else "",
+            "total_clips": total,
+            "approved_clips": approved_count,
+            "records": [r.to_dict() for r in mix_records],
+        }
+        self.job.settings["bgm_mix_telemetry"] = telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
+
+        self._finish_stage(stage)
+        return audio_paths
+
     def _stage_export(
         self,
         clips: list[Clip],
         transcript: Transcript,
         crop_paths: dict[str, CropPath],
         ass_paths: dict[str, Path] | None = None,
+        audio_paths: dict[str, Path] | None = None,
     ) -> None:
         stage = Stage.EXPORT
         self._check_cancelled()
@@ -979,6 +1063,7 @@ class PipelineRunner:
                     destination.with_suffix(".srt").unlink(missing_ok=True)
 
             clip_ass = (ass_paths or {}).get(clip.id)
+            clip_audio = (audio_paths or {}).get(clip.id)
 
             request = export.ExportRequest(
                 source=source_path,
@@ -990,6 +1075,7 @@ class PipelineRunner:
                 style=style,
                 ratio=ratio,
                 ass_path=clip_ass,
+                audio_path=clip_audio,
             )
 
             try:

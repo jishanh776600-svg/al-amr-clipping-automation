@@ -780,42 +780,20 @@ class CaptionEngine:
                 campaign_spec=self.campaign_spec,
             )
 
-            # If rejected, trigger deterministic fallback to clean basic subtitles
             if gate_res.status == "CAPTION_REJECT":
-                fallback_used = True
-                fallback_reason = f"quality_gate_rejection: {'; '.join(gate_res.rejection_reasons)}"
-                log.warning("Clip %s caption rejected (%s), engaging safe basic fallback", clip.id, fallback_reason)
-                subs = build_ass(
-                    words=words,
-                    style=CLASSIC_PROFESSIONAL,
-                    width=width,
-                    height=height,
-                    time_offset_s=clip.start_s,
-                )
-                gate_res = self.quality_gate.evaluate(
-                    subs=subs,
-                    words=words,
-                    clip_duration_s=duration_s,
-                    style=CLASSIC_PROFESSIONAL,
-                    campaign_spec=self.campaign_spec,
-                )
+                log.warning("Clip %s caption rejected by quality gate: %s", clip.id, "; ".join(gate_res.rejection_reasons))
 
         except Exception as exc:
-            fallback_used = True
-            fallback_reason = f"build_ass_failed: {str(exc)}"
-            log.error("Caption generation error for clip %s: %s; falling back to clean basic style", clip.id, exc)
+            log.error("Caption generation error for clip %s: %s", clip.id, exc)
             subs = pysubs2.SSAFile()
             subs.info["PlayResX"] = str(width)
             subs.info["PlayResY"] = str(height)
-            subs.styles[STYLE_NAME] = _build_ass_style(CLASSIC_PROFESSIONAL, height=height, scale=height / REFERENCE_HEIGHT, width=width)
-            for g in group_words(words, max_words=6):
-                subs.events.append(_static_event(g, CLASSIC_PROFESSIONAL, clip.start_s))
             gate_res = CaptionGateResult(
-                status="CAPTION_WARN",
-                quality_score=60.0,
-                rejection_reasons=[],
-                warnings=[f"fallback_used: {str(exc)}"],
-                rule_checks=[{"rule": "basic_fallback", "passed": True}],
+                status="CAPTION_REJECT",
+                quality_score=0.0,
+                rejection_reasons=[f"build_ass_failed: {str(exc)}"],
+                warnings=[],
+                rule_checks=[{"rule": "build_ass", "passed": False}],
             )
 
         elapsed_s = round(time.time() - start_time, 3)

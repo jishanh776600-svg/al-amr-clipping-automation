@@ -834,3 +834,91 @@ class BGMAssetRecord:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class BGMMixRecord:
+    id: str
+    clip_id: str
+    job_id: str
+    bgm_asset_id: str | None = None
+    bgm_asset_name: str = ""
+    bgm_applied: bool = False
+    clip_duration_s: float = 0.0
+    bgm_duration_s: float = 0.0
+    loop_trim_decision: str = "none"  # "trim", "loop", "none"
+    ducking_applied: bool = False
+    ducking_parameters: dict[str, Any] = field(default_factory=dict)
+    normalization_applied: bool = False
+    integrated_lufs: float = 0.0
+    true_peak_db: float = 0.0
+    quality_score: float = 0.0
+    quality_status: str = "MIX_PASS"  # "MIX_PASS", "MIX_WARN", "MIX_REJECT"
+    warnings: list[str] = field(default_factory=list)
+    rejection_reasons: list[str] = field(default_factory=list)
+    processing_time_s: float = 0.0
+    mixed_audio_path: str = ""
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.quality_status in ("MIX_PASS", "MIX_WARN")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "clip_id": self.clip_id,
+            "job_id": self.job_id,
+            "bgm_asset_id": self.bgm_asset_id,
+            "bgm_asset_name": self.bgm_asset_name,
+            "bgm_applied": self.bgm_applied,
+            "clip_duration_s": self.clip_duration_s,
+            "bgm_duration_s": self.bgm_duration_s,
+            "loop_trim_decision": self.loop_trim_decision,
+            "ducking_applied": self.ducking_applied,
+            "ducking_parameters": self.ducking_parameters,
+            "normalization_applied": self.normalization_applied,
+            "integrated_lufs": self.integrated_lufs,
+            "true_peak_db": self.true_peak_db,
+            "quality_score": self.quality_score,
+            "quality_status": self.quality_status,
+            "warnings": self.warnings,
+            "rejection_reasons": self.rejection_reasons,
+            "processing_time_s": self.processing_time_s,
+            "mixed_audio_path": self.mixed_audio_path,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> BGMMixRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            job_id=row["job_id"],
+            bgm_asset_id=row["bgm_asset_id"] if "bgm_asset_id" in keys else None,
+            bgm_asset_name=row["bgm_asset_name"] if "bgm_asset_name" in keys else "",
+            bgm_applied=bool(row["bgm_applied"]) if "bgm_applied" in keys else False,
+            clip_duration_s=float(row["clip_duration_s"] or 0.0) if "clip_duration_s" in keys else 0.0,
+            bgm_duration_s=float(row["bgm_duration_s"] or 0.0) if "bgm_duration_s" in keys else 0.0,
+            loop_trim_decision=row["loop_trim_decision"] if "loop_trim_decision" in keys else "none",
+            ducking_applied=bool(row["ducking_applied"]) if "ducking_applied" in keys else False,
+            ducking_parameters=json.loads(row["ducking_parameters"] or "{}") if "ducking_parameters" in keys else {},
+            normalization_applied=bool(row["normalization_applied"]) if "normalization_applied" in keys else False,
+            integrated_lufs=float(row["integrated_lufs"] or 0.0) if "integrated_lufs" in keys else 0.0,
+            true_peak_db=float(row["true_peak_db"] or 0.0) if "true_peak_db" in keys else 0.0,
+            quality_score=float(row["quality_score"] or 0.0) if "quality_score" in keys else 0.0,
+            quality_status=row["quality_status"] if "quality_status" in keys else "MIX_PASS",
+            warnings=json.loads(row["warnings"] or "[]") if "warnings" in keys else [],
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            processing_time_s=float(row["processing_time_s"] or 0.0) if "processing_time_s" in keys else 0.0,
+            mixed_audio_path=row["mixed_audio_path"] if "mixed_audio_path" in keys else "",
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+

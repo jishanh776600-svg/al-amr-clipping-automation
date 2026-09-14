@@ -21,6 +21,7 @@ class Stage(StrEnum):
     REFRAME = "reframe"
     RETENTION = "retention"
     CAPTIONS = "captions"
+    AUDIO_MIX = "audio_mix"
     EXPORT = "export"
 
     @property
@@ -32,6 +33,7 @@ class Stage(StrEnum):
             Stage.REFRAME: "Reframing to vertical",
             Stage.RETENTION: "Optimizing retention & pacing",
             Stage.CAPTIONS: "Generating captions",
+            Stage.AUDIO_MIX: "Mixing background audio",
             Stage.EXPORT: "Exporting clips",
         }[self]
 

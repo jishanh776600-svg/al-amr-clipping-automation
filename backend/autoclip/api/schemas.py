@@ -941,4 +941,59 @@ class BGMAssetUpdateIn(BaseModel):
     enabled: bool | None = None
 
 
+class BGMMixOut(BaseModel):
+    id: str
+    clip_id: str
+    job_id: str
+    bgm_asset_id: str | None = None
+    bgm_asset_name: str = ""
+    bgm_applied: bool = False
+    clip_duration_s: float = 0.0
+    bgm_duration_s: float = 0.0
+    loop_trim_decision: str = "none"
+    ducking_applied: bool = False
+    ducking_parameters: dict[str, Any] = Field(default_factory=dict)
+    normalization_applied: bool = False
+    integrated_lufs: float = 0.0
+    true_peak_db: float = 0.0
+    quality_score: float = 0.0
+    quality_status: str = "MIX_PASS"
+    warnings: list[str] = Field(default_factory=list)
+    rejection_reasons: list[str] = Field(default_factory=list)
+    processing_time_s: float = 0.0
+    mixed_audio_path: str = ""
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.BGMMixRecord) -> BGMMixOut:
+        return cls(
+            id=record.id,
+            clip_id=record.clip_id,
+            job_id=record.job_id,
+            bgm_asset_id=record.bgm_asset_id,
+            bgm_asset_name=record.bgm_asset_name,
+            bgm_applied=record.bgm_applied,
+            clip_duration_s=record.clip_duration_s,
+            bgm_duration_s=record.bgm_duration_s,
+            loop_trim_decision=record.loop_trim_decision,
+            ducking_applied=record.ducking_applied,
+            ducking_parameters=record.ducking_parameters or {},
+            normalization_applied=record.normalization_applied,
+            integrated_lufs=record.integrated_lufs,
+            true_peak_db=record.true_peak_db,
+            quality_score=record.quality_score,
+            quality_status=record.quality_status,
+            warnings=record.warnings or [],
+            rejection_reasons=record.rejection_reasons or [],
+            processing_time_s=record.processing_time_s,
+            mixed_audio_path=record.mixed_audio_path,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+
 

@@ -491,6 +491,40 @@ def _migration_v15(conn: sqlite3.Connection) -> None:
     conn.executescript(_V15)
 
 
+_V16 = """
+CREATE TABLE bgm_mixes (
+    id                     TEXT PRIMARY KEY,
+    clip_id                TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    job_id                 TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    bgm_asset_id           TEXT,
+    bgm_asset_name         TEXT NOT NULL DEFAULT '',
+    bgm_applied            INTEGER NOT NULL DEFAULT 0,
+    clip_duration_s        REAL NOT NULL DEFAULT 0.0,
+    bgm_duration_s         REAL NOT NULL DEFAULT 0.0,
+    loop_trim_decision     TEXT NOT NULL DEFAULT 'none',
+    ducking_applied        INTEGER NOT NULL DEFAULT 0,
+    ducking_parameters     TEXT NOT NULL DEFAULT '{}',
+    normalization_applied  INTEGER NOT NULL DEFAULT 0,
+    integrated_lufs        REAL NOT NULL DEFAULT 0.0,
+    true_peak_db           REAL NOT NULL DEFAULT 0.0,
+    quality_score          REAL NOT NULL DEFAULT 0.0,
+    quality_status         TEXT NOT NULL DEFAULT 'MIX_PASS' CHECK (quality_status IN ('MIX_PASS', 'MIX_WARN', 'MIX_REJECT')),
+    warnings               TEXT NOT NULL DEFAULT '[]',
+    rejection_reasons      TEXT NOT NULL DEFAULT '[]',
+    processing_time_s      REAL NOT NULL DEFAULT 0.0,
+    mixed_audio_path       TEXT NOT NULL DEFAULT '',
+    telemetry              TEXT NOT NULL DEFAULT '{}',
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL
+);
+CREATE INDEX idx_bgm_mixes_job ON bgm_mixes(job_id, quality_status);
+"""
+
+
+def _migration_v16(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V16)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -509,6 +543,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v13,
     _migration_v14,
     _migration_v15,
+    _migration_v16,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
