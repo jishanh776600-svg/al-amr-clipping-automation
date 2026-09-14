@@ -17,6 +17,12 @@ from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from .. import paths
+from ..campaign import (
+    CampaignConflict,
+    CampaignNormalizer,
+    CampaignSpecification,
+    IngestedDocument,
+)
 from ..campaign.drive_retriever import retrieve_drive_guideline
 from ..campaign.extractor import (
     GuidelineExtractionError,
@@ -26,7 +32,7 @@ from ..campaign.extractor import (
 )
 from ..config import load as load_settings
 from ..db import models, store
-from ..db.models import CampaignGuideline, Job, Source, new_id
+from ..db.models import CampaignGuideline, CampaignSpecificationRecord, Job, Source, new_id
 from ..jobs import orchestrator
 from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
 from ..jobs.events import Event, acquisition_event, broker
@@ -35,6 +41,7 @@ from ..pipeline import ingest
 from .auth import is_valid_token
 from .schemas import (
     CampaignGuidelineOut,
+    CampaignSpecificationOut,
     DriveGuidelineIn,
     JobCreateIn,
     JobManifestOut,
@@ -180,22 +187,41 @@ async def upload_drive_guideline_endpoint(payload: DriveGuidelineIn) -> Campaign
 async def create_autonomous_job(
     request: Request,
 ) -> JobOut:
-    """One-click autonomous job creation: accepts Source (URL or Video File) + Campaign Guideline (PDF, DOCX, or Drive)."""
+    """One-click autonomous job creation: accepts Source (Video File or URL) + Campaign Materials (PDF, DOCX, Drive, URL)."""
     content_type = request.headers.get("content-type", "")
 
     url: str | None = None
+    campaign_url: str | None = None
     video_file = None
-    guideline_file = None
-    guideline_id: str | None = None
-    drive_guideline_url: str | None = None
+    guideline_files: list[Any] = []
+    guideline_ids: list[str] = []
+    drive_guideline_urls: list[str] = []
     destinations: Any = None
     overrides: Any = None
 
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("video_url") or body.get("url")
-        guideline_id = body.get("guideline_id")
-        drive_guideline_url = body.get("drive_guideline_url")
+        campaign_url = body.get("campaign_url")
+
+        if body.get("guideline_id"):
+            guideline_ids.append(str(body.get("guideline_id")).strip())
+        if body.get("guideline_ids"):
+            gids = body.get("guideline_ids")
+            if isinstance(gids, list):
+                guideline_ids.extend([str(x).strip() for x in gids if str(x).strip()])
+            elif isinstance(gids, str):
+                guideline_ids.extend([x.strip() for x in gids.split(",") if x.strip()])
+
+        if body.get("drive_guideline_url"):
+            drive_guideline_urls.append(str(body.get("drive_guideline_url")).strip())
+        if body.get("drive_guideline_urls"):
+            durls = body.get("drive_guideline_urls")
+            if isinstance(durls, list):
+                drive_guideline_urls.extend([str(x).strip() for x in durls if str(x).strip()])
+            elif isinstance(durls, str):
+                drive_guideline_urls.extend([x.strip() for x in durls.split(",") if x.strip()])
+
         destinations = body.get("destinations")
         overrides = body.get("overrides") or body.get("settings")
     else:
@@ -204,42 +230,42 @@ async def create_autonomous_job(
         if isinstance(raw_url, str):
             url = raw_url
         video_file = form.get("video_file")
-        guideline_file = form.get("guideline_file")
-        raw_gid = form.get("guideline_id")
-        if isinstance(raw_gid, str):
-            guideline_id = raw_gid
-        raw_dg = form.get("drive_guideline_url")
-        if isinstance(raw_dg, str):
-            drive_guideline_url = raw_dg
+        raw_campaign_url = form.get("campaign_url")
+        if isinstance(raw_campaign_url, str):
+            campaign_url = raw_campaign_url.strip() or None
+
+        # Guidelines: support multi-file
+        g_files = form.getlist("guideline_files")
+        if not g_files and form.get("guideline_file"):
+            g_files = [form.get("guideline_file")]
+        guideline_files = [f for f in g_files if hasattr(f, "filename") and f.filename]
+
+        # Guideline IDs
+        g_ids = form.getlist("guideline_ids")
+        if not g_ids and form.get("guideline_id"):
+            g_ids = [form.get("guideline_id")]
+        for item in g_ids:
+            if isinstance(item, str):
+                for sub in item.split(","):
+                    if sub.strip():
+                        guideline_ids.append(sub.strip())
+
+        # Drive URLs
+        d_urls = form.getlist("drive_guideline_urls")
+        if not d_urls and form.get("drive_guideline_url"):
+            d_urls = [form.get("drive_guideline_url")]
+        for item in d_urls:
+            if isinstance(item, str):
+                for sub in item.split(","):
+                    if sub.strip():
+                        drive_guideline_urls.append(sub.strip())
+
         destinations = form.get("destinations")
         overrides = form.get("overrides")
 
     # 1. Ingest or resolve Source
     source = None
-    if url and str(url).strip():
-        clean_url = str(url).strip()
-        from ..pipeline.source_acquisition.security import validate_remote_url
-        try:
-            validate_remote_url(clean_url)
-        except Exception as exc:
-            hint = getattr(exc, "hint", "Please provide a valid public YouTube or remote video link.")
-            msg = getattr(exc, "message", str(exc))
-            raise HTTPException(
-                status_code=422,
-                detail={"message": msg, "hint": hint},
-            ) from exc
-
-        # Immediate non-blocking source creation: media will be acquired asynchronously
-        # by the worker pipeline while streaming real-time events to the operator UI
-        source = Source(
-            id=new_id(),
-            type="youtube",
-            path="",
-            title=clean_url,
-            url=clean_url,
-        )
-        await asyncio.to_thread(store.create_source, source)
-    elif video_file and hasattr(video_file, "filename") and video_file.filename:
+    if video_file and hasattr(video_file, "filename") and video_file.filename:
         suffix = Path(video_file.filename).suffix.lower()
         if suffix not in ingest.ACCEPTED_SUFFIXES:
             raise HTTPException(
@@ -255,103 +281,163 @@ async def create_autonomous_job(
         except Exception as exc:
             tmp_path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=f"Failed to process uploaded video: {exc}") from exc
+    elif url and str(url).strip():
+        clean_url = str(url).strip()
+        from ..pipeline.source_acquisition.security import validate_remote_url
+        try:
+            validate_remote_url(clean_url)
+        except Exception as exc:
+            hint = getattr(exc, "hint", "Please provide a valid public YouTube or remote video link.")
+            msg = getattr(exc, "message", str(exc))
+            raise HTTPException(
+                status_code=422,
+                detail={"message": msg, "hint": hint},
+            ) from exc
+
+        source = Source(
+            id=new_id(),
+            type="youtube",
+            path="",
+            title=clean_url,
+            url=clean_url,
+        )
+        await asyncio.to_thread(store.create_source, source)
     else:
         raise HTTPException(
             status_code=400,
-            detail="A source video must be provided — either paste a URL or upload a video file.",
+            detail="A source video must be provided — either upload a video file or provide a video URL.",
         )
 
-    # 2. Ingest or resolve Campaign Guideline
-    guideline = None
-    if guideline_file and hasattr(guideline_file, "filename") and guideline_file.filename:
-        content = await guideline_file.read()
-        filename = guideline_file.filename
+    # 2. Ingest & Normalize Campaign Materials (Multi-document & Campaign URL)
+    normalizer = CampaignNormalizer()
+    ingested_docs: list[IngestedDocument] = []
+    saved_guidelines: list[CampaignGuideline] = []
+
+    storage_dir = paths.guidelines_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    # 2a. Process uploaded guideline files
+    for gfile in guideline_files:
         try:
-            raw_text, ext = extract_guideline_text(filename, content)
-        except GuidelineExtractionError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": str(exc), "hint": exc.hint},
-            ) from exc
+            content = await gfile.read()
+            filename = gfile.filename or "guideline.pdf"
+            mime_type = getattr(gfile, "content_type", None) or "application/octet-stream"
 
-        brief = parse_guidelines_into_brief(raw_text, filename)
-        gid = new_id()
-        storage_dir = paths.guidelines_dir()
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        storage_file = storage_dir / f"{gid}_{filename}"
-        storage_file.write_bytes(content)
+            docs = normalizer.ingest_files([(filename, content)])
+            ingested_docs.extend(docs)
 
-        sha256 = compute_document_hash(content)
-        word_count = len(re.findall(r"\b\w+\b", raw_text))
-        char_count = len(raw_text)
-        source_type = "upload_pdf" if ext == ".pdf" else "upload_docx"
+            gid = new_id()
+            storage_file = storage_dir / f"{gid}_{filename}"
+            storage_file.write_bytes(content)
 
-        guideline = CampaignGuideline(
-            id=gid,
-            job_id=None,
-            filename=filename,
-            mime_type=getattr(guideline_file, "content_type", None) or "application/octet-stream",
-            size_bytes=len(content),
-            storage_path=str(storage_file),
-            extracted_text=raw_text,
-            parsed_brief=brief.model_dump(mode="json"),
-            status="extracted",
-            error=None,
-            source_type=source_type,
-            drive_file_id=None,
-            sha256=sha256,
-            word_count=word_count,
-            char_count=char_count,
-        )
-        await asyncio.to_thread(store.create_guideline, guideline)
-    elif drive_guideline_url and str(drive_guideline_url).strip():
-        try:
-            filename, content, mime_type, drive_file_id = await asyncio.to_thread(
-                retrieve_drive_guideline, str(drive_guideline_url).strip()
+            sha256 = compute_document_hash(content)
+            raw_text = docs[0].raw_text if docs and docs[0].status == "extracted" else ""
+            err = docs[0].error if docs and docs[0].status == "failed" else None
+            ext = Path(filename).suffix.lower()
+            source_type = "upload_pdf" if ext == ".pdf" else "upload_docx"
+
+            brief_dict = {}
+            if raw_text:
+                try:
+                    b = parse_guidelines_into_brief(raw_text, filename)
+                    brief_dict = b.model_dump(mode="json")
+                except Exception:
+                    pass
+
+            g_rec = CampaignGuideline(
+                id=gid,
+                job_id=None,
+                filename=filename,
+                mime_type=mime_type,
+                size_bytes=len(content),
+                storage_path=str(storage_file),
+                extracted_text=raw_text,
+                parsed_brief=brief_dict,
+                status=docs[0].status if docs else "failed",
+                error=err,
+                source_type=source_type,
+                drive_file_id=None,
+                sha256=sha256,
+                word_count=len(re.findall(r"\b\w+\b", raw_text)),
+                char_count=len(raw_text),
             )
-            raw_text, ext = extract_guideline_text(filename, content)
-        except GuidelineExtractionError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": str(exc), "hint": exc.hint},
-            ) from exc
+            await asyncio.to_thread(store.create_guideline, g_rec)
+            saved_guidelines.append(g_rec)
         except Exception as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": f"Failed to retrieve Google Drive document: {exc}", "hint": "Check document link."},
-            ) from exc
+            log.warning("Failed processing guideline file %s: %s", getattr(gfile, "filename", "unknown"), exc)
 
-        brief = parse_guidelines_into_brief(raw_text, filename)
-        gid = new_id()
-        storage_dir = paths.guidelines_dir()
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        storage_file = storage_dir / f"{gid}_{filename}"
-        storage_file.write_bytes(content)
+    # 2b. Process pre-existing guideline IDs
+    for gid in guideline_ids:
+        existing = await asyncio.to_thread(store.get_guideline, gid)
+        if existing:
+            saved_guidelines.append(existing)
+            doc = IngestedDocument(
+                doc_id=existing.id,
+                source_type=getattr(existing, "source_type", "pdf"),
+                filename=existing.filename,
+                size_bytes=existing.size_bytes,
+                sha256=getattr(existing, "sha256", None),
+                word_count=getattr(existing, "word_count", 0),
+                char_count=getattr(existing, "char_count", 0),
+                raw_text=existing.extracted_text,
+                status=existing.status,
+                error=existing.error,
+                extracted_at=existing.created_at,
+            )
+            ingested_docs.append(doc)
 
-        sha256 = compute_document_hash(content)
-        word_count = len(re.findall(r"\b\w+\b", raw_text))
-        char_count = len(raw_text)
+    # 2c. Process Google Drive URLs
+    if drive_guideline_urls:
+        for d_url in drive_guideline_urls:
+            try:
+                fname, fcontent, fmime, fdrive_id = await asyncio.to_thread(retrieve_drive_guideline, d_url)
+                docs = normalizer.ingest_files([(fname, fcontent)], source_type="drive")
+                ingested_docs.extend(docs)
 
-        guideline = CampaignGuideline(
-            id=gid,
-            job_id=None,
-            filename=filename,
-            mime_type=mime_type,
-            size_bytes=len(content),
-            storage_path=str(storage_file),
-            extracted_text=raw_text,
-            parsed_brief=brief.model_dump(mode="json"),
-            status="extracted",
-            error=None,
-            source_type="drive",
-            drive_file_id=drive_file_id,
-            sha256=sha256,
-            word_count=word_count,
-            char_count=char_count,
-        )
-        await asyncio.to_thread(store.create_guideline, guideline)
-    elif guideline_id:
-        guideline = await asyncio.to_thread(store.get_guideline, str(guideline_id).strip())
+                gid = new_id()
+                storage_file = storage_dir / f"{gid}_{fname}"
+                storage_file.write_bytes(fcontent)
+                sha256 = compute_document_hash(fcontent)
+                raw_text = docs[0].raw_text if docs and docs[0].status == "extracted" else ""
+                err = docs[0].error if docs and docs[0].status == "failed" else None
+
+                brief_dict = {}
+                if raw_text:
+                    try:
+                        b = parse_guidelines_into_brief(raw_text, fname)
+                        brief_dict = b.model_dump(mode="json")
+                    except Exception:
+                        pass
+
+                g_rec = CampaignGuideline(
+                    id=gid,
+                    job_id=None,
+                    filename=fname,
+                    mime_type=fmime,
+                    size_bytes=len(fcontent),
+                    storage_path=str(storage_file),
+                    extracted_text=raw_text,
+                    parsed_brief=brief_dict,
+                    status=docs[0].status if docs else "failed",
+                    error=err,
+                    source_type="drive",
+                    drive_file_id=fdrive_id,
+                    sha256=sha256,
+                    word_count=len(re.findall(r"\b\w+\b", raw_text)),
+                    char_count=len(raw_text),
+                )
+                await asyncio.to_thread(store.create_guideline, g_rec)
+                saved_guidelines.append(g_rec)
+            except Exception as exc:
+                log.warning("Direct Drive retrieval failed for %s: %s, falling back to normalizer", d_url, exc)
+                drive_docs = await asyncio.to_thread(normalizer.ingest_drive_urls, [d_url])
+                ingested_docs.extend(drive_docs)
+
+    # 2d. Process Campaign URL
+    if campaign_url and campaign_url.strip():
+        url_doc, _ = await asyncio.to_thread(normalizer.ingest_campaign_url, campaign_url.strip())
+        if url_doc:
+            ingested_docs.append(url_doc)
 
     # 3. Layer settings
     base_settings = load_settings()
@@ -382,23 +468,67 @@ async def create_autonomous_job(
         if dest_list:
             job_settings["destinations"] = dest_list
 
-    if guideline and guideline.parsed_brief:
-        job_settings["campaign"] = guideline.parsed_brief
+    # 2e. Generate Normalized CampaignSpecification and bridge to CampaignBrief
+    campaign_spec_rec: CampaignSpecificationRecord | None = None
+    campaign_spec: CampaignSpecification | None = None
+    primary_guideline: CampaignGuideline | None = saved_guidelines[0] if saved_guidelines else None
+
+    if primary_guideline:
         job_settings["guideline"] = {
-            "id": guideline.id,
-            "filename": guideline.filename,
-            "mime_type": guideline.mime_type,
-            "size_bytes": guideline.size_bytes,
-            "source_type": getattr(guideline, "source_type", "upload_pdf"),
-            "drive_file_id": getattr(guideline, "drive_file_id", None),
-            "sha256": getattr(guideline, "sha256", None),
-            "word_count": getattr(guideline, "word_count", 0),
-            "char_count": getattr(guideline, "char_count", 0),
-            "status": guideline.status,
-            "error": guideline.error,
-            "extracted_text_chars": len(guideline.extracted_text),
-            "parsed_brief": guideline.parsed_brief,
-            "created_at": guideline.created_at,
+            "id": primary_guideline.id,
+            "filename": primary_guideline.filename,
+            "mime_type": primary_guideline.mime_type,
+            "size_bytes": primary_guideline.size_bytes,
+            "source_type": getattr(primary_guideline, "source_type", "upload_pdf"),
+            "drive_file_id": getattr(primary_guideline, "drive_file_id", None),
+            "sha256": getattr(primary_guideline, "sha256", None),
+            "word_count": getattr(primary_guideline, "word_count", 0),
+            "char_count": getattr(primary_guideline, "char_count", 0),
+            "status": primary_guideline.status,
+            "error": primary_guideline.error,
+            "extracted_text_chars": len(primary_guideline.extracted_text),
+            "parsed_brief": primary_guideline.parsed_brief,
+            "created_at": primary_guideline.created_at,
+        }
+
+    if ingested_docs:
+        campaign_spec = await asyncio.to_thread(normalizer.normalize, ingested_docs, campaign_url)
+        spec_dict = campaign_spec.to_dict()
+
+        # Bridge to CampaignBrief for downstream pipeline backward compatibility
+        brief = campaign_spec.to_campaign_brief()
+        job_settings["campaign"] = brief.model_dump(mode="json")
+        job_settings["campaign_spec"] = spec_dict
+
+        spec_id = campaign_spec.campaign_id or new_id()
+        campaign_spec_rec = CampaignSpecificationRecord(
+            id=spec_id,
+            job_id=None,
+            title=campaign_spec.title or (primary_guideline.filename if primary_guideline else "Campaign Specification"),
+            spec=spec_dict,
+            has_conflicts=campaign_spec.has_critical_conflicts or bool(campaign_spec.conflicts),
+            conflict_count=len(campaign_spec.conflicts),
+            document_count=len(campaign_spec.documents),
+        )
+        await asyncio.to_thread(store.create_campaign_spec, campaign_spec_rec)
+
+    elif primary_guideline and primary_guideline.parsed_brief:
+        job_settings["campaign"] = primary_guideline.parsed_brief
+        job_settings["guideline"] = {
+            "id": primary_guideline.id,
+            "filename": primary_guideline.filename,
+            "mime_type": primary_guideline.mime_type,
+            "size_bytes": primary_guideline.size_bytes,
+            "source_type": getattr(primary_guideline, "source_type", "upload_pdf"),
+            "drive_file_id": getattr(primary_guideline, "drive_file_id", None),
+            "sha256": getattr(primary_guideline, "sha256", None),
+            "word_count": getattr(primary_guideline, "word_count", 0),
+            "char_count": getattr(primary_guideline, "char_count", 0),
+            "status": primary_guideline.status,
+            "error": primary_guideline.error,
+            "extracted_text_chars": len(primary_guideline.extracted_text),
+            "parsed_brief": primary_guideline.parsed_brief,
+            "created_at": primary_guideline.created_at,
         }
 
     # 4. Enforce Cloud YouTube Acquisition Safety
@@ -431,18 +561,23 @@ async def create_autonomous_job(
         settings=job_settings,
         dispatch_mode=dispatch_mode,
         max_attempts=int(os.environ.get("AUTOCLIP_MAX_ATTEMPTS", "3")),
+        campaign_spec_id=campaign_spec_rec.id if campaign_spec_rec else None,
     )
     await asyncio.to_thread(store.create_job, job)
 
-    if guideline:
-        await asyncio.to_thread(store.update_guideline, guideline.id, job_id=job.id)
+    if campaign_spec_rec:
+        await asyncio.to_thread(store.update_campaign_spec, campaign_spec_rec.id, job_id=job.id)
+
+    for g in saved_guidelines:
+        await asyncio.to_thread(store.update_guideline, g.id, job_id=job.id)
 
     if dispatch_mode == "github":
         asyncio.create_task(dispatch_job_to_github(job, source))
     else:
         queue.notify()
 
-    return JobOut.of(job, source, guideline)
+    spec_data = campaign_spec_rec.spec if campaign_spec_rec else (campaign_spec.to_dict() if campaign_spec else None)
+    return JobOut.of(job, source, primary_guideline, campaign_spec=spec_data)
 
 
 @router.post("", response_model=JobOut, status_code=201)
@@ -563,6 +698,33 @@ async def get_job_guideline_file(job_id: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Guideline file not found on server disk.")
     return FileResponse(path, filename=guideline.filename, media_type=guideline.mime_type)
+
+
+@router.get("/{job_id}/campaign-specification", response_model=CampaignSpecificationOut)
+async def get_job_campaign_specification(job_id: str) -> CampaignSpecificationOut:
+    """Retrieve the multi-document normalized campaign specification for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    spec_record = None
+    if getattr(job, "campaign_spec_id", None):
+        spec_record = await asyncio.to_thread(store.get_campaign_spec, job.campaign_spec_id)
+    if spec_record is None:
+        spec_record = await asyncio.to_thread(store.get_campaign_spec_for_job, job_id)
+
+    if spec_record is not None:
+        return CampaignSpecificationOut.model_validate(spec_record.spec)
+
+    if "campaign_spec" in job.settings and isinstance(job.settings["campaign_spec"], dict):
+        return CampaignSpecificationOut.model_validate(job.settings["campaign_spec"])
+
+    guideline = await asyncio.to_thread(store.get_guideline_for_job, job_id)
+    if guideline and guideline.parsed_brief:
+        spec = CampaignSpecification.from_campaign_brief(guideline.parsed_brief, filename=guideline.filename)
+        return CampaignSpecificationOut.model_validate(spec.to_dict())
+
+    raise HTTPException(status_code=404, detail="No campaign specification found for this job.")
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

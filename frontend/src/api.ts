@@ -61,6 +61,103 @@ export interface Job {
   source: Source | null
   settings?: Record<string, any>
   guideline?: CampaignGuideline | null
+  campaign_spec_id?: string | null
+  campaign_spec?: CampaignSpecification | null
+}
+
+export interface RequirementItem<T = any> {
+  value: T
+  confidence: 'explicit' | 'inferred'
+  source_doc_id: string
+  source_filename: string
+  source_type: string
+  snippet: string
+  weight: number
+}
+
+export interface IngestedDocument {
+  doc_id: string
+  source_type: string
+  filename: string
+  source_url?: string | null
+  sha256?: string | null
+  size_bytes: number
+  word_count: number
+  char_count: number
+  status: 'extracted' | 'failed'
+  error?: string | null
+  warning?: string | null
+  extracted_at: string
+}
+
+export interface CampaignConflict {
+  id: string
+  rule_category: string
+  severity: 'critical' | 'warning' | 'info'
+  document_a: Record<string, any>
+  document_b: Record<string, any>
+  description: string
+  resolution_status: 'unresolved' | 'superseded' | 'manual_override'
+  resolution_notes?: string | null
+}
+
+export interface CampaignSpecification {
+  campaign_id: string
+  title: string
+  description?: string
+  objective?: string
+  created_at: string
+  campaign_url?: string | null
+  documents: IngestedDocument[]
+  desired_topics: RequirementItem<string>[]
+  preferred_speakers: RequirementItem<string>[]
+  required_themes: RequirementItem<string>[]
+  banned_topics: RequirementItem<string>[]
+  banned_words: RequirementItem<string>[]
+  duration_min_s: RequirementItem<number>
+  duration_max_s: RequirementItem<number>
+  duration_preferred_s: RequirementItem<number | null>
+  output_count: RequirementItem<number>
+  aspect_ratio: RequirementItem<string>
+  hook_required: RequirementItem<boolean>
+  hook_window_s: RequirementItem<number>
+  hook_min_score: RequirementItem<number>
+  hook_types: RequirementItem<string>[]
+  hook_instructions: RequirementItem<string>[]
+  cta_required: RequirementItem<boolean>
+  cta_types: RequirementItem<string>[]
+  cta_window_s: RequirementItem<number>
+  cta_instructions: RequirementItem<string>[]
+  tone: RequirementItem<string>
+  pacing: RequirementItem<string>
+  caption_preset: RequirementItem<string>
+  caption_instructions: RequirementItem<string>[]
+  visual_instructions: RequirementItem<string>[]
+  branding_rules: RequirementItem<string>[]
+  title_patterns: RequirementItem<string>[]
+  description_guidelines: RequirementItem<string>[]
+  hashtags: RequirementItem<string>[]
+  keywords: RequirementItem<string>[]
+  required_mentions: RequirementItem<string>[]
+  platforms: string[]
+  platform_rules: Record<string, RequirementItem<string>[]>
+  max_silence_s: RequirementItem<number>
+  min_speech_density: RequirementItem<number>
+  conflicts: CampaignConflict[]
+  warnings: string[]
+  has_critical_conflicts: boolean
+}
+
+export interface CampaignUrlExtractOut {
+  url: string
+  title: string
+  description: string
+  headings: string[]
+  raw_text: string
+  status: string
+  error?: string | null
+  word_count: number
+  char_count: number
 }
 
 export interface CampaignGuideline {
@@ -509,6 +606,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ drive_url: driveUrl }),
     }),
+
+  extractCampaignUrl: (url: string) =>
+    request<CampaignUrlExtractOut>('/api/campaigns/intelligence/url', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+
+  extractCampaignIntelligence: (payload: FormData | object) => {
+    if (payload instanceof FormData) {
+      return request<CampaignSpecification>('/api/campaigns/intelligence/extract', {
+        method: 'POST',
+        body: payload,
+      })
+    }
+    return request<CampaignSpecification>('/api/campaigns/intelligence/extract', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  getJobCampaignSpecification: (jobId: string) =>
+    request<CampaignSpecification>(`/api/jobs/${jobId}/campaign-specification`),
 
   createAutonomousJob: (form: FormData) =>
     request<Job>('/api/jobs/create-autonomous', {

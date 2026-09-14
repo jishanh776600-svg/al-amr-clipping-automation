@@ -278,6 +278,27 @@ def _migration_v8(conn: sqlite3.Connection) -> None:
     conn.executescript(_V8)
 
 
+_V9 = """
+CREATE TABLE campaign_specifications (
+    id              TEXT PRIMARY KEY,
+    job_id          TEXT REFERENCES jobs(id) ON DELETE CASCADE,
+    title           TEXT NOT NULL DEFAULT '',
+    spec_json       TEXT NOT NULL DEFAULT '{}',
+    has_conflicts   INTEGER NOT NULL DEFAULT 0,
+    conflict_count  INTEGER NOT NULL DEFAULT 0,
+    document_count  INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+CREATE INDEX idx_campaign_spec_job ON campaign_specifications(job_id);
+ALTER TABLE jobs ADD COLUMN campaign_spec_id TEXT;
+"""
+
+
+def _migration_v9(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V9)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -289,6 +310,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v6,
     _migration_v7,
     _migration_v8,
+    _migration_v9,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

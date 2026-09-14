@@ -13,6 +13,7 @@ from typing import Any
 from . import connection
 from .models import (
     CampaignGuideline,
+    CampaignSpecificationRecord,
     Clip,
     ClipEdit,
     ClipStatus,
@@ -151,9 +152,9 @@ def create_job(job: Job) -> Job:
                 attempt, max_attempts, last_heartbeat_at, stale_at,
                 github_workflow, github_job_id, github_run_url, github_run_status, github_conclusion,
                 dispatched_at, started_at, completed_at, failed_at, cancelled_at, cancel_requested_at,
-                finished_at, created_at, updated_at
+                campaign_spec_id, finished_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -181,6 +182,7 @@ def create_job(job: Job) -> Job:
                 job.failed_at,
                 job.cancelled_at,
                 job.cancel_requested_at,
+                getattr(job, "campaign_spec_id", None),
                 job.finished_at,
                 job.created_at,
                 job.updated_at,
@@ -911,5 +913,83 @@ def update_guideline(guideline_id: str, **updates: Any) -> CampaignGuideline | N
     with connection() as conn:
         conn.execute(sql, params)
     return get_guideline(guideline_id)
+
+
+def list_guidelines_for_job(job_id: str) -> list[CampaignGuideline]:
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM campaign_guidelines WHERE job_id = ? ORDER BY created_at ASC",
+            (job_id,),
+        ).fetchall()
+    return [CampaignGuideline.from_row(row) for row in rows]
+
+
+# --------------------------------------------------------------------------
+# Campaign Specifications (Multi-Document Normalized Intelligence)
+# --------------------------------------------------------------------------
+
+
+def create_campaign_spec(record: CampaignSpecificationRecord) -> CampaignSpecificationRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO campaign_specifications (
+                id, job_id, title, spec_json, has_conflicts, conflict_count,
+                document_count, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.job_id,
+                record.title,
+                json.dumps(record.spec),
+                1 if record.has_conflicts else 0,
+                record.conflict_count,
+                record.document_count,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return record
+
+
+def get_campaign_spec(spec_id: str) -> CampaignSpecificationRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM campaign_specifications WHERE id = ?", (spec_id,)
+        ).fetchone()
+    return CampaignSpecificationRecord.from_row(row) if row else None
+
+
+def get_campaign_spec_for_job(job_id: str) -> CampaignSpecificationRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM campaign_specifications WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    return CampaignSpecificationRecord.from_row(row) if row else None
+
+
+def update_campaign_spec(spec_id: str, **updates: Any) -> CampaignSpecificationRecord | None:
+    if not updates:
+        return get_campaign_spec(spec_id)
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    for key, value in updates.items():
+        if key == "spec" and isinstance(value, dict):
+            key = "spec_json"
+            value = json.dumps(value)
+        elif key == "has_conflicts":
+            value = 1 if value else 0
+        clauses.append(f"{key} = ?")
+        params.append(value)
+    params.append(spec_id)
+
+    sql = f"UPDATE campaign_specifications SET {', '.join(clauses)} WHERE id = ?"
+    with connection() as conn:
+        conn.execute(sql, params)
+    return get_campaign_spec(spec_id)
 
 

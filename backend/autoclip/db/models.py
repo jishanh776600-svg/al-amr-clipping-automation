@@ -104,6 +104,7 @@ class Job:
     failed_at: str | None = None
     cancelled_at: str | None = None
     cancel_requested_at: str | None = None
+    campaign_spec_id: str | None = None
     finished_at: str | None = None
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
@@ -137,6 +138,7 @@ class Job:
             failed_at=row["failed_at"] if "failed_at" in keys else None,
             cancelled_at=row["cancelled_at"] if "cancelled_at" in keys else None,
             cancel_requested_at=row["cancel_requested_at"] if "cancel_requested_at" in keys else None,
+            campaign_spec_id=row["campaign_spec_id"] if "campaign_spec_id" in keys else None,
             finished_at=row["finished_at"] if "finished_at" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -382,5 +384,33 @@ class CampaignGuideline:
             sha256=row["sha256"] if "sha256" in keys else None,
             word_count=row["word_count"] if "word_count" in keys else 0,
             char_count=row["char_count"] if "char_count" in keys else 0,
+        )
+
+
+@dataclass
+class CampaignSpecificationRecord:
+    id: str
+    job_id: str | None
+    title: str
+    spec: dict[str, Any]
+    has_conflicts: bool = False
+    conflict_count: int = 0
+    document_count: int = 0
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> CampaignSpecificationRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            title=row["title"],
+            spec=json.loads(row["spec_json"] or "{}"),
+            has_conflicts=bool(row["has_conflicts"]),
+            conflict_count=row["conflict_count"] if "conflict_count" in keys else 0,
+            document_count=row["document_count"] if "document_count" in keys else 0,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 

@@ -120,6 +120,105 @@ class DriveGuidelineIn(BaseModel):
     drive_url: str = Field(..., description="Google Drive share link, doc link, or file ID")
 
 
+class RequirementItemOut(BaseModel):
+    value: Any = None
+    confidence: str = "explicit"
+    source_doc_id: str = ""
+    source_filename: str = ""
+    source_type: str = ""
+    snippet: str = ""
+    weight: float = 1.0
+
+
+class IngestedDocumentOut(BaseModel):
+    doc_id: str
+    source_type: str
+    filename: str
+    source_url: str | None = None
+    sha256: str | None = None
+    size_bytes: int = 0
+    word_count: int = 0
+    char_count: int = 0
+    status: str = "extracted"
+    error: str | None = None
+    warning: str | None = None
+    extracted_at: str
+
+
+class CampaignConflictOut(BaseModel):
+    id: str
+    rule_category: str
+    severity: str
+    document_a: dict[str, Any] = Field(default_factory=dict)
+    document_b: dict[str, Any] = Field(default_factory=dict)
+    description: str
+    resolution_status: str
+    resolution_notes: str | None = None
+
+
+class CampaignSpecificationOut(BaseModel):
+    campaign_id: str
+    title: str
+    description: str = ""
+    objective: str = ""
+    created_at: str
+    campaign_url: str | None = None
+    documents: list[IngestedDocumentOut] = Field(default_factory=list)
+    desired_topics: list[RequirementItemOut] = Field(default_factory=list)
+    preferred_speakers: list[RequirementItemOut] = Field(default_factory=list)
+    required_themes: list[RequirementItemOut] = Field(default_factory=list)
+    banned_topics: list[RequirementItemOut] = Field(default_factory=list)
+    banned_words: list[RequirementItemOut] = Field(default_factory=list)
+    duration_min_s: RequirementItemOut
+    duration_max_s: RequirementItemOut
+    duration_preferred_s: RequirementItemOut
+    output_count: RequirementItemOut
+    aspect_ratio: RequirementItemOut
+    hook_required: RequirementItemOut
+    hook_window_s: RequirementItemOut
+    hook_min_score: RequirementItemOut
+    hook_types: list[RequirementItemOut] = Field(default_factory=list)
+    hook_instructions: list[RequirementItemOut] = Field(default_factory=list)
+    cta_required: RequirementItemOut
+    cta_types: list[RequirementItemOut] = Field(default_factory=list)
+    cta_window_s: RequirementItemOut
+    cta_instructions: list[RequirementItemOut] = Field(default_factory=list)
+    tone: RequirementItemOut
+    pacing: RequirementItemOut
+    caption_preset: RequirementItemOut
+    caption_instructions: list[RequirementItemOut] = Field(default_factory=list)
+    visual_instructions: list[RequirementItemOut] = Field(default_factory=list)
+    branding_rules: list[RequirementItemOut] = Field(default_factory=list)
+    title_patterns: list[RequirementItemOut] = Field(default_factory=list)
+    description_guidelines: list[RequirementItemOut] = Field(default_factory=list)
+    hashtags: list[RequirementItemOut] = Field(default_factory=list)
+    keywords: list[RequirementItemOut] = Field(default_factory=list)
+    required_mentions: list[RequirementItemOut] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    platform_rules: dict[str, list[RequirementItemOut]] = Field(default_factory=dict)
+    max_silence_s: RequirementItemOut
+    min_speech_density: RequirementItemOut
+    conflicts: list[CampaignConflictOut] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    has_critical_conflicts: bool = False
+
+
+class CampaignUrlExtractIn(BaseModel):
+    url: str = Field(..., description="Campaign URL to extract")
+
+
+class CampaignUrlExtractOut(BaseModel):
+    url: str
+    title: str = ""
+    description: str = ""
+    headings: list[str] = Field(default_factory=list)
+    raw_text: str = ""
+    status: str = "extracted"
+    error: str | None = None
+    word_count: int = 0
+    char_count: int = 0
+
+
 class JobCreateIn(BaseModel):
     source_id: str
     settings: JobSettingsIn = Field(default_factory=JobSettingsIn)
@@ -187,6 +286,8 @@ class JobOut(BaseModel):
     updated_at: str
     source: SourceOut | None = None
     guideline: CampaignGuidelineOut | None = None
+    campaign_spec_id: str | None = None
+    campaign_spec: dict[str, Any] | None = None
 
     @classmethod
     def of(
@@ -194,6 +295,7 @@ class JobOut(BaseModel):
         job: models.Job,
         source: models.Source | None = None,
         guideline: models.CampaignGuideline | None = None,
+        campaign_spec: dict[str, Any] | None = None,
     ) -> JobOut:
         guideline_out = None
         if guideline:
@@ -212,6 +314,8 @@ class JobOut(BaseModel):
                 error=g_dict.get("error"),
                 created_at=g_dict.get("created_at", job.created_at),
             )
+
+        spec_dict = campaign_spec or job.settings.get("campaign_spec")
 
         return cls(
             id=job.id,
@@ -238,6 +342,8 @@ class JobOut(BaseModel):
             failed_at=getattr(job, "failed_at", None),
             cancelled_at=getattr(job, "cancelled_at", None),
             cancel_requested_at=getattr(job, "cancel_requested_at", None),
+            campaign_spec_id=getattr(job, "campaign_spec_id", None),
+            campaign_spec=spec_dict,
             finished_at=job.finished_at,
             created_at=job.created_at,
             updated_at=job.updated_at,

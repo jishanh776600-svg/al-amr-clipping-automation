@@ -11,18 +11,33 @@ from .density import DensityAnalysis, analyze_speech_density_and_silence
 from .evaluator import CampaignEvaluator
 from .hook import HookAnalysis, analyze_hook
 from .models import CampaignBrief, CandidateEvaluation, RuleResult
+from .models_intelligence import (
+    CampaignConflict,
+    CampaignSpecification,
+    IngestedDocument,
+    RequirementItem,
+)
+from .normalizer import CampaignNormalizer
 from .ranking import rank_and_filter_candidates
+from .url_extractor import ExtractedUrlContent, extract_campaign_url
 
 __all__ = [
     "CampaignBrief",
     "CandidateEvaluation",
     "CampaignEvaluator",
+    "CampaignConflict",
+    "CampaignNormalizer",
+    "CampaignSpecification",
     "CtaAnalysis",
     "DensityAnalysis",
+    "ExtractedUrlContent",
     "HookAnalysis",
+    "IngestedDocument",
+    "RequirementItem",
     "RuleResult",
     "analyze_cta",
     "analyze_hook",
     "analyze_speech_density_and_silence",
+    "extract_campaign_url",
     "rank_and_filter_candidates",
 ]

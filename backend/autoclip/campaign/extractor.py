@@ -225,8 +225,8 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     max_dur = 75.0
     pref_dur: float | None = 45.0
 
-    # Look for duration patterns like "30-60s", "under 60 seconds", "45s"
-    dur_range = re.search(r"(\d+)\s*(?:-|to)\s*(\d+)\s*(?:s|sec|seconds)", lower_text)
+    # Look for duration patterns like "30-60s", "under 60 seconds", "45s", "between 25 and 55 seconds"
+    dur_range = re.search(r"(\d+)\s*(?:-|to|and)\s*(\d+)\s*(?:s|sec|seconds)", lower_text)
     if dur_range:
         d1, d2 = float(dur_range.group(1)), float(dur_range.group(2))
         min_dur = max(10.0, min(d1, d2))
@@ -254,8 +254,8 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
             elif len(optional_keywords) < 10:
                 optional_keywords.append(clean)
 
-    # Keyword search under headings like "Topics:", "Keywords:", "Themes:"
-    kw_match = re.search(r"(?:topics|keywords|themes|must\s+include|focus\s+areas)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    # Keyword search under headings like "Topics:", "Keywords:", "Themes:", "Must feature topic:"
+    kw_match = re.search(r"(?:topics|topic|keywords|themes|must\s+include|must\s+feature(?:\s+topic)?|focus\s+areas)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
     if kw_match:
         extracted = [w.strip() for w in re.split(r"[,;•|]+", kw_match.group(1)) if w.strip()]
         for kw in extracted:
