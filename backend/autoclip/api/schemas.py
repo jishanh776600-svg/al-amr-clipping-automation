@@ -851,3 +851,54 @@ class RetentionOptimizationOut(BaseModel):
             updated_at=record.updated_at,
         )
 
+
+class CaptionOptimizationOut(BaseModel):
+    id: str
+    clip_id: str
+    job_id: str
+    style_key: str = "classic_professional"
+    style_label: str = "Classic Professional"
+    caption_segments: list[dict[str, Any]] = Field(default_factory=list)
+    emphasis_metadata: dict[str, Any] = Field(default_factory=dict)
+    hook_treatment: dict[str, Any] = Field(default_factory=dict)
+    climax_treatment: dict[str, Any] = Field(default_factory=dict)
+    cta_treatment: dict[str, Any] = Field(default_factory=dict)
+    quality_score: float = 0.0
+    quality_status: str = "CAPTION_PASS"
+    rejection_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    fallback_used: bool = False
+    fallback_reason: str = ""
+    render_time_s: float = 0.0
+    version: int = 1
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.CaptionOptimizationRecord) -> CaptionOptimizationOut:
+        return cls(
+            id=record.id,
+            clip_id=record.clip_id,
+            job_id=record.job_id,
+            style_key=record.style_key,
+            style_label=record.style_label,
+            caption_segments=record.caption_segments or [],
+            emphasis_metadata=record.emphasis_metadata or {},
+            hook_treatment=record.hook_treatment or {},
+            climax_treatment=record.climax_treatment or {},
+            cta_treatment=record.cta_treatment or {},
+            quality_score=record.quality_score,
+            quality_status=record.quality_status,
+            rejection_reasons=record.rejection_reasons or [],
+            warnings=record.warnings or [],
+            fallback_used=record.fallback_used,
+            fallback_reason=record.fallback_reason or "",
+            render_time_s=record.render_time_s,
+            version=record.version,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+

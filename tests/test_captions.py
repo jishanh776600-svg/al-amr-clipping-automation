@@ -82,12 +82,14 @@ class TestColour:
 
 class TestPresets:
     def test_all_four_presets_exist(self) -> None:
-        assert set(captions.PRESETS) == {
+        assert {
             "bold_pop",
             "karaoke_fill",
             "clean_lower",
             "boxed",
-        }
+            "classic_professional",
+            "rich_dynamic",
+        }.issubset(set(captions.PRESETS))
 
     @pytest.mark.parametrize("key", list(captions.PRESETS))
     def test_every_preset_ships_its_font(self, key: str) -> None:

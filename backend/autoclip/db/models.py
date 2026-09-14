@@ -702,3 +702,84 @@ class RetentionOptimizationRecord:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+@dataclass
+class CaptionOptimizationRecord:
+    id: str
+    clip_id: str
+    job_id: str
+    style_key: str = "classic_professional"
+    style_label: str = "Classic Professional"
+    caption_segments: list[dict[str, Any]] = field(default_factory=list)
+    emphasis_metadata: dict[str, Any] = field(default_factory=dict)
+    hook_treatment: dict[str, Any] = field(default_factory=dict)
+    climax_treatment: dict[str, Any] = field(default_factory=dict)
+    cta_treatment: dict[str, Any] = field(default_factory=dict)
+    quality_score: float = 0.0
+    quality_status: str = "CAPTION_PASS"  # CAPTION_PASS, CAPTION_WARN, CAPTION_REJECT
+    rejection_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    fallback_used: bool = False
+    fallback_reason: str = ""
+    render_time_s: float = 0.0
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.quality_status in ("CAPTION_PASS", "CAPTION_WARN")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "clip_id": self.clip_id,
+            "job_id": self.job_id,
+            "style_key": self.style_key,
+            "style_label": self.style_label,
+            "caption_segments": self.caption_segments,
+            "emphasis_metadata": self.emphasis_metadata,
+            "hook_treatment": self.hook_treatment,
+            "climax_treatment": self.climax_treatment,
+            "cta_treatment": self.cta_treatment,
+            "quality_score": self.quality_score,
+            "quality_status": self.quality_status,
+            "rejection_reasons": self.rejection_reasons,
+            "warnings": self.warnings,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "render_time_s": self.render_time_s,
+            "version": self.version,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> CaptionOptimizationRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            job_id=row["job_id"],
+            style_key=row["style_key"] if "style_key" in keys else "classic_professional",
+            style_label=row["style_label"] if "style_label" in keys else "Classic Professional",
+            caption_segments=json.loads(row["caption_segments"] or "[]") if "caption_segments" in keys else [],
+            emphasis_metadata=json.loads(row["emphasis_metadata"] or "{}") if "emphasis_metadata" in keys else {},
+            hook_treatment=json.loads(row["hook_treatment"] or "{}") if "hook_treatment" in keys else {},
+            climax_treatment=json.loads(row["climax_treatment"] or "{}") if "climax_treatment" in keys else {},
+            cta_treatment=json.loads(row["cta_treatment"] or "{}") if "cta_treatment" in keys else {},
+            quality_score=float(row["quality_score"] or 0.0) if "quality_score" in keys else 0.0,
+            quality_status=row["quality_status"] if "quality_status" in keys else "CAPTION_PASS",
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            warnings=json.loads(row["warnings"] or "[]") if "warnings" in keys else [],
+            fallback_used=bool(row["fallback_used"]) if "fallback_used" in keys else False,
+            fallback_reason=row["fallback_reason"] if "fallback_reason" in keys else "",
+            render_time_s=float(row["render_time_s"] or 0.0) if "render_time_s" in keys else 0.0,
+            version=int(row["version"]) if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

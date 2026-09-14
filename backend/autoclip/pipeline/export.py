@@ -62,6 +62,7 @@ class ExportRequest:
     style: CaptionStyle
     ratio: str = "9:16"
     burn_captions: bool = True
+    ass_path: Path | None = None
 
     @property
     def duration_s(self) -> float:
@@ -269,15 +270,22 @@ def export_clip(
     fonts_name = "fonts"
     render_cwd: Path | None = None
 
-    if request.burn_captions and request.words:
-        ass_path = captions_module.write_ass(
-            workspace / "captions.ass",
-            request.words,
-            request.style,
-            width=out_w,
-            height=out_h,
-            time_offset_s=request.start_s,
-        )
+    if request.burn_captions and (request.ass_path or request.words):
+        if request.ass_path and Path(request.ass_path).is_file():
+            ass_path = workspace / "captions.ass"
+            if Path(request.ass_path).resolve() != ass_path.resolve():
+                import shutil
+                shutil.copy2(request.ass_path, ass_path)
+        else:
+            ass_path = captions_module.write_ass(
+                workspace / "captions.ass",
+                request.words,
+                request.style,
+                width=out_w,
+                height=out_h,
+                time_offset_s=request.start_s,
+                crop_path=request.crop_path,
+            )
         render_cwd, subtitle_name, fonts_name = ffmpeg.relative_filter_workspace(
             ass_path, captions_module.FONT_DIR
         )

@@ -40,6 +40,7 @@ from ..db.models import (
     Source,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
+    CaptionOptimizationRecord,
     new_id,
     utcnow,
 )
@@ -232,8 +233,8 @@ class PipelineRunner:
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []
 
-            self._stage_captions(final_clips, transcript)
-            self._stage_export(final_clips, transcript, final_crop_paths)
+            ass_paths = self._stage_captions(final_clips, transcript, final_crop_paths)
+            self._stage_export(final_clips, transcript, final_crop_paths, ass_paths=ass_paths)
         except JobCancelled:
             store.update_job(self.job.id, status="cancelled", finished_at=utcnow(), progress=0.0)
             raise
@@ -796,25 +797,121 @@ class PipelineRunner:
         self._finish_stage(stage)
         return final_clips, final_crop_paths
 
-    def _stage_captions(self, clips: list[Clip], transcript: Transcript) -> None:
+    def _stage_captions(
+        self,
+        clips: list[Clip],
+        transcript: Transcript,
+        crop_paths: dict[str, CropPath] | None = None,
+    ) -> dict[str, Path]:
         stage = Stage.CAPTIONS
         self._check_cancelled()
-        # Caption files are written during export, where the output dimensions
-        # are known. This stage validates the style so a typo fails fast rather
-        # than after the reframe work is already done.
-        captions.get_style(self.settings.export.caption_style)
+
+        # Resolve operator-selected caption style (Priority: job settings -> export settings -> campaign spec -> default)
+        selected_style = (
+            self.job.settings.get("caption_style")
+            or (self.job.settings.get("export") or {}).get("caption_style")
+            or getattr(self.settings.export, "caption_style", None)
+            or captions.DEFAULT_STYLE
+        )
+        style = captions.resolve_style(selected_style)
+
+        campaign_spec: CampaignSpecification | None = None
+        spec_row = store.get_campaign_spec_for_job(self.job.id)
+        if spec_row:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(spec_row.spec)
+            except Exception as e:
+                log.warning("Could not parse campaign spec for captions: %s", e)
+
+        # Retrieve composition records for visual safety / face avoidance
+        comp_records = store.list_visual_compositions(self.job.id)
+        comp_by_clip = {r.clip_id: r for r in comp_records}
+
+        engine = captions.CaptionEngine(campaign_spec=campaign_spec)
+        ratio = self.settings.export.ratio
+        out_w, out_h = export.ratio_dimensions(ratio)
+
+        caption_records: list[CaptionOptimizationRecord] = []
+        ass_paths: dict[str, Path] = {}
+        total = len(clips)
+
+        for index, clip in enumerate(clips):
+            self._check_cancelled()
+            words = transcript.slice(clip.start_word, clip.end_word)
+            crop_path = (crop_paths or {}).get(clip.id)
+            comp_rec = comp_by_clip.get(clip.id)
+
+            def on_progress(p: float) -> None:
+                self._emit(stage, (index + p) / max(1, total), f"Generating captions for clip {index + 1}/{total}")
+
+            ssa_file, opt_record = engine.generate_captions(
+                clip=clip,
+                words=words,
+                style_key=style.key,
+                crop_path=crop_path,
+                composition_record=comp_rec,
+                width=out_w,
+                height=out_h,
+            )
+            caption_records.append(opt_record)
+
+            # Pre-render ASS file to clip-specific workspace
+            clip_work_dir = self.workspace.captions_dir / clip.id
+            clip_work_dir.mkdir(parents=True, exist_ok=True)
+            ass_path = clip_work_dir / "captions.ass"
+            ssa_file.save(str(ass_path))
+            ass_paths[clip.id] = ass_path
+
+            # Also generate .srt sidecar
+            srt_path = clip_work_dir / "captions.srt"
+            captions.write_srt(srt_path, words, time_offset_s=clip.start_s)
+
+            log.info(
+                "Clip %s caption optimization complete: status=%s, segments=%d, style=%s",
+                clip.id,
+                opt_record.quality_status,
+                len(opt_record.caption_segments),
+                opt_record.style_label,
+            )
+            self._emit(stage, (index + 1) / max(1, total), f"Captions ready for clip {index + 1}/{total}")
+
+        # Persist caption records in SQLite
+        if caption_records:
+            store.replace_caption_optimizations(self.job.id, caption_records)
+
+        # Update telemetry in job settings
+        approved_count = sum(1 for r in caption_records if r.quality_status != "CAPTION_REJECT")
+        telemetry = {
+            "selected_style": style.key,
+            "style_label": style.label,
+            "total_evaluated": total,
+            "approved": approved_count,
+            "rejected": total - approved_count,
+            "records": [r.to_dict() for r in caption_records],
+        }
+        self.job.settings["caption_telemetry"] = telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
+
         self._finish_stage(stage)
+        return ass_paths
 
     def _stage_export(
         self,
         clips: list[Clip],
         transcript: Transcript,
         crop_paths: dict[str, CropPath],
+        ass_paths: dict[str, Path] | None = None,
     ) -> None:
         stage = Stage.EXPORT
         self._check_cancelled()
 
-        style = captions.get_style(self.settings.export.caption_style)
+        selected_style = (
+            self.job.settings.get("caption_style")
+            or (self.job.settings.get("export") or {}).get("caption_style")
+            or getattr(self.settings.export, "caption_style", None)
+            or captions.DEFAULT_STYLE
+        )
+        style = captions.resolve_style(selected_style)
         ratio = self.settings.export.ratio
         source_path = Path(self.source.path)
         destination_dir = paths.exports_dir() / self.job.id
@@ -862,6 +959,8 @@ class PipelineRunner:
                     destination.unlink(missing_ok=True)
                     destination.with_suffix(".srt").unlink(missing_ok=True)
 
+            clip_ass = (ass_paths or {}).get(clip.id)
+
             request = export.ExportRequest(
                 source=source_path,
                 destination=destination,
@@ -871,6 +970,7 @@ class PipelineRunner:
                 words=words,
                 style=style,
                 ratio=ratio,
+                ass_path=clip_ass,
             )
 
             try:

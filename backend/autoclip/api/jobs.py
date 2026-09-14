@@ -51,6 +51,7 @@ from .schemas import (
     JobSettingsIn,
     RetentionOptimizationOut,
     VisualCompositionOut,
+    CaptionOptimizationOut,
     WorkerCallbackIn,
 )
 
@@ -202,11 +203,13 @@ async def create_autonomous_job(
     drive_guideline_urls: list[str] = []
     destinations: Any = None
     overrides: Any = None
+    caption_style: str | None = None
 
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("video_url") or body.get("url")
         campaign_url = body.get("campaign_url")
+        caption_style = body.get("caption_style")
 
         if body.get("guideline_id"):
             guideline_ids.append(str(body.get("guideline_id")).strip())
@@ -237,6 +240,9 @@ async def create_autonomous_job(
         raw_campaign_url = form.get("campaign_url")
         if isinstance(raw_campaign_url, str):
             campaign_url = raw_campaign_url.strip() or None
+        raw_caption_style = form.get("caption_style")
+        if isinstance(raw_caption_style, str):
+            caption_style = raw_caption_style.strip() or None
 
         # Guidelines: support multi-file
         g_files = form.getlist("guideline_files")
@@ -472,6 +478,12 @@ async def create_autonomous_job(
         if dest_list:
             job_settings["destinations"] = dest_list
 
+    if caption_style:
+        job_settings["caption_style"] = caption_style
+        if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+            job_settings["export"] = {}
+        job_settings["export"]["caption_style"] = caption_style
+
     # 2e. Generate Normalized CampaignSpecification and bridge to CampaignBrief
     campaign_spec_rec: CampaignSpecificationRecord | None = None
     campaign_spec: CampaignSpecification | None = None
@@ -605,6 +617,8 @@ async def create_job(
         )
 
     job_settings = settings.model_dump(mode="json")
+    if overrides.caption_style:
+        job_settings["caption_style"] = overrides.caption_style
     if payload and payload.campaign is not None:
         job_settings["campaign"] = payload.campaign.model_dump(mode="json")
 
@@ -793,6 +807,23 @@ async def get_job_retention_optimizations_endpoint(
         store.list_retention_optimizations, job_id, approved_only=approved_only, status=status
     )
     return [RetentionOptimizationOut.of(r) for r in records]
+
+
+@router.get("/{job_id}/captions", response_model=list[CaptionOptimizationOut])
+async def get_job_captions_endpoint(
+    job_id: str,
+    approved_only: bool = False,
+    status: str | None = None,
+) -> list[CaptionOptimizationOut]:
+    """Retrieve dynamic caption optimization records, visual safety offsets, and quality gate evaluations."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(
+        store.list_caption_optimizations, job_id, approved_only=approved_only, status=status
+    )
+    return [CaptionOptimizationOut.of(r) for r in records]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

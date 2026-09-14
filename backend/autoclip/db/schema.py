@@ -436,6 +436,38 @@ def _migration_v13(conn: sqlite3.Connection) -> None:
     conn.executescript(_V13)
 
 
+_V14 = """
+CREATE TABLE caption_optimizations (
+    id                  TEXT PRIMARY KEY,
+    clip_id             TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    job_id              TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    style_key           TEXT NOT NULL DEFAULT 'classic_professional',
+    style_label         TEXT NOT NULL DEFAULT 'Classic Professional',
+    caption_segments    TEXT NOT NULL DEFAULT '[]',
+    emphasis_metadata   TEXT NOT NULL DEFAULT '{}',
+    hook_treatment      TEXT NOT NULL DEFAULT '{}',
+    climax_treatment    TEXT NOT NULL DEFAULT '{}',
+    cta_treatment       TEXT NOT NULL DEFAULT '{}',
+    quality_score       REAL NOT NULL DEFAULT 0.0,
+    quality_status      TEXT NOT NULL DEFAULT 'CAPTION_PASS' CHECK (quality_status IN ('CAPTION_PASS', 'CAPTION_WARN', 'CAPTION_REJECT')),
+    rejection_reasons   TEXT NOT NULL DEFAULT '[]',
+    warnings            TEXT NOT NULL DEFAULT '[]',
+    fallback_used       INTEGER NOT NULL DEFAULT 0,
+    fallback_reason     TEXT NOT NULL DEFAULT '',
+    render_time_s       REAL NOT NULL DEFAULT 0.0,
+    version             INTEGER NOT NULL DEFAULT 1,
+    telemetry           TEXT NOT NULL DEFAULT '{}',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX idx_caption_optimizations_job ON caption_optimizations(job_id, quality_status);
+"""
+
+
+def _migration_v14(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V14)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -452,6 +484,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v11,
     _migration_v12,
     _migration_v13,
+    _migration_v14,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -19,6 +19,7 @@ from .models import (
     ClipEdit,
     ClipSpecificationRecord,
     ClipStatus,
+    CaptionOptimizationRecord,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
     CampaignEvaluationRow,
@@ -1367,6 +1368,102 @@ def get_retention_optimization(clip_id: str) -> RetentionOptimizationRecord | No
             "SELECT * FROM retention_optimizations WHERE clip_id = ?", (clip_id,)
         ).fetchone()
     return RetentionOptimizationRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Caption Optimizations (Step 19)
+# --------------------------------------------------------------------------
+
+
+def replace_caption_optimizations(
+    job_id: str, records: list[CaptionOptimizationRecord]
+) -> list[CaptionOptimizationRecord]:
+    with connection() as conn:
+        conn.execute(
+            "DELETE FROM caption_optimizations WHERE job_id = ?",
+            (job_id,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO caption_optimizations (
+                id, clip_id, job_id, style_key, style_label, caption_segments,
+                emphasis_metadata, hook_treatment, climax_treatment, cta_treatment,
+                quality_score, quality_status, rejection_reasons, warnings,
+                fallback_used, fallback_reason, render_time_s, version,
+                telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id,
+                    r.clip_id,
+                    r.job_id,
+                    r.style_key,
+                    r.style_label,
+                    json.dumps(r.caption_segments),
+                    json.dumps(r.emphasis_metadata),
+                    json.dumps(r.hook_treatment),
+                    json.dumps(r.climax_treatment),
+                    json.dumps(r.cta_treatment),
+                    r.quality_score,
+                    r.quality_status,
+                    json.dumps(r.rejection_reasons),
+                    json.dumps(r.warnings),
+                    1 if r.fallback_used else 0,
+                    r.fallback_reason,
+                    r.render_time_s,
+                    r.version,
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                )
+                for r in records
+            ],
+        )
+    return records
+
+
+def list_caption_optimizations(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[CaptionOptimizationRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM caption_optimizations
+                WHERE job_id = ? AND quality_status IN ('CAPTION_PASS', 'CAPTION_WARN')
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM caption_optimizations
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM caption_optimizations
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [CaptionOptimizationRecord.from_row(r) for r in rows]
+
+
+def get_caption_optimization(clip_id: str) -> CaptionOptimizationRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM caption_optimizations WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return CaptionOptimizationRecord.from_row(row) if row else None
+
 
 
 

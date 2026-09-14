@@ -36,6 +36,9 @@ export function Ingest() {
   // Destinations & Archival
   const [publishDestinations, setPublishDestinations] = useState<string[]>(['telegram', 'drive'])
 
+  // Caption / Subtitle Style Selection (Step 19 Operator Choice)
+  const [captionStyle, setCaptionStyle] = useState<'classic_professional' | 'rich_dynamic'>('classic_professional')
+
   // Job Submission & Lifecycle State
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<ApiError | Error | null>(null)
@@ -185,6 +188,8 @@ export function Ingest() {
       if (driveUrl.trim()) form.append('drive_guideline_urls', driveUrl.trim())
 
       form.append('destinations', JSON.stringify(publishDestinations))
+      form.append('caption_style', captionStyle)
+      jobOverrides.caption_style = captionStyle
       form.append('overrides', JSON.stringify(jobOverrides))
 
       const job = await api.createAutonomousJob(form)
@@ -687,6 +692,97 @@ export function Ingest() {
             <div>
               <span className="font-semibold text-ink-100 block">Instagram</span>
               <span className="text-[11px] text-ink-400 block">Reels export staging</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* STEP 19: Operator-Selectable Caption / Subtitle Style */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                CAPTION & SUBTITLE STYLE
+              </span>
+              <span className="text-[10px] rounded bg-sodium-500/10 text-sodium-400 px-2 py-0.5 border border-sodium-500/20 font-medium">
+                Step 19 Operator Choice
+              </span>
+            </div>
+            <p className="text-xs text-ink-400 mt-1">
+              Select the typography and pacing aesthetic for generated vertical clips. AL AMR respects operator intent and never auto-guesses caption styles.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 mt-3">
+          {/* Option 1: Classic Professional */}
+          <label
+            className={`flex flex-col justify-between p-4 rounded-lg border cursor-pointer transition-all ${
+              captionStyle === 'classic_professional'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="radio"
+                    name="caption_style"
+                    value="classic_professional"
+                    checked={captionStyle === 'classic_professional'}
+                    onChange={() => setCaptionStyle('classic_professional')}
+                    className="text-sodium-500 focus:ring-sodium-500"
+                  />
+                  <span className="font-semibold text-sm text-ink-100">Classic Professional</span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-ink-800 text-ink-300">
+                  Default
+                </span>
+              </div>
+              <p className="text-xs text-ink-400 mt-2 leading-relaxed">
+                Clean, modern, and minimal typography (Inter). Features subtle word highlighting, safe lower-third placement, and restrained transitions.
+              </p>
+            </div>
+            <div className="mt-3 pt-3 border-t border-ink-800/60 flex items-center justify-between text-[11px] text-ink-400">
+              <span>Best for: Podcasts, Interviews, Talks</span>
+              <span className="font-mono text-ink-300">Inter · 102% pop</span>
+            </div>
+          </label>
+
+          {/* Option 2: Rich Dynamic */}
+          <label
+            className={`flex flex-col justify-between p-4 rounded-lg border cursor-pointer transition-all ${
+              captionStyle === 'rich_dynamic'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="radio"
+                    name="caption_style"
+                    value="rich_dynamic"
+                    checked={captionStyle === 'rich_dynamic'}
+                    onChange={() => setCaptionStyle('rich_dynamic')}
+                    className="text-sodium-500 focus:ring-sodium-500"
+                  />
+                  <span className="font-semibold text-sm text-ink-100">Rich Dynamic</span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-sodium-500/20 text-sodium-300 border border-sodium-500/30">
+                  Kinetic
+                </span>
+              </div>
+              <p className="text-xs text-ink-400 mt-2 leading-relaxed">
+                Visually engaging short-form captions (Anton). Features active-word pop scaling (1.16x), hook emphasis, climax pop, and CTA highlights.
+              </p>
+            </div>
+            <div className="mt-3 pt-3 border-t border-ink-800/60 flex items-center justify-between text-[11px] text-ink-400">
+              <span>Best for: High-Energy, Shorts, Reels</span>
+              <span className="font-mono text-sodium-400">Anton · 116% pop</span>
             </div>
           </label>
         </div>

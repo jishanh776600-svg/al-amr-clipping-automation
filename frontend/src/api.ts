@@ -283,6 +283,30 @@ export interface RetentionOptimization {
   updated_at: string
 }
 
+export interface CaptionOptimization {
+  id: string
+  clip_id: string
+  job_id: string
+  style_key: string
+  style_label: string
+  caption_segments: Array<Record<string, any>>
+  emphasis_metadata: Record<string, any>
+  hook_treatment: Record<string, any>
+  climax_treatment: Record<string, any>
+  cta_treatment: Record<string, any>
+  quality_score: number
+  quality_status: 'CAPTION_PASS' | 'CAPTION_WARN' | 'CAPTION_REJECT'
+  rejection_reasons: string[]
+  warnings: string[]
+  fallback_used: boolean
+  fallback_reason: string
+  render_time_s: number
+  version: number
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -870,6 +894,14 @@ export const api = {
     if (status) params.set('status', status)
     const qs = params.toString() ? `?${params.toString()}` : ''
     return request<RetentionOptimization[]>(`/api/jobs/${jobId}/retention-optimizations${qs}`)
+  },
+
+  getJobCaptions: (jobId: string, approvedOnly: boolean = false, status?: string) => {
+    const params = new URLSearchParams()
+    if (approvedOnly) params.set('approved_only', 'true')
+    if (status) params.set('status', status)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<CaptionOptimization[]>(`/api/jobs/${jobId}/captions${qs}`)
   },
 }
 

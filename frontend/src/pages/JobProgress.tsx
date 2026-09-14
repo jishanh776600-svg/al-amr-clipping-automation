@@ -514,6 +514,74 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.caption_telemetry && (
+        <div className="mt-6 rounded-xl border border-teal-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-teal-400">
+                Operator Caption Styling & Quality Gate (Step 19)
+              </h3>
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30 font-semibold">
+                {job.settings.caption_telemetry.style_label || job.settings.caption_telemetry.selected_style}
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-ink-400">
+              Quality Gate: {job.settings.caption_telemetry.approved}/{job.settings.caption_telemetry.total_evaluated} Approved
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-ink-100">
+                {job.settings.caption_telemetry.total_evaluated ?? 0}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Clips Processed</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-teal-500/30">
+              <div className="text-lg font-bold font-mono text-teal-400">
+                {job.settings.caption_telemetry.selected_style === 'rich_dynamic' ? 'Rich Dynamic' : 'Classic Pro'}
+              </div>
+              <div className="text-[11px] text-teal-400/80 uppercase tracking-wider font-semibold">Style Selected</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-emerald-500/30">
+              <div className="text-lg font-bold font-mono text-emerald-400">
+                {job.settings.caption_telemetry.approved ?? 0}
+              </div>
+              <div className="text-[11px] text-emerald-500/80 uppercase tracking-wider font-semibold">Passed</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-rose-500/30">
+              <div className="text-lg font-bold font-mono text-rose-400">
+                {job.settings.caption_telemetry.rejected ?? 0}
+              </div>
+              <div className="text-[11px] text-rose-400/80 uppercase tracking-wider">Rejected</div>
+            </div>
+          </div>
+          {job.settings.caption_telemetry.records && job.settings.caption_telemetry.records.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-ink-800/60">
+              <div className="text-xs font-mono text-ink-400 mb-2 font-semibold">Caption & Visual Safety Breakdown:</div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {job.settings.caption_telemetry.records.map((rec: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] font-mono bg-ink-950/60 p-2 rounded border border-ink-800">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${rec.quality_status === 'CAPTION_PASS' ? 'bg-emerald-400' : rec.quality_status === 'CAPTION_WARN' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                      <span className="text-ink-200">Clip #{idx + 1}</span>
+                      <span className="text-ink-500">({rec.quality_status})</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-ink-400">
+                      <span>Style: <strong className="text-ink-200">{rec.style_label}</strong></span>
+                      <span>Score: <strong className="text-teal-400">{Math.round(rec.quality_score ?? 0)}/100</strong></span>
+                      <span>Segments: <strong className="text-ink-200">{rec.caption_segments?.length || 0}</strong></span>
+                      {rec.fallback_used && (
+                        <span className="text-amber-400">[Fallback Used]</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

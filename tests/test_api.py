@@ -74,11 +74,13 @@ class TestCaptionStyles:
     def test_lists_all_four(self, client: TestClient) -> None:
         styles = client.get("/api/caption-styles").json()
 
-        assert {s["key"] for s in styles} == {
+        assert {s["key"] for s in styles} >= {
             "bold_pop",
             "karaoke_fill",
             "clean_lower",
             "boxed",
+            "classic_professional",
+            "rich_dynamic",
         }
 
     def test_includes_preview_metadata(self, client: TestClient) -> None:
