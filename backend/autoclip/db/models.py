@@ -538,3 +538,62 @@ class ClipSpecificationRecord:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class VisualCompositionRecord:
+    id: str
+    clip_id: str
+    job_id: str
+    source_width: int
+    source_height: int
+    output_width: int
+    output_height: int
+    crop_strategy: str = "track"
+    tracking_strategy: str = "mediapipe"
+    tracking_confidence: float = 0.0
+    camera_movement_score: float = 0.0
+    smoothing_parameters: dict[str, Any] = field(default_factory=dict)
+    fallback_used: bool = False
+    fallback_reason: str = ""
+    quality_score: float = 0.0
+    quality_status: str = "VISUAL_PASS"  # VISUAL_PASS, VISUAL_WARN, VISUAL_REJECT
+    warnings: list[str] = field(default_factory=list)
+    rejection_reasons: list[str] = field(default_factory=list)
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.quality_status in ("VISUAL_PASS", "VISUAL_WARN")
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> VisualCompositionRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            job_id=row["job_id"],
+            source_width=int(row["source_width"]),
+            source_height=int(row["source_height"]),
+            output_width=int(row["output_width"]),
+            output_height=int(row["output_height"]),
+            crop_strategy=row["crop_strategy"] if "crop_strategy" in keys else "track",
+            tracking_strategy=row["tracking_strategy"] if "tracking_strategy" in keys else "mediapipe",
+            tracking_confidence=float(row["tracking_confidence"] or 0.0),
+            camera_movement_score=float(row["camera_movement_score"] or 0.0),
+            smoothing_parameters=json.loads(row["smoothing_parameters"] or "{}") if "smoothing_parameters" in keys else {},
+            fallback_used=bool(row["fallback_used"]) if "fallback_used" in keys else False,
+            fallback_reason=row["fallback_reason"] if "fallback_reason" in keys and row["fallback_reason"] else "",
+            quality_score=float(row["quality_score"] or 0.0),
+            quality_status=row["quality_status"] or "VISUAL_PASS",
+            warnings=json.loads(row["warnings"] or "[]") if "warnings" in keys else [],
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            version=row["version"] if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+

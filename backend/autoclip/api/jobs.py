@@ -49,6 +49,7 @@ from .schemas import (
     JobManifestOut,
     JobOut,
     JobSettingsIn,
+    VisualCompositionOut,
     WorkerCallbackIn,
 )
 
@@ -759,6 +760,21 @@ async def get_job_clip_specifications_endpoint(
     )
     return [ClipSpecificationOut.of(s) for s in specs]
 
+
+@router.get("/{job_id}/visual-compositions", response_model=list[VisualCompositionOut])
+async def get_job_visual_compositions_endpoint(
+    job_id: str,
+    status: str | None = None,
+) -> list[VisualCompositionOut]:
+    """Retrieve visual compositions, framing strategies, and pre-render visual quality gate evaluations."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    compositions = await asyncio.to_thread(
+        store.list_visual_compositions, job_id, status=status
+    )
+    return [VisualCompositionOut.of(c) for c in compositions]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

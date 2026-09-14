@@ -19,6 +19,7 @@ from .models import (
     ClipEdit,
     ClipSpecificationRecord,
     ClipStatus,
+    VisualCompositionRecord,
     CampaignEvaluationRow,
     CampaignPreset,
     Export,
@@ -1175,6 +1176,103 @@ def get_clip_specification(spec_id: str) -> ClipSpecificationRecord | None:
             "SELECT * FROM clip_specifications WHERE id = ?", (spec_id,)
         ).fetchone()
     return ClipSpecificationRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Visual Compositions (Step 17)
+# --------------------------------------------------------------------------
+
+
+def replace_visual_compositions(
+    job_id: str, records: list[VisualCompositionRecord]
+) -> list[VisualCompositionRecord]:
+    """Atomically swap in visual composition records for a job."""
+    with connection() as conn:
+        conn.execute("DELETE FROM visual_compositions WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO visual_compositions (
+                id, clip_id, job_id, source_width, source_height,
+                output_width, output_height, crop_strategy, tracking_strategy,
+                tracking_confidence, camera_movement_score, smoothing_parameters,
+                fallback_used, fallback_reason, quality_score, quality_status,
+                warnings, rejection_reasons, version, telemetry,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id,
+                    r.clip_id,
+                    r.job_id,
+                    r.source_width,
+                    r.source_height,
+                    r.output_width,
+                    r.output_height,
+                    r.crop_strategy,
+                    r.tracking_strategy,
+                    r.tracking_confidence,
+                    r.camera_movement_score,
+                    json.dumps(r.smoothing_parameters),
+                    1 if r.fallback_used else 0,
+                    r.fallback_reason,
+                    r.quality_score,
+                    r.quality_status,
+                    json.dumps(r.warnings),
+                    json.dumps(r.rejection_reasons),
+                    r.version,
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                )
+                for r in records
+            ],
+        )
+    return records
+
+
+def list_visual_compositions(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[VisualCompositionRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM visual_compositions
+                WHERE job_id = ? AND quality_status IN ('VISUAL_PASS', 'VISUAL_WARN')
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM visual_compositions
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM visual_compositions
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [VisualCompositionRecord.from_row(r) for r in rows]
+
+
+def get_visual_composition(clip_id: str) -> VisualCompositionRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM visual_compositions WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return VisualCompositionRecord.from_row(row) if row else None
+
 
 
 

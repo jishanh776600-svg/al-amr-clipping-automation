@@ -44,6 +44,9 @@ __all__ = [
     "CropSegment",
     "ReframeConfig",
     "Strategy",
+    "VisualCompositionEngine",
+    "VisualGateResult",
+    "VisualQualityGate",
     "build_crop_path",
 ]
 
@@ -522,3 +525,10 @@ def _panel_keyframes(
     x = _clamp(mean_cx - crop_w / 2, 0, source_w - crop_w)
     y = _clamp(mean_eye_y - EYE_LINE_RATIO * crop_h, 0, source_h - crop_h)
     return [CropKeyframe(t=start_s, x=x, y=y)]
+
+
+from .visual_composition import (
+    VisualCompositionEngine,
+    VisualGateResult,
+    VisualQualityGate,
+)

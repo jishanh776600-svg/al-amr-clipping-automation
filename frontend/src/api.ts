@@ -234,6 +234,31 @@ export interface ClipSpecification {
   updated_at: string
 }
 
+export interface VisualComposition {
+  id: string
+  clip_id: string
+  job_id: string
+  source_width: number
+  source_height: number
+  output_width: number
+  output_height: number
+  crop_strategy: string
+  tracking_strategy: string
+  tracking_confidence: number
+  camera_movement_score: number
+  smoothing_parameters: Record<string, any>
+  fallback_used: boolean
+  fallback_reason: string
+  quality_score: number
+  quality_status: 'VISUAL_PASS' | 'VISUAL_WARN' | 'VISUAL_REJECT'
+  warnings: string[]
+  rejection_reasons: string[]
+  version: number
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -808,6 +833,11 @@ export const api = {
   getJobClipSpecifications: (jobId: string, approvedOnly: boolean = false) => {
     const q = approvedOnly ? '?approved_only=true' : ''
     return request<ClipSpecification[]>(`/api/jobs/${jobId}/clip-specifications${q}`)
+  },
+
+  getJobVisualCompositions: (jobId: string, status?: string) => {
+    const q = status ? `?status=${encodeURIComponent(status)}` : ''
+    return request<VisualComposition[]>(`/api/jobs/${jobId}/visual-compositions${q}`)
   },
 }
 

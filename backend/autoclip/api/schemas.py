@@ -750,4 +750,53 @@ class ClipSpecificationOut(BaseModel):
         )
 
 
+class VisualCompositionOut(BaseModel):
+    id: str
+    clip_id: str
+    job_id: str
+    source_width: int
+    source_height: int
+    output_width: int
+    output_height: int
+    crop_strategy: str
+    tracking_strategy: str
+    tracking_confidence: float
+    camera_movement_score: float
+    smoothing_parameters: dict[str, Any] = Field(default_factory=dict)
+    fallback_used: bool = False
+    fallback_reason: str = ""
+    quality_score: float
+    quality_status: str
+    warnings: list[str] = Field(default_factory=list)
+    rejection_reasons: list[str] = Field(default_factory=list)
+    version: int = 1
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
 
+    @classmethod
+    def of(cls, record: models.VisualCompositionRecord) -> VisualCompositionOut:
+        return cls(
+            id=record.id,
+            clip_id=record.clip_id,
+            job_id=record.job_id,
+            source_width=record.source_width,
+            source_height=record.source_height,
+            output_width=record.output_width,
+            output_height=record.output_height,
+            crop_strategy=record.crop_strategy,
+            tracking_strategy=record.tracking_strategy,
+            tracking_confidence=record.tracking_confidence,
+            camera_movement_score=record.camera_movement_score,
+            smoothing_parameters=record.smoothing_parameters or {},
+            fallback_used=record.fallback_used,
+            fallback_reason=record.fallback_reason,
+            quality_score=record.quality_score,
+            quality_status=record.quality_status,
+            warnings=record.warnings or [],
+            rejection_reasons=record.rejection_reasons or [],
+            version=record.version,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )

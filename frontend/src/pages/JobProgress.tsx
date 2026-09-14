@@ -407,6 +407,45 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.visual_composition_telemetry && (
+        <div className="mt-6 rounded-xl border border-purple-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-purple-400">
+              9:16 Smart Reframing & Visual Composition (Step 17)
+            </h3>
+            <span className="text-[11px] font-mono text-ink-400">
+              Quality Gate: {job.settings.visual_composition_telemetry.approved}/{job.settings.visual_composition_telemetry.total_evaluated} Approved
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-ink-100">
+                {job.settings.visual_composition_telemetry.total_evaluated}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Evaluated</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-emerald-500/30">
+              <div className="text-lg font-bold font-mono text-emerald-400">
+                {job.settings.visual_composition_telemetry.approved}
+              </div>
+              <div className="text-[11px] text-emerald-500/80 uppercase tracking-wider font-semibold">Approved</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-rose-500/30">
+              <div className="text-lg font-bold font-mono text-rose-400">
+                {job.settings.visual_composition_telemetry.rejected}
+              </div>
+              <div className="text-[11px] text-rose-400/80 uppercase tracking-wider">Rejected</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-purple-500/30">
+              <div className="text-lg font-bold font-mono text-purple-400">
+                {job.settings.visual_composition_telemetry.compositions?.[0]?.output_width || 1080}×{job.settings.visual_composition_telemetry.compositions?.[0]?.output_height || 1920}
+              </div>
+              <div className="text-[11px] text-purple-400/80 uppercase tracking-wider">Target 9:16</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

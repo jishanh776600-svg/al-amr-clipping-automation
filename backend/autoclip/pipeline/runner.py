@@ -32,12 +32,21 @@ from ..campaign import (
 from ..config import Settings
 from ..config import load as load_settings
 from ..db import store
-from ..db.models import CampaignEvaluationRow, Clip, Export, Job, Source, new_id, utcnow
+from ..db.models import (
+    CampaignEvaluationRow,
+    Clip,
+    Export,
+    Job,
+    Source,
+    VisualCompositionRecord,
+    new_id,
+    utcnow,
+)
 from ..db.models import Transcript as TranscriptRow
 from ..providers import build_provider, detection_config
 from . import Stage, captions, export, ffmpeg, highlights, prepare, transcribe
 from .prepare import Silence
-from .reframe import ReframeConfig, build_crop_path
+from .reframe import ReframeConfig, VisualCompositionEngine, build_crop_path
 from .reframe.croppath import CropPath
 from .transcript import Transcript
 from .validator import validate_media_output
@@ -205,8 +214,13 @@ class PipelineRunner:
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []
             crop_paths = self._stage_reframe(clips, transcript)
-            self._stage_captions(clips, transcript)
-            self._stage_export(clips, transcript, crop_paths)
+            approved_clips = [c for c in clips if c.id in crop_paths]
+            if not approved_clips:
+                log.info("Job %s completed with 0 approved visual compositions.", self.job.id)
+                store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
+                return []
+            self._stage_captions(approved_clips, transcript)
+            self._stage_export(approved_clips, transcript, crop_paths)
         except JobCancelled:
             store.update_job(self.job.id, status="cancelled", finished_at=utcnow(), progress=0.0)
             raise
@@ -216,7 +230,7 @@ class PipelineRunner:
             raise
 
         store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
-        return clips
+        return approved_clips
 
     # -- stages ------------------------------------------------------------
 
@@ -626,29 +640,90 @@ class PipelineRunner:
             self._finish_stage(stage)
             return crop_paths
 
-        config = ReframeConfig(
-            aspect_w=9 if self.settings.export.ratio == "9:16" else 1,
-            aspect_h=16 if self.settings.export.ratio == "9:16" else 1,
+        # Check for campaign specification
+        campaign_spec: CampaignSpecification | None = None
+        spec_row = store.get_campaign_spec_for_job(self.job.id)
+        if spec_row:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(spec_row.spec)
+            except Exception as e:
+                log.warning("Failed parsing campaign spec in reframe stage: %s", e)
+        if not campaign_spec and "campaign_spec" in self.job.settings:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(self.job.settings["campaign_spec"])
+            except Exception as e:
+                log.warning("Failed parsing campaign_spec setting: %s", e)
+
+        target_ratio = self.settings.export.ratio or "9:16"
+        engine = VisualCompositionEngine(
+            campaign_spec=campaign_spec,
+            target_ratio=target_ratio,
         )
-        if self.settings.export.ratio == "16:9":
-            config = ReframeConfig(aspect_w=16, aspect_h=9)
+
+        composition_records: list[VisualCompositionRecord] = []
+        total_clips = len(clips)
 
         for index, clip in enumerate(clips):
             self._check_cancelled()
             cached = self.workspace.crop_path(clip.id)
-            if cached.exists():
-                crop_paths[clip.id] = CropPath.load(cached)
-            else:
-                crop_paths[clip.id] = build_crop_path(
-                    source_path,
-                    start_s=clip.start_s,
-                    end_s=clip.end_s,
-                    transcript=transcript,
-                    config=config,
-                )
-                crop_paths[clip.id].save(cached)
 
-            self._emit(stage, (index + 1) / len(clips), f"Reframing clip {index + 1}")
+            def on_comp_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
+                step_frac = (index + frac) / max(1, total_clips)
+                self._emit(stage, step_frac, f"Reframing clip {index + 1}/{total_clips} ({substage})")
+
+            if cached.exists():
+                crop_path = CropPath.load(cached)
+                existing = store.get_visual_composition(clip.id)
+                if existing:
+                    comp_rec = existing
+                else:
+                    _, comp_rec = engine.compose(
+                        video_path=source_path,
+                        clip=clip,
+                        transcript=transcript,
+                        on_progress=on_comp_progress,
+                    )
+            else:
+                crop_path, comp_rec = engine.compose(
+                    video_path=source_path,
+                    clip=clip,
+                    transcript=transcript,
+                    on_progress=on_comp_progress,
+                )
+
+            composition_records.append(comp_rec)
+
+            if comp_rec.quality_status != "VISUAL_REJECT":
+                crop_paths[clip.id] = crop_path
+                if not cached.exists():
+                    crop_path.save(cached)
+                log.info(
+                    "Clip %s visual composition approved (%s, score=%.1f, strategy=%s)",
+                    clip.id, comp_rec.quality_status, comp_rec.quality_score, comp_rec.crop_strategy,
+                )
+            else:
+                log.warning(
+                    "Clip %s visual composition rejected: %s",
+                    clip.id, "; ".join(comp_rec.rejection_reasons),
+                )
+
+            self._emit(stage, (index + 1) / max(1, total_clips), f"Reframing clip {index + 1}/{total_clips} complete")
+
+        # Persist compositions in SQLite
+        if composition_records:
+            store.replace_visual_compositions(self.job.id, composition_records)
+
+        # Update telemetry in job.settings
+        approved_count = len(crop_paths)
+        rejected_count = total_clips - approved_count
+        reframe_telemetry = {
+            "total_evaluated": total_clips,
+            "approved": approved_count,
+            "rejected": rejected_count,
+            "compositions": [r.to_dict() for r in composition_records],
+        }
+        self.job.settings["visual_composition_telemetry"] = reframe_telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
 
         self._finish_stage(stage)
         return crop_paths

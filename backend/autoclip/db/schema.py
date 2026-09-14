@@ -371,6 +371,39 @@ def _migration_v11(conn: sqlite3.Connection) -> None:
     conn.executescript(_V11)
 
 
+_V12 = """
+CREATE TABLE visual_compositions (
+    id                     TEXT PRIMARY KEY,
+    clip_id                TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    job_id                 TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    source_width           INTEGER NOT NULL,
+    source_height          INTEGER NOT NULL,
+    output_width           INTEGER NOT NULL,
+    output_height          INTEGER NOT NULL,
+    crop_strategy          TEXT NOT NULL DEFAULT 'track',
+    tracking_strategy      TEXT NOT NULL DEFAULT 'mediapipe',
+    tracking_confidence    REAL NOT NULL DEFAULT 0.0,
+    camera_movement_score  REAL NOT NULL DEFAULT 0.0,
+    smoothing_parameters   TEXT NOT NULL DEFAULT '{}',
+    fallback_used          INTEGER NOT NULL DEFAULT 0,
+    fallback_reason        TEXT NOT NULL DEFAULT '',
+    quality_score          REAL NOT NULL DEFAULT 0.0,
+    quality_status         TEXT NOT NULL DEFAULT 'VISUAL_PASS' CHECK (quality_status IN ('VISUAL_PASS', 'VISUAL_WARN', 'VISUAL_REJECT')),
+    warnings               TEXT NOT NULL DEFAULT '[]',
+    rejection_reasons      TEXT NOT NULL DEFAULT '[]',
+    version                INTEGER NOT NULL DEFAULT 1,
+    telemetry              TEXT NOT NULL DEFAULT '{}',
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL
+);
+CREATE INDEX idx_visual_compositions_job ON visual_compositions(job_id, quality_status);
+"""
+
+
+def _migration_v12(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V12)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -385,6 +418,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v9,
     _migration_v10,
     _migration_v11,
+    _migration_v12,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
