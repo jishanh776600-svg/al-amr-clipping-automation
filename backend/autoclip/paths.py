@@ -121,12 +121,17 @@ def guidelines_dir() -> Path:
     return root() / "guidelines"
 
 
+def bgm_dir() -> Path:
+    """Return the directory holding persistent BGM Vault audio assets."""
+    return root() / "bgm"
+
+
 def ensure_layout() -> Path:
     """Create the directory tree if absent and return the root.
 
     Safe to call repeatedly; used on startup and at the top of each CLI command.
     """
     base = root()
-    for path in (base, media_dir(), work_dir(), exports_dir(), models_dir(), guidelines_dir()):
+    for path in (base, media_dir(), work_dir(), exports_dir(), models_dir(), guidelines_dir(), bgm_dir()):
         path.mkdir(parents=True, exist_ok=True)
     return base

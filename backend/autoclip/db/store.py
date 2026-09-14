@@ -19,6 +19,7 @@ from .models import (
     ClipEdit,
     ClipSpecificationRecord,
     ClipStatus,
+    BGMAssetRecord,
     CaptionOptimizationRecord,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
@@ -1463,6 +1464,112 @@ def get_caption_optimization(clip_id: str) -> CaptionOptimizationRecord | None:
             "SELECT * FROM caption_optimizations WHERE clip_id = ?", (clip_id,)
         ).fetchone()
     return CaptionOptimizationRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# BGM Assets (Step 20 BGM Vault)
+# --------------------------------------------------------------------------
+
+
+def create_bgm_asset(asset: BGMAssetRecord) -> BGMAssetRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO bgm_assets (
+                id, name, file_path, genre, mood, tags, mime_type,
+                duration_s, file_size_bytes, enabled, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                asset.id,
+                asset.name,
+                asset.file_path,
+                asset.genre,
+                asset.mood,
+                json.dumps(asset.tags),
+                asset.mime_type,
+                asset.duration_s,
+                asset.file_size_bytes,
+                1 if asset.enabled else 0,
+                asset.created_at,
+                asset.updated_at,
+            ),
+        )
+    return asset
+
+
+def get_bgm_asset(asset_id: str) -> BGMAssetRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM bgm_assets WHERE id = ?", (asset_id,)
+        ).fetchone()
+    return BGMAssetRecord.from_row(row) if row else None
+
+
+def list_bgm_assets(enabled_only: bool = False, genre: str | None = None) -> list[BGMAssetRecord]:
+    with connection() as conn:
+        query = "SELECT * FROM bgm_assets WHERE 1=1"
+        params: list[Any] = []
+        if enabled_only:
+            query += " AND enabled = 1"
+        if genre:
+            query += " AND LOWER(genre) = LOWER(?)"
+            params.append(genre.strip())
+        query += " ORDER BY created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+    return [BGMAssetRecord.from_row(r) for r in rows]
+
+
+def update_bgm_asset(
+    asset_id: str,
+    name: str | None = None,
+    genre: str | None = None,
+    mood: str | None = None,
+    tags: list[str] | None = None,
+    enabled: bool | None = None,
+) -> BGMAssetRecord | None:
+    updates: list[str] = []
+    params: list[Any] = []
+    now = utcnow()
+
+    if name is not None:
+        updates.append("name = ?")
+        params.append(name.strip())
+    if genre is not None:
+        updates.append("genre = ?")
+        params.append(genre.strip())
+    if mood is not None:
+        updates.append("mood = ?")
+        params.append(mood.strip())
+    if tags is not None:
+        updates.append("tags = ?")
+        params.append(json.dumps(tags))
+    if enabled is not None:
+        updates.append("enabled = ?")
+        params.append(1 if enabled else 0)
+
+    if not updates:
+        return get_bgm_asset(asset_id)
+
+    updates.append("updated_at = ?")
+    params.append(now)
+    params.append(asset_id)
+
+    with connection() as conn:
+        cursor = conn.execute(
+            f"UPDATE bgm_assets SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_bgm_asset(asset_id)
+
+
+def delete_bgm_asset(asset_id: str) -> bool:
+    with connection() as conn:
+        cursor = conn.execute("DELETE FROM bgm_assets WHERE id = ?", (asset_id,))
+        return cursor.rowcount > 0
+
 
 
 

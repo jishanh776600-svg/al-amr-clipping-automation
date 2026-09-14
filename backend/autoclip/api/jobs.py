@@ -17,6 +17,7 @@ from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from .. import paths
+from ..bgm import BGMUnavailableError, BGMVault
 from ..campaign import (
     CampaignConflict,
     CampaignNormalizer,
@@ -204,12 +205,14 @@ async def create_autonomous_job(
     destinations: Any = None
     overrides: Any = None
     caption_style: str | None = None
+    bgm_asset_id: str | None = None
 
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("video_url") or body.get("url")
         campaign_url = body.get("campaign_url")
         caption_style = body.get("caption_style")
+        bgm_asset_id = body.get("bgm_asset_id")
 
         if body.get("guideline_id"):
             guideline_ids.append(str(body.get("guideline_id")).strip())
@@ -231,6 +234,8 @@ async def create_autonomous_job(
 
         destinations = body.get("destinations")
         overrides = body.get("overrides") or body.get("settings")
+        if not bgm_asset_id and isinstance(overrides, dict):
+            bgm_asset_id = overrides.get("bgm_asset_id")
     else:
         form = await request.form()
         raw_url = form.get("url") or form.get("video_url")
@@ -243,6 +248,17 @@ async def create_autonomous_job(
         raw_caption_style = form.get("caption_style")
         if isinstance(raw_caption_style, str):
             caption_style = raw_caption_style.strip() or None
+        raw_bgm_asset_id = form.get("bgm_asset_id")
+        if isinstance(raw_bgm_asset_id, str):
+            bgm_asset_id = raw_bgm_asset_id.strip() or None
+        raw_overrides = form.get("overrides")
+        if not bgm_asset_id and raw_overrides:
+            try:
+                parsed_ov = json.loads(str(raw_overrides))
+                if isinstance(parsed_ov, dict):
+                    bgm_asset_id = parsed_ov.get("bgm_asset_id")
+            except Exception:
+                pass
 
         # Guidelines: support multi-file
         g_files = form.getlist("guideline_files")
@@ -484,6 +500,20 @@ async def create_autonomous_job(
             job_settings["export"] = {}
         job_settings["export"]["caption_style"] = caption_style
 
+    # Step 20: Resolve Campaign BGM Selection
+    vault = BGMVault()
+    try:
+        bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+            vault.resolve_campaign_bgm, bgm_asset_id
+        )
+    except BGMUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    job_settings["bgm_enabled"] = bgm_enabled
+    job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None
+    job_settings["bgm_asset_name"] = bgm_asset.name if bgm_asset else None
+    job_settings["bgm_asset_path"] = str(bgm_path) if bgm_path else None
+
     # 2e. Generate Normalized CampaignSpecification and bridge to CampaignBrief
     campaign_spec_rec: CampaignSpecificationRecord | None = None
     campaign_spec: CampaignSpecification | None = None
@@ -619,6 +649,22 @@ async def create_job(
     job_settings = settings.model_dump(mode="json")
     if overrides.caption_style:
         job_settings["caption_style"] = overrides.caption_style
+
+    # Step 20: Resolve Campaign BGM Selection
+    bgm_asset_id = getattr(overrides, "bgm_asset_id", None)
+    vault = BGMVault()
+    try:
+        bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+            vault.resolve_campaign_bgm, bgm_asset_id
+        )
+    except BGMUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    job_settings["bgm_enabled"] = bgm_enabled
+    job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None
+    job_settings["bgm_asset_name"] = bgm_asset.name if bgm_asset else None
+    job_settings["bgm_asset_path"] = str(bgm_path) if bgm_path else None
+
     if payload and payload.campaign is not None:
         job_settings["campaign"] = payload.campaign.model_dump(mode="json")
 

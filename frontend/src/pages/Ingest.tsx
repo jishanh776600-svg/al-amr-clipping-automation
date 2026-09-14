@@ -4,7 +4,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ApiError,
   api,
+  formatBytes,
   formatDuration,
+  type BGMAsset,
   type Job,
   type JobSettingsOverrides,
   type ProviderStatus,
@@ -39,6 +41,20 @@ export function Ingest() {
   // Caption / Subtitle Style Selection (Step 19 Operator Choice)
   const [captionStyle, setCaptionStyle] = useState<'classic_professional' | 'rich_dynamic'>('classic_professional')
 
+  // Step 20: BGM Vault & Campaign Background Music (Step 20 Operator Choice)
+  const [bgmAssets, setBgmAssets] = useState<BGMAsset[]>([])
+  const [selectedBgmId, setSelectedBgmId] = useState<string>('')
+  const [bgmVaultOpen, setBgmVaultOpen] = useState(false)
+  const [bgmUploading, setBgmUploading] = useState(false)
+  const [bgmUploadFile, setBgmUploadFile] = useState<File | null>(null)
+  const [bgmUploadName, setBgmUploadName] = useState('')
+  const [bgmUploadGenre, setBgmUploadGenre] = useState('')
+  const [bgmUploadMood, setBgmUploadMood] = useState('')
+  const [bgmUploadTags, setBgmUploadTags] = useState('')
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null)
+  const bgmFileInputRef = useRef<HTMLInputElement>(null)
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null)
+
   // Job Submission & Lifecycle State
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<ApiError | Error | null>(null)
@@ -52,6 +68,7 @@ export function Ingest() {
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
     api.providerStatus().then(setProviders).catch(() => undefined)
+    api.listBGMAssets().then(setBgmAssets).catch(() => undefined)
     api.listCampaigns().then((list) => {
       setCampaigns(list)
       const paramCampaignId = searchParams.get('campaign')
@@ -154,6 +171,83 @@ export function Ingest() {
     if (guidelineInputRef.current) guidelineInputRef.current.value = ''
   }
 
+  // Step 20 BGM Vault Actions
+  const refreshBgmAssets = async () => {
+    try {
+      const list = await api.listBGMAssets()
+      setBgmAssets(list)
+    } catch {
+      // ignore
+    }
+  }
+
+  const handleUploadBgm = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!bgmUploadFile) return
+    setBgmUploading(true)
+    setError(null)
+    try {
+      const form = new FormData()
+      form.append('file', bgmUploadFile)
+      if (bgmUploadName.trim()) form.append('name', bgmUploadName.trim())
+      if (bgmUploadGenre.trim()) form.append('genre', bgmUploadGenre.trim())
+      if (bgmUploadMood.trim()) form.append('mood', bgmUploadMood.trim())
+      if (bgmUploadTags.trim()) form.append('tags', bgmUploadTags.trim())
+
+      const created = await api.uploadBGMAsset(form)
+      setBgmUploadFile(null)
+      setBgmUploadName('')
+      setBgmUploadGenre('')
+      setBgmUploadMood('')
+      setBgmUploadTags('')
+      if (bgmFileInputRef.current) bgmFileInputRef.current.value = ''
+      await refreshBgmAssets()
+      setSelectedBgmId(created.id)
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setBgmUploading(false)
+    }
+  }
+
+  const handleToggleBgmEnabled = async (asset: BGMAsset) => {
+    try {
+      await api.updateBGMAsset(asset.id, { enabled: !asset.enabled })
+      await refreshBgmAssets()
+      if (asset.enabled && selectedBgmId === asset.id) {
+        setSelectedBgmId('')
+      }
+    } catch (err) {
+      setError(err as Error)
+    }
+  }
+
+  const handleDeleteBgm = async (id: string) => {
+    if (!window.confirm('Delete this BGM track from vault?')) return
+    try {
+      await api.deleteBGMAsset(id)
+      if (selectedBgmId === id) setSelectedBgmId('')
+      await refreshBgmAssets()
+    } catch (err) {
+      setError(err as Error)
+    }
+  }
+
+  const toggleAudioPreview = (assetId: string) => {
+    if (playingAudioId === assetId) {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause()
+      }
+      setPlayingAudioId(null)
+    } else {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.src = `/api/bgm/${assetId}/stream`
+        audioPreviewRef.current.play().catch(() => undefined)
+      }
+      setPlayingAudioId(assetId)
+    }
+  }
+
   // Handle Complete Autonomous Job Submission
   const handleStartJob = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -190,6 +284,11 @@ export function Ingest() {
       form.append('destinations', JSON.stringify(publishDestinations))
       form.append('caption_style', captionStyle)
       jobOverrides.caption_style = captionStyle
+
+      // Step 20 BGM Selection
+      form.append('bgm_asset_id', selectedBgmId || '')
+      jobOverrides.bgm_asset_id = selectedBgmId || null
+
       form.append('overrides', JSON.stringify(jobOverrides))
 
       const job = await api.createAutonomousJob(form)
@@ -788,6 +887,151 @@ export function Ingest() {
         </div>
       </div>
 
+      {/* Hidden audio element for preview playback */}
+      <audio
+        ref={audioPreviewRef}
+        onEnded={() => setPlayingAudioId(null)}
+        className="hidden"
+      />
+
+      {/* STEP 20: Operator-Selected Campaign Background Music (BGM Vault) */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                CAMPAIGN BACKGROUND MUSIC (BGM VAULT)
+              </span>
+              <span className="text-[10px] rounded bg-blue-500/10 text-blue-400 px-2 py-0.5 border border-blue-500/20 font-medium">
+                Step 20 Operator Choice
+              </span>
+            </div>
+            <p className="text-xs text-ink-400 mt-1">
+              Select one soundtrack from the BGM Vault for this campaign, or choose No BGM. AL AMR never auto-guesses music.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBgmVaultOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-ink-800 hover:bg-ink-700 text-ink-200 border border-ink-700 transition-colors"
+          >
+            <span>🎵</span>
+            <span>Manage BGM Vault ({bgmAssets.length})</span>
+          </button>
+        </div>
+
+        {/* Selected BGM Indicator */}
+        <div className="grid gap-3 sm:grid-cols-3 mt-4">
+          {/* Card 0: No BGM */}
+          <label
+            className={`flex flex-col justify-between p-3.5 rounded-lg border cursor-pointer transition-all ${
+              selectedBgmId === ''
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="bgm_selection"
+                    value=""
+                    checked={selectedBgmId === ''}
+                    onChange={() => setSelectedBgmId('')}
+                    className="text-sodium-500 focus:ring-sodium-500"
+                  />
+                  <span className="font-semibold text-sm text-ink-100">No BGM</span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-ink-800 text-ink-400">
+                  Default
+                </span>
+              </div>
+              <p className="text-xs text-ink-400 mt-2">
+                Clips export with original speaker audio only. Zero background soundtrack.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-ink-800/60 text-[11px] text-ink-500">
+              Original voice only
+            </div>
+          </label>
+
+          {/* Enabled BGM Assets */}
+          {bgmAssets
+            .filter((a) => a.enabled)
+            .map((asset) => (
+              <label
+                key={asset.id}
+                className={`flex flex-col justify-between p-3.5 rounded-lg border cursor-pointer transition-all ${
+                  selectedBgmId === asset.id
+                    ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                    : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-1">
+                    <div className="flex items-center gap-2 truncate">
+                      <input
+                        type="radio"
+                        name="bgm_selection"
+                        value={asset.id}
+                        checked={selectedBgmId === asset.id}
+                        onChange={() => setSelectedBgmId(asset.id)}
+                        className="text-sodium-500 focus:ring-sodium-500"
+                      />
+                      <span className="font-semibold text-sm text-ink-100 truncate" title={asset.name}>
+                        {asset.name}
+                      </span>
+                    </div>
+                    {asset.genre && (
+                      <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
+                        {asset.genre}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-ink-400">
+                    {asset.mood && (
+                      <span className="px-1.5 py-0.2 rounded bg-ink-800 text-ink-300">
+                        {asset.mood}
+                      </span>
+                    )}
+                    {asset.tags?.slice(0, 3).map((t) => (
+                      <span key={t} className="px-1.5 py-0.2 rounded bg-ink-850 text-ink-400">
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-2 border-t border-ink-800/60 flex items-center justify-between text-[11px] text-ink-400">
+                  <span>{formatDuration(asset.duration_s)}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      toggleAudioPreview(asset.id)
+                    }}
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                      playingAudioId === asset.id
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-ink-800 hover:bg-ink-700 text-ink-300 border-ink-700'
+                    }`}
+                  >
+                    {playingAudioId === asset.id ? '⏸ Pause' : '▶ Preview'}
+                  </button>
+                </div>
+              </label>
+            ))}
+        </div>
+
+        {bgmAssets.filter((a) => a.enabled).length === 0 && (
+          <div className="mt-3 p-3 rounded border border-dashed border-ink-800 bg-ink-950/30 text-center text-xs text-ink-500">
+            No BGM tracks in vault yet. Click &ldquo;Manage BGM Vault&rdquo; above to upload MP3, WAV, or M4A music files.
+          </div>
+        )}
+      </div>
+
       {/* Autonomous Launch Action Button */}
       <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-lg border border-ink-800 bg-ink-900/40 p-5">
         <div>
@@ -839,6 +1083,184 @@ export function Ingest() {
 
       {/* Recent Jobs */}
       <RecentJobs jobs={jobs} />
+
+      {/* Step 20 BGM Vault Management Modal */}
+      {bgmVaultOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-ink-800 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-ink-100 flex items-center gap-2">
+                  <span>🎵</span>
+                  <span>BGM Vault Manager</span>
+                </h3>
+                <p className="text-xs text-ink-400 mt-0.5">
+                  Upload, tag, preview, and organize background music tracks for campaigns.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setBgmVaultOpen(false)
+                  if (audioPreviewRef.current) audioPreviewRef.current.pause()
+                  setPlayingAudioId(null)
+                }}
+                className="text-ink-400 hover:text-ink-200 text-lg p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Upload Form */}
+            <form onSubmit={handleUploadBgm} className="mt-4 p-4 rounded-lg border border-ink-800 bg-ink-950/60 space-y-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400 block">
+                Upload New BGM Track
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-ink-400 mb-1">Audio File (MP3, WAV, M4A, AAC, FLAC):</label>
+                  <input
+                    ref={bgmFileInputRef}
+                    type="file"
+                    accept=".mp3,.wav,.m4a,.aac,.flac,audio/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null
+                      setBgmUploadFile(file)
+                      if (file && !bgmUploadName) {
+                        setBgmUploadName(file.name.replace(/\.[^/.]+$/, ''))
+                      }
+                    }}
+                    className="w-full text-xs text-ink-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-sodium-500/20 file:text-sodium-300 hover:file:bg-sodium-500/30"
+                  />
+                </div>
+                <div>
+                  <label className="block text-ink-400 mb-1">Track Name / Title:</label>
+                  <input
+                    type="text"
+                    value={bgmUploadName}
+                    onChange={(e) => setBgmUploadName(e.target.value)}
+                    placeholder="e.g. Inspiring Piano Hook"
+                    className="field w-full text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-ink-400 mb-1">Genre / Category:</label>
+                  <input
+                    type="text"
+                    value={bgmUploadGenre}
+                    onChange={(e) => setBgmUploadGenre(e.target.value)}
+                    placeholder="e.g. Motivational, Action, Podcast"
+                    className="field w-full text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-ink-400 mb-1">Mood (Optional):</label>
+                  <input
+                    type="text"
+                    value={bgmUploadMood}
+                    onChange={(e) => setBgmUploadMood(e.target.value)}
+                    placeholder="e.g. Uplifting, Dramatic, Minimal"
+                    className="field w-full text-xs"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-ink-400 mb-1">Tags (Comma-separated):</label>
+                  <input
+                    type="text"
+                    value={bgmUploadTags}
+                    onChange={(e) => setBgmUploadTags(e.target.value)}
+                    placeholder="e.g. energetic, speech, fast, drums"
+                    className="field w-full text-xs"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={!bgmUploadFile || bgmUploading}
+                  className="px-4 py-1.5 rounded text-xs font-semibold bg-sodium-500 text-ink-950 hover:bg-sodium-400 disabled:opacity-50 transition-colors"
+                >
+                  {bgmUploading ? 'Validating & Uploading…' : 'Upload to Vault'}
+                </button>
+              </div>
+            </form>
+
+            {/* List of Vault Tracks */}
+            <div className="mt-5 space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-400 block">
+                Vault Inventory ({bgmAssets.length} Tracks)
+              </span>
+
+              {bgmAssets.length === 0 ? (
+                <div className="p-4 text-center text-xs text-ink-500 rounded border border-ink-800 bg-ink-950/30">
+                  Vault is empty. Upload your first audio track above.
+                </div>
+              ) : (
+                <div className="divide-y divide-ink-800 rounded-lg border border-ink-800 bg-ink-950/40">
+                  {bgmAssets.map((asset) => (
+                    <div key={asset.id} className="p-3 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-ink-100 truncate">{asset.name}</span>
+                          {asset.genre && (
+                            <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-mono border border-blue-500/20">
+                              {asset.genre}
+                            </span>
+                          )}
+                          {!asset.enabled && (
+                            <span className="px-1.5 py-0.5 rounded bg-ink-800 text-ink-500 text-[10px]">
+                              Disabled
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 flex items-center gap-3 text-[11px] text-ink-400">
+                          <span>{formatDuration(asset.duration_s)}</span>
+                          <span>{formatBytes(asset.file_size_bytes)}</span>
+                          {asset.mood && <span>Mood: {asset.mood}</span>}
+                          {asset.tags?.length > 0 && <span>Tags: {asset.tags.join(', ')}</span>}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleAudioPreview(asset.id)}
+                          className={`px-2.5 py-1 rounded text-xs border font-medium transition-colors ${
+                            playingAudioId === asset.id
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                              : 'bg-ink-800 hover:bg-ink-700 text-ink-300 border-ink-700'
+                          }`}
+                        >
+                          {playingAudioId === asset.id ? '⏸ Pause' : '▶ Play'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleBgmEnabled(asset)}
+                          className={`px-2.5 py-1 rounded text-xs border font-medium transition-colors ${
+                            asset.enabled
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : 'bg-ink-800 text-ink-500 border-ink-700'
+                          }`}
+                        >
+                          {asset.enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBgm(asset.id)}
+                          className="px-2 py-1 rounded text-xs text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          title="Delete track"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -905,6 +905,25 @@ class PipelineRunner:
         stage = Stage.EXPORT
         self._check_cancelled()
 
+        # Step 20: Validate BGM dependency if enabled and record telemetry
+        bgm_enabled = bool(self.job.settings.get("bgm_enabled", False))
+        bgm_asset_id = self.job.settings.get("bgm_asset_id")
+        bgm_asset_name = self.job.settings.get("bgm_asset_name")
+        bgm_asset_path = self.job.settings.get("bgm_asset_path")
+
+        if bgm_enabled:
+            if not bgm_asset_path or not Path(bgm_asset_path).exists():
+                raise RuntimeError(
+                    f"BGM audio dependency failed: asset '{bgm_asset_name}' ({bgm_asset_id}) was not found on disk at {bgm_asset_path}."
+                )
+
+        self.job.settings["bgm_telemetry"] = {
+            "enabled": bgm_enabled,
+            "asset_id": bgm_asset_id,
+            "asset_name": bgm_asset_name,
+        }
+        store.update_job(self.job.id, settings=self.job.settings)
+
         selected_style = (
             self.job.settings.get("caption_style")
             or (self.job.settings.get("export") or {}).get("caption_style")

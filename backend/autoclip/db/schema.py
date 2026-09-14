@@ -468,6 +468,29 @@ def _migration_v14(conn: sqlite3.Connection) -> None:
     conn.executescript(_V14)
 
 
+_V15 = """
+CREATE TABLE bgm_assets (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    file_path         TEXT NOT NULL,
+    genre             TEXT NOT NULL DEFAULT '',
+    mood              TEXT NOT NULL DEFAULT '',
+    tags              TEXT NOT NULL DEFAULT '[]',
+    mime_type         TEXT NOT NULL DEFAULT 'audio/mpeg',
+    duration_s        REAL NOT NULL DEFAULT 0.0,
+    file_size_bytes   INTEGER NOT NULL DEFAULT 0,
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX idx_bgm_assets_enabled ON bgm_assets(enabled);
+"""
+
+
+def _migration_v15(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V15)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -485,6 +508,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v12,
     _migration_v13,
     _migration_v14,
+    _migration_v15,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

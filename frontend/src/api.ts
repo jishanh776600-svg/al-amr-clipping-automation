@@ -307,6 +307,20 @@ export interface CaptionOptimization {
   updated_at: string
 }
 
+export interface BGMAsset {
+  id: string
+  name: string
+  genre: string
+  mood: string
+  tags: string[]
+  mime_type: string
+  duration_s: number
+  file_size_bytes: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -903,6 +917,43 @@ export const api = {
     const qs = params.toString() ? `?${params.toString()}` : ''
     return request<CaptionOptimization[]>(`/api/jobs/${jobId}/captions${qs}`)
   },
+
+  listBGMAssets: (enabledOnly: boolean = false, genre?: string) => {
+    const params = new URLSearchParams()
+    if (enabledOnly) params.set('enabled_only', 'true')
+    if (genre) params.set('genre', genre)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<BGMAsset[]>(`/api/bgm${qs}`)
+  },
+
+  uploadBGMAsset: (form: FormData) =>
+    request<BGMAsset>('/api/bgm', {
+      method: 'POST',
+      body: form,
+    }),
+
+  getBGMAsset: (id: string) => request<BGMAsset>(`/api/bgm/${id}`),
+
+  updateBGMAsset: (
+    id: string,
+    patch: {
+      name?: string
+      genre?: string
+      mood?: string
+      tags?: string[]
+      enabled?: boolean
+    }
+  ) =>
+    request<BGMAsset>(`/api/bgm/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  deleteBGMAsset: (id: string) =>
+    request<{ status: string; id: string }>(`/api/bgm/${id}`, {
+      method: 'DELETE',
+    }),
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

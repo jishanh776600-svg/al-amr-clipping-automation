@@ -783,3 +783,54 @@ class CaptionOptimizationRecord:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+@dataclass
+class BGMAssetRecord:
+    id: str
+    name: str
+    file_path: str
+    genre: str = ""
+    mood: str = ""
+    tags: list[str] = field(default_factory=list)
+    mime_type: str = "audio/mpeg"
+    duration_s: float = 0.0
+    file_size_bytes: int = 0
+    enabled: bool = True
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "file_path": self.file_path,
+            "genre": self.genre,
+            "mood": self.mood,
+            "tags": self.tags,
+            "mime_type": self.mime_type,
+            "duration_s": self.duration_s,
+            "file_size_bytes": self.file_size_bytes,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> BGMAssetRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            name=row["name"],
+            file_path=row["file_path"],
+            genre=row["genre"] if "genre" in keys else "",
+            mood=row["mood"] if "mood" in keys else "",
+            tags=json.loads(row["tags"] or "[]") if "tags" in keys else [],
+            mime_type=row["mime_type"] if "mime_type" in keys else "audio/mpeg",
+            duration_s=float(row["duration_s"] or 0.0) if "duration_s" in keys else 0.0,
+            file_size_bytes=int(row["file_size_bytes"] or 0) if "file_size_bytes" in keys else 0,
+            enabled=bool(row["enabled"]) if "enabled" in keys else True,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

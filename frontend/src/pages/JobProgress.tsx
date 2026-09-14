@@ -582,6 +582,47 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.bgm_telemetry && (
+        <div className="mt-6 rounded-xl border border-blue-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-blue-400">
+                Campaign Background Music (Step 20)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.bgm_telemetry.enabled
+                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                    : 'bg-ink-800 text-ink-400 border-ink-700'
+                }`}
+              >
+                {job.settings.bgm_telemetry.enabled ? '✓ BGM Selected' : 'No BGM'}
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-ink-400">
+              {job.settings.bgm_telemetry.enabled
+                ? job.settings.bgm_telemetry.asset_name
+                : 'Original Voice Only'}
+            </span>
+          </div>
+          {job.settings.bgm_telemetry.enabled && (
+            <div className="mt-3 text-xs text-ink-400 flex flex-wrap items-center gap-4 bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div>
+                <span className="text-ink-500">Track:</span>{' '}
+                <strong className="text-ink-200">{job.settings.bgm_telemetry.asset_name}</strong>
+              </div>
+              <div>
+                <span className="text-ink-500">Asset ID:</span>{' '}
+                <span className="font-mono text-ink-300">{job.settings.bgm_telemetry.asset_id}</span>
+              </div>
+              <div className="text-[11px] text-blue-400/90 ml-auto">
+                Step 20: Persistent selection active · Mixing ready for Step 21
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

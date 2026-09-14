@@ -75,6 +75,7 @@ class JobSettingsIn(BaseModel):
     max_duration_s: float | None = Field(default=None, gt=0)
     max_clips: int | None = Field(default=None, ge=1, le=50)
     caption_style: str | None = None
+    bgm_asset_id: str | None = None
     ratio: Literal["9:16", "1:1", "16:9"] | None = None
 
 
@@ -900,5 +901,44 @@ class CaptionOptimizationOut(BaseModel):
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
+
+
+class BGMAssetOut(BaseModel):
+    id: str
+    name: str
+    genre: str = ""
+    mood: str = ""
+    tags: list[str] = Field(default_factory=list)
+    mime_type: str = "audio/mpeg"
+    duration_s: float = 0.0
+    file_size_bytes: int = 0
+    enabled: bool = True
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.BGMAssetRecord) -> BGMAssetOut:
+        return cls(
+            id=record.id,
+            name=record.name,
+            genre=record.genre,
+            mood=record.mood,
+            tags=record.tags or [],
+            mime_type=record.mime_type,
+            duration_s=record.duration_s,
+            file_size_bytes=record.file_size_bytes,
+            enabled=record.enabled,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class BGMAssetUpdateIn(BaseModel):
+    name: str | None = None
+    genre: str | None = None
+    mood: str | None = None
+    tags: list[str] | str | None = None
+    enabled: bool | None = None
+
 
 
