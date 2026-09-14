@@ -634,3 +634,57 @@ class PublishingPlatformInfo(BaseModel):
     details: str = ""
 
 
+class ClipCandidateOut(BaseModel):
+    id: str
+    job_id: str
+    rank: int
+    selected: bool
+    status: str
+    start_s: float
+    end_s: float
+    duration_s: float
+    start_word: int
+    end_word: int
+    title: str
+    hook_text: str
+    reason: str
+    transcript_slice: str
+    score: float
+    score_breakdown: dict[str, Any] = Field(default_factory=dict)
+    hook_signals: dict[str, Any] = Field(default_factory=dict)
+    climax_signals: dict[str, Any] = Field(default_factory=dict)
+    cta_signals: dict[str, Any] = Field(default_factory=dict)
+    requirement_matches: list[dict[str, Any]] = Field(default_factory=list)
+    rejection_reasons: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.ClipCandidateRecord) -> ClipCandidateOut:
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            rank=record.rank,
+            selected=record.selected,
+            status=record.status,
+            start_s=record.start_s,
+            end_s=record.end_s,
+            duration_s=record.duration_s,
+            start_word=record.start_word,
+            end_word=record.end_word,
+            title=record.title,
+            hook_text=record.hook_text,
+            reason=record.reason,
+            transcript_slice=record.transcript_slice,
+            score=record.score,
+            score_breakdown=record.score_breakdown or {},
+            hook_signals=record.hook_signals or {},
+            climax_signals=record.climax_signals or {},
+            cta_signals=record.cta_signals or {},
+            requirement_matches=record.requirement_matches or [],
+            rejection_reasons=record.rejection_reasons or [],
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+

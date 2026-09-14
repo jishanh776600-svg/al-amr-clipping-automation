@@ -323,6 +323,45 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.candidate_telemetry && (
+        <div className="mt-6 rounded-xl border border-sodium-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-sodium-400">
+              Autonomous Candidate Discovery (Step 15)
+            </h3>
+            <span className="text-[11px] font-mono text-ink-400">
+              Elapsed: {job.settings.candidate_telemetry.elapsed_s}s
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-ink-100">
+                {job.settings.candidate_telemetry.discovered_count}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Discovered</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-sky-400">
+                {job.settings.candidate_telemetry.scored_count}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Scored</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-emerald-500/30">
+              <div className="text-lg font-bold font-mono text-emerald-400">
+                {job.settings.candidate_telemetry.selected_count}
+              </div>
+              <div className="text-[11px] text-emerald-500/80 uppercase tracking-wider font-semibold">Selected Top-N</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-rose-500/30">
+              <div className="text-lg font-bold font-mono text-rose-400">
+                {job.settings.candidate_telemetry.rejected_count}
+              </div>
+              <div className="text-[11px] text-rose-400/80 uppercase tracking-wider">Rejected</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

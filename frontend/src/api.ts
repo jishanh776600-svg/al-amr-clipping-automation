@@ -178,6 +178,32 @@ export interface CampaignGuideline {
   created_at: string
 }
 
+export interface ClipCandidate {
+  id: string
+  job_id: string
+  rank: number
+  selected: boolean
+  status: 'discovered' | 'scored' | 'selected' | 'rejected'
+  start_s: number
+  end_s: number
+  duration_s: number
+  start_word: number
+  end_word: number
+  title: string
+  hook_text: string
+  reason: string
+  transcript_slice: string
+  score: number
+  score_breakdown: Record<string, any>
+  hook_signals: Record<string, any>
+  climax_signals: Record<string, any>
+  cta_signals: Record<string, any>
+  requirement_matches: Array<Record<string, any>>
+  rejection_reasons: string[]
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -743,6 +769,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(req),
     }),
+
+  getJobCandidates: (jobId: string, selectedOnly: boolean = false) => {
+    const q = selectedOnly ? '?selected_only=true' : ''
+    return request<ClipCandidate[]>(`/api/jobs/${jobId}/candidates${q}`)
+  },
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

@@ -414,3 +414,59 @@ class CampaignSpecificationRecord:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class ClipCandidateRecord:
+    id: str
+    job_id: str
+    rank: int = 0
+    selected: bool = False
+    status: str = "discovered"  # discovered, scored, selected, rejected
+    start_s: float = 0.0
+    end_s: float = 0.0
+    duration_s: float = 0.0
+    start_word: int = 0
+    end_word: int = 0
+    title: str = ""
+    hook_text: str = ""
+    reason: str = ""
+    transcript_slice: str = ""
+    score: float = 0.0
+    score_breakdown: dict[str, Any] = field(default_factory=dict)
+    hook_signals: dict[str, Any] = field(default_factory=dict)
+    climax_signals: dict[str, Any] = field(default_factory=dict)
+    cta_signals: dict[str, Any] = field(default_factory=dict)
+    requirement_matches: list[dict[str, Any]] = field(default_factory=list)
+    rejection_reasons: list[str] = field(default_factory=list)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClipCandidateRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            rank=row["rank"] if "rank" in keys else 0,
+            selected=bool(row["selected"]) if "selected" in keys else False,
+            status=row["status"] if "status" in keys else "discovered",
+            start_s=float(row["start_s"]),
+            end_s=float(row["end_s"]),
+            duration_s=float(row["duration_s"]),
+            start_word=row["start_word"] if "start_word" in keys else 0,
+            end_word=row["end_word"] if "end_word" in keys else 0,
+            title=row["title"] or "",
+            hook_text=row["hook_text"] or "",
+            reason=row["reason"] or "",
+            transcript_slice=row["transcript_slice"] or "",
+            score=float(row["score"] or 0.0),
+            score_breakdown=json.loads(row["score_breakdown"] or "{}") if "score_breakdown" in keys else {},
+            hook_signals=json.loads(row["hook_signals"] or "{}") if "hook_signals" in keys else {},
+            climax_signals=json.loads(row["climax_signals"] or "{}") if "climax_signals" in keys else {},
+            cta_signals=json.loads(row["cta_signals"] or "{}") if "cta_signals" in keys else {},
+            requirement_matches=json.loads(row["requirement_matches"] or "[]") if "requirement_matches" in keys else [],
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

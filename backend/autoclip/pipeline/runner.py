@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import paths
-from ..campaign import CampaignBrief, CampaignEvaluator, rank_and_filter_candidates
+from ..campaign import (
+    CampaignBrief,
+    CampaignEvaluator,
+    CampaignSpecification,
+    CandidateDiscoveryEngine,
+    candidates_to_clips,
+    rank_and_filter_candidates,
+)
 from ..config import Settings
 from ..config import load as load_settings
 from ..db import store
@@ -370,16 +377,111 @@ class PipelineRunner:
             self._finish_stage(stage)
             return existing
 
+        # Check for campaign specification or brief in job settings / database
+        campaign_spec: CampaignSpecification | None = None
+        spec_row = store.get_campaign_spec_for_job(self.job.id)
+        if spec_row:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(spec_row.spec)
+            except Exception as e:
+                log.warning("Failed parsing stored campaign spec for job %s: %s", self.job.id, e)
+
+        if not campaign_spec and "campaign_spec" in self.job.settings:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(self.job.settings["campaign_spec"])
+            except Exception as e:
+                log.warning("Failed parsing campaign_spec from settings for job %s: %s", self.job.id, e)
+
+        campaign_data = self.job.settings.get("campaign")
+        campaign = CampaignBrief.model_validate(campaign_data) if campaign_data else None
+        if not campaign and campaign_spec:
+            campaign = campaign_spec.to_campaign_brief()
+
+        # Step 15: Autonomous Candidate Discovery & Contradiction-Aware Scoring
+        discovery_engine = CandidateDiscoveryEngine(
+            campaign_spec=campaign_spec,
+            campaign_brief=campaign,
+            job_settings=self.job.settings,
+        )
+
+        def on_discovery_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
+            if meta:
+                if substage == "DISCOVERING_CANDIDATES":
+                    msg = f"Discovering candidates ({meta.get('discovered', 0)} found)"
+                elif substage == "SCORING_CANDIDATES":
+                    msg = f"Scoring candidates ({meta.get('scored', 0)}/{meta.get('discovered', 0)})"
+                elif substage == "FILTERING_CANDIDATES":
+                    msg = f"Filtering candidates ({meta.get('scored', 0)} evaluated)"
+                elif substage == "SELECTING_TOP_CANDIDATES":
+                    msg = f"Selecting top {meta.get('target', 3)} viral candidates"
+                elif substage == "CANDIDATES_READY":
+                    msg = f"Candidates ready: {meta.get('selected_count', 0)} selected ({meta.get('rejected_count', 0)} rejected)"
+                else:
+                    msg = substage
+            else:
+                msg = substage
+            self._emit(stage, frac, msg)
+
+        selected_candidates, all_candidates, telemetry = discovery_engine.run(
+            transcript=transcript,
+            job_id=self.job.id,
+            silences=silences,
+            on_progress=on_discovery_progress,
+        )
+
+        # Store discovery telemetry in job settings
+        self.job.settings["candidate_telemetry"] = telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
+
+        # Persist ALL candidates in SQLite
+        if all_candidates:
+            store.replace_clip_candidates(self.job.id, all_candidates)
+
+        if selected_candidates:
+            clips = candidates_to_clips(selected_candidates, self.job.id)
+            store.replace_clips(self.job.id, clips)
+
+            # Persist evaluations for UI/database backward compatibility
+            if campaign is not None:
+                evaluator = CampaignEvaluator(campaign)
+                for clip, cand in zip(clips, selected_candidates):
+                    words = transcript.slice(clip.start_word, clip.end_word)
+                    ev = evaluator.evaluate_candidate(
+                        candidate_id=clip.id,
+                        start_s=clip.start_s,
+                        end_s=clip.end_s,
+                        words=words,
+                        base_viral_score=float(cand.score),
+                        silences=silences,
+                        clip_title=clip.title,
+                        clip_hook=clip.hook,
+                        clip_reason=clip.reason,
+                    )
+                    store.create_campaign_evaluation(
+                        CampaignEvaluationRow(
+                            clip_id=ev.clip_id,
+                            campaign_id=ev.campaign_id,
+                            approved=True,
+                            final_score=round(cand.score / 10.0, 2),
+                            hook_score=round(cand.hook_signals.get("score", 5.0), 2),
+                            cta_score=round(cand.cta_signals.get("score", 0.0), 2),
+                            viral_score=round(cand.score / 10.0, 2),
+                            density_score=round(cand.score_breakdown.get("density", 80.0) / 10.0, 2),
+                            hard_failures=[],
+                            soft_warnings=cand.rejection_reasons,
+                            rule_results=ev.rule_results,
+                        )
+                    )
+            self._finish_stage(stage)
+            return clips
+
+        # Fallback to highlights.detect if discovery yielded no candidates
+        log.warning("Autonomous discovery yielded no candidates, falling back to highlight detection.")
         provider_name = self.job.provider or self.settings.active_provider
         provider = build_provider(provider_name, self.settings)
         config = detection_config(self.settings)
 
-        # Check for campaign in job settings
-        campaign_data = self.job.settings.get("campaign")
-        campaign = CampaignBrief.model_validate(campaign_data) if campaign_data else None
-
         if campaign is not None:
-            # Campaign duration limits guide candidate extraction
             config.min_duration_s = campaign.minimum_duration
             config.max_duration_s = campaign.maximum_duration
             config.max_clips = max(config.max_clips, campaign.maximum_candidates * 2)
@@ -400,7 +502,6 @@ class PipelineRunner:
             on_progress=self._stage_progress(stage),
         )
 
-        # Campaign Evaluation Phase
         if campaign is not None:
             self._emit(stage, 0.9, f"Evaluating {len(clips)} candidate(s) against campaign '{campaign.name}'")
             evaluator = CampaignEvaluator(campaign)
@@ -422,17 +523,13 @@ class PipelineRunner:
                 )
                 evaluations.append(ev)
 
-            # Filter rejected and rank survivors
             clips, ranked_evals = rank_and_filter_candidates(clips, evaluations, campaign)
             if not clips:
                 from .highlights import HighlightError
                 rejection_reasons = "; ".join(f for ev in evaluations for f in ev.hard_failures)
                 raise HighlightError(f"All candidates failed campaign rules: {rejection_reasons}")
 
-            # Persist filtered and ranked clips in SQLite
             store.replace_clips(self.job.id, clips)
-
-            # Persist campaign evaluations in SQLite
             for ev in ranked_evals:
                 store.create_campaign_evaluation(
                     CampaignEvaluationRow(
@@ -449,7 +546,6 @@ class PipelineRunner:
                         rule_results=ev.rule_results,
                     )
                 )
-
         else:
             store.replace_clips(self.job.id, clips)
 

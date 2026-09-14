@@ -42,6 +42,7 @@ from .auth import is_valid_token
 from .schemas import (
     CampaignGuidelineOut,
     CampaignSpecificationOut,
+    ClipCandidateOut,
     DriveGuidelineIn,
     JobCreateIn,
     JobManifestOut,
@@ -725,6 +726,20 @@ async def get_job_campaign_specification(job_id: str) -> CampaignSpecificationOu
         return CampaignSpecificationOut.model_validate(spec.to_dict())
 
     raise HTTPException(status_code=404, detail="No campaign specification found for this job.")
+
+
+@router.get("/{job_id}/candidates", response_model=list[ClipCandidateOut])
+async def get_job_candidates_endpoint(
+    job_id: str,
+    selected_only: bool = False,
+) -> list[ClipCandidateOut]:
+    """Retrieve all discovered clip candidates with narrative signals, score breakdown, and rejection reasons."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    candidates = await asyncio.to_thread(store.list_clip_candidates, job_id, selected_only=selected_only)
+    return [ClipCandidateOut.of(c) for c in candidates]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

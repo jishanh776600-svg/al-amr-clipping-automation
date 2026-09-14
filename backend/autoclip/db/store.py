@@ -15,6 +15,7 @@ from .models import (
     CampaignGuideline,
     CampaignSpecificationRecord,
     Clip,
+    ClipCandidateRecord,
     ClipEdit,
     ClipStatus,
     CampaignEvaluationRow,
@@ -250,9 +251,12 @@ def update_job(
     failed_at: str | None | _Unset = UNSET,
     cancelled_at: str | None | _Unset = UNSET,
     cancel_requested_at: str | None | _Unset = UNSET,
+    settings: dict[str, Any] | None = None,
 ) -> None:
     """Patch the supplied fields. Omitted fields are left untouched."""
     fields: dict[str, Any] = {"updated_at": utcnow()}
+    if settings is not None:
+        fields["settings_json"] = json.dumps(settings)
     for name, value in (
         ("status", status),
         ("current_stage", current_stage),
@@ -991,5 +995,83 @@ def update_campaign_spec(spec_id: str, **updates: Any) -> CampaignSpecificationR
     with connection() as conn:
         conn.execute(sql, params)
     return get_campaign_spec(spec_id)
+
+
+# --------------------------------------------------------------------------
+# Clip Candidates (Step 15)
+# --------------------------------------------------------------------------
+
+
+def replace_clip_candidates(
+    job_id: str, candidates: list[ClipCandidateRecord]
+) -> list[ClipCandidateRecord]:
+    """Atomically swap in a fresh set of candidate discovery records for a job."""
+    with connection() as conn:
+        conn.execute("DELETE FROM clip_candidates WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO clip_candidates (
+                id, job_id, rank, selected, status, start_s, end_s, duration_s,
+                start_word, end_word, title, hook_text, reason, transcript_slice,
+                score, score_breakdown, hook_signals, climax_signals, cta_signals,
+                requirement_matches, rejection_reasons, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    c.id,
+                    c.job_id,
+                    c.rank,
+                    1 if c.selected else 0,
+                    c.status,
+                    c.start_s,
+                    c.end_s,
+                    c.duration_s,
+                    c.start_word,
+                    c.end_word,
+                    c.title,
+                    c.hook_text,
+                    c.reason,
+                    c.transcript_slice,
+                    c.score,
+                    json.dumps(c.score_breakdown),
+                    json.dumps(c.hook_signals),
+                    json.dumps(c.climax_signals),
+                    json.dumps(c.cta_signals),
+                    json.dumps(c.requirement_matches),
+                    json.dumps(c.rejection_reasons),
+                    c.created_at,
+                    c.updated_at,
+                )
+                for c in candidates
+            ],
+        )
+    return candidates
+
+
+def list_clip_candidates(
+    job_id: str, selected_only: bool = False
+) -> list[ClipCandidateRecord]:
+    with connection() as conn:
+        if selected_only:
+            rows = conn.execute(
+                "SELECT * FROM clip_candidates WHERE job_id = ? AND selected = 1 ORDER BY rank ASC, score DESC",
+                (job_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM clip_candidates WHERE job_id = ? ORDER BY rank ASC, score DESC",
+                (job_id,),
+            ).fetchall()
+    return [ClipCandidateRecord.from_row(r) for r in rows]
+
+
+def get_clip_candidate(candidate_id: str) -> ClipCandidateRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM clip_candidates WHERE id = ?", (candidate_id,)
+        ).fetchone()
+    return ClipCandidateRecord.from_row(row) if row else None
 
 

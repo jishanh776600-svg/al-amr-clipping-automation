@@ -299,6 +299,40 @@ def _migration_v9(conn: sqlite3.Connection) -> None:
     conn.executescript(_V9)
 
 
+_V10 = """
+CREATE TABLE clip_candidates (
+    id                  TEXT PRIMARY KEY,
+    job_id              TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    rank                INTEGER NOT NULL DEFAULT 0,
+    selected            INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'discovered' CHECK (status IN ('discovered', 'scored', 'selected', 'rejected')),
+    start_s             REAL NOT NULL,
+    end_s               REAL NOT NULL,
+    duration_s          REAL NOT NULL,
+    start_word          INTEGER NOT NULL DEFAULT 0,
+    end_word            INTEGER NOT NULL DEFAULT 0,
+    title               TEXT NOT NULL DEFAULT '',
+    hook_text           TEXT NOT NULL DEFAULT '',
+    reason              TEXT NOT NULL DEFAULT '',
+    transcript_slice    TEXT NOT NULL DEFAULT '',
+    score               REAL NOT NULL DEFAULT 0.0,
+    score_breakdown     TEXT NOT NULL DEFAULT '{}',
+    hook_signals        TEXT NOT NULL DEFAULT '{}',
+    climax_signals      TEXT NOT NULL DEFAULT '{}',
+    cta_signals         TEXT NOT NULL DEFAULT '{}',
+    requirement_matches TEXT NOT NULL DEFAULT '[]',
+    rejection_reasons   TEXT NOT NULL DEFAULT '[]',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX idx_clip_candidates_job ON clip_candidates(job_id, selected, rank);
+"""
+
+
+def _migration_v10(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V10)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -311,6 +345,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v7,
     _migration_v8,
     _migration_v9,
+    _migration_v10,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

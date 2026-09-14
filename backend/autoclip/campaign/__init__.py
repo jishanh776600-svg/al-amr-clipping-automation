@@ -6,6 +6,12 @@ hook quality scoring, Call-to-Action detection, and explainable candidate rankin
 
 from __future__ import annotations
 
+from .candidate_discovery import (
+    CandidateDiscoveryEngine,
+    CandidateScore,
+    NarrativeMilestones,
+    candidates_to_clips,
+)
 from .cta import CtaAnalysis, analyze_cta
 from .density import DensityAnalysis, analyze_speech_density_and_silence
 from .evaluator import CampaignEvaluator
@@ -23,7 +29,9 @@ from .url_extractor import ExtractedUrlContent, extract_campaign_url
 
 __all__ = [
     "CampaignBrief",
+    "CandidateDiscoveryEngine",
     "CandidateEvaluation",
+    "CandidateScore",
     "CampaignEvaluator",
     "CampaignConflict",
     "CampaignNormalizer",
@@ -33,11 +41,13 @@ __all__ = [
     "ExtractedUrlContent",
     "HookAnalysis",
     "IngestedDocument",
+    "NarrativeMilestones",
     "RequirementItem",
     "RuleResult",
     "analyze_cta",
     "analyze_hook",
     "analyze_speech_density_and_silence",
+    "candidates_to_clips",
     "extract_campaign_url",
     "rank_and_filter_candidates",
 ]
