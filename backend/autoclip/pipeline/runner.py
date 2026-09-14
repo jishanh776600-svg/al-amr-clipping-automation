@@ -24,8 +24,10 @@ from ..campaign import (
     CampaignEvaluator,
     CampaignSpecification,
     CandidateDiscoveryEngine,
+    ClipAssemblyEngine,
     candidates_to_clips,
     rank_and_filter_candidates,
+    specifications_to_clips,
 )
 from ..config import Settings
 from ..config import load as load_settings
@@ -198,6 +200,10 @@ class PipelineRunner:
             transcript = self._stage_transcribe(audio)
             silences = self._load_or_detect_silences(audio)
             clips = await self._stage_highlights(transcript, silences)
+            if not clips:
+                log.info("Job %s completed with 0 production-ready clips.", self.job.id)
+                store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
+                return []
             crop_paths = self._stage_reframe(clips, transcript)
             self._stage_captions(clips, transcript)
             self._stage_export(clips, transcript, crop_paths)
@@ -438,42 +444,97 @@ class PipelineRunner:
             store.replace_clip_candidates(self.job.id, all_candidates)
 
         if selected_candidates:
-            clips = candidates_to_clips(selected_candidates, self.job.id)
-            store.replace_clips(self.job.id, clips)
+            # Step 16: Campaign-Aware Clip Assembly, Smart Boundaries & Quality Gate
+            assembly_engine = ClipAssemblyEngine(
+                campaign_spec=campaign_spec,
+                campaign_brief=campaign,
+                job_settings=self.job.settings,
+            )
 
-            # Persist evaluations for UI/database backward compatibility
-            if campaign is not None:
-                evaluator = CampaignEvaluator(campaign)
-                for clip, cand in zip(clips, selected_candidates):
-                    words = transcript.slice(clip.start_word, clip.end_word)
-                    ev = evaluator.evaluate_candidate(
-                        candidate_id=clip.id,
-                        start_s=clip.start_s,
-                        end_s=clip.end_s,
-                        words=words,
-                        base_viral_score=float(cand.score),
-                        silences=silences,
-                        clip_title=clip.title,
-                        clip_hook=clip.hook,
-                        clip_reason=clip.reason,
-                    )
-                    store.create_campaign_evaluation(
-                        CampaignEvaluationRow(
-                            clip_id=ev.clip_id,
-                            campaign_id=ev.campaign_id,
-                            approved=True,
-                            final_score=round(cand.score / 10.0, 2),
-                            hook_score=round(cand.hook_signals.get("score", 5.0), 2),
-                            cta_score=round(cand.cta_signals.get("score", 0.0), 2),
-                            viral_score=round(cand.score / 10.0, 2),
-                            density_score=round(cand.score_breakdown.get("density", 80.0) / 10.0, 2),
-                            hard_failures=[],
-                            soft_warnings=cand.rejection_reasons,
-                            rule_results=ev.rule_results,
+            def on_assembly_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
+                if meta:
+                    curr = meta.get("current", 1)
+                    total = meta.get("total", len(selected_candidates))
+                    if substage == "OPTIMIZING_BOUNDARIES":
+                        msg = f"Optimizing boundaries ({curr}/{total})"
+                    elif substage == "ANALYZING_HOOK":
+                        msg = f"Analyzing hook ({curr}/{total})"
+                    elif substage == "VERIFYING_PAYOFF":
+                        msg = f"Verifying climax & payoff ({curr}/{total})"
+                    elif substage == "VERIFYING_CTA":
+                        msg = f"Verifying CTA ({curr}/{total})"
+                    elif substage == "RUNNING_QUALITY_GATE":
+                        msg = f"Running quality gate ({curr}/{total})"
+                    elif substage == "CLIPS_APPROVED":
+                        msg = f"Clip {curr}/{total} approved"
+                    elif substage == "CLIPS_REJECTED":
+                        msg = f"Clip {curr}/{total} rejected"
+                    else:
+                        msg = substage
+                else:
+                    msg = substage
+                self._emit(stage, frac, msg)
+
+            approved_specs, all_specs, assembly_telemetry = assembly_engine.assemble(
+                candidates=selected_candidates,
+                transcript=transcript,
+                job_id=self.job.id,
+                source_id=self.source.id,
+                silences=silences,
+                on_progress=on_assembly_progress,
+            )
+
+            # Store assembly telemetry in job settings
+            self.job.settings["assembly_telemetry"] = assembly_telemetry
+            store.update_job(self.job.id, settings=self.job.settings)
+
+            # Persist ALL clip specifications in SQLite
+            if all_specs:
+                store.replace_clip_specifications(self.job.id, all_specs)
+
+            if approved_specs:
+                clips = specifications_to_clips(approved_specs, selected_candidates)
+                store.replace_clips(self.job.id, clips)
+
+                # Persist evaluations for UI/database backward compatibility
+                if campaign is not None:
+                    evaluator = CampaignEvaluator(campaign)
+                    for clip, spec in zip(clips, approved_specs):
+                        words = transcript.slice(clip.start_word, clip.end_word)
+                        cand = next((c for c in selected_candidates if c.id == spec.candidate_id), None)
+                        ev = evaluator.evaluate_candidate(
+                            candidate_id=clip.id,
+                            start_s=clip.start_s,
+                            end_s=clip.end_s,
+                            words=words,
+                            base_viral_score=float(cand.score if cand else spec.quality_score),
+                            silences=silences,
+                            clip_title=clip.title,
+                            clip_hook=clip.hook,
+                            clip_reason=clip.reason,
                         )
-                    )
-            self._finish_stage(stage)
-            return clips
+                        store.create_campaign_evaluation(
+                            CampaignEvaluationRow(
+                                clip_id=ev.clip_id,
+                                campaign_id=ev.campaign_id,
+                                approved=spec.is_approved,
+                                final_score=round(spec.quality_score / 10.0, 2),
+                                hook_score=round(float(spec.boundary_adjustments.get("hook_score", 5.0)), 2),
+                                cta_score=round(float(spec.boundary_adjustments.get("cta_score", 0.0) if "cta_score" in spec.boundary_adjustments else (10.0 if spec.cta_start else 0.0)), 2),
+                                viral_score=round(spec.quality_score / 10.0, 2),
+                                density_score=round(float(spec.telemetry.get("metrics", {}).get("words_per_sec", 2.0)) * 3.5, 2),
+                                hard_failures=spec.rejection_reasons,
+                                soft_warnings=spec.warnings,
+                                rule_results=ev.rule_results,
+                            )
+                        )
+                self._finish_stage(stage)
+                return clips
+            else:
+                log.warning("All candidate clips were rejected by PreRenderQualityGate.")
+                store.replace_clips(self.job.id, [])
+                self._finish_stage(stage)
+                return []
 
         # Fallback to highlights.detect if discovery yielded no candidates
         log.warning("Autonomous discovery yielded no candidates, falling back to highlight detection.")

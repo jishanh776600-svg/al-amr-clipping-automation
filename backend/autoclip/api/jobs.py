@@ -43,6 +43,7 @@ from .schemas import (
     CampaignGuidelineOut,
     CampaignSpecificationOut,
     ClipCandidateOut,
+    ClipSpecificationOut,
     DriveGuidelineIn,
     JobCreateIn,
     JobManifestOut,
@@ -740,6 +741,24 @@ async def get_job_candidates_endpoint(
 
     candidates = await asyncio.to_thread(store.list_clip_candidates, job_id, selected_only=selected_only)
     return [ClipCandidateOut.of(c) for c in candidates]
+
+
+@router.get("/{job_id}/clip-specifications", response_model=list[ClipSpecificationOut])
+async def get_job_clip_specifications_endpoint(
+    job_id: str,
+    approved_only: bool = False,
+    status: str | None = None,
+) -> list[ClipSpecificationOut]:
+    """Retrieve all production-ready clip specifications, boundary optimizations, and quality gate evaluations."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    specs = await asyncio.to_thread(
+        store.list_clip_specifications, job_id, approved_only=approved_only, status=status
+    )
+    return [ClipSpecificationOut.of(s) for s in specs]
+
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

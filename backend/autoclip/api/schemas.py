@@ -688,3 +688,66 @@ class ClipCandidateOut(BaseModel):
         )
 
 
+class ClipSpecificationOut(BaseModel):
+    id: str
+    job_id: str
+    candidate_id: str
+    source_id: str
+    start_time: float
+    end_time: float
+    duration: float
+    start_word: int
+    end_word: int
+    hook_start: float | None = None
+    hook_end: float | None = None
+    hook_type: str = ""
+    climax_start: float | None = None
+    climax_end: float | None = None
+    cta_start: float | None = None
+    cta_end: float | None = None
+    boundary_adjustments: dict[str, Any] = Field(default_factory=dict)
+    requirement_matches: list[dict[str, Any]] = Field(default_factory=list)
+    quality_score: float
+    quality_status: str
+    rejection_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    final_rank: int = 0
+    version: int = 1
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.ClipSpecificationRecord) -> ClipSpecificationOut:
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            candidate_id=record.candidate_id,
+            source_id=record.source_id,
+            start_time=record.start_time,
+            end_time=record.end_time,
+            duration=record.duration,
+            start_word=record.start_word,
+            end_word=record.end_word,
+            hook_start=record.hook_start,
+            hook_end=record.hook_end,
+            hook_type=record.hook_type,
+            climax_start=record.climax_start,
+            climax_end=record.climax_end,
+            cta_start=record.cta_start,
+            cta_end=record.cta_end,
+            boundary_adjustments=record.boundary_adjustments or {},
+            requirement_matches=record.requirement_matches or [],
+            quality_score=record.quality_score,
+            quality_status=record.quality_status,
+            rejection_reasons=record.rejection_reasons or [],
+            warnings=record.warnings or [],
+            final_rank=record.final_rank,
+            version=record.version,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+

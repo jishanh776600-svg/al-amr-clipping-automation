@@ -333,6 +333,44 @@ def _migration_v10(conn: sqlite3.Connection) -> None:
     conn.executescript(_V10)
 
 
+_V11 = """
+CREATE TABLE clip_specifications (
+    id                   TEXT PRIMARY KEY,
+    job_id               TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    candidate_id         TEXT NOT NULL REFERENCES clip_candidates(id) ON DELETE CASCADE,
+    source_id            TEXT NOT NULL,
+    start_time           REAL NOT NULL,
+    end_time             REAL NOT NULL,
+    duration             REAL NOT NULL,
+    start_word           INTEGER NOT NULL DEFAULT 0,
+    end_word             INTEGER NOT NULL DEFAULT 0,
+    hook_start           REAL,
+    hook_end             REAL,
+    hook_type            TEXT NOT NULL DEFAULT '',
+    climax_start         REAL,
+    climax_end           REAL,
+    cta_start            REAL,
+    cta_end              REAL,
+    boundary_adjustments TEXT NOT NULL DEFAULT '{}',
+    requirement_matches  TEXT NOT NULL DEFAULT '[]',
+    quality_score        REAL NOT NULL DEFAULT 0.0,
+    quality_status       TEXT NOT NULL DEFAULT 'QUALITY_PASS' CHECK (quality_status IN ('QUALITY_PASS', 'QUALITY_WARN', 'QUALITY_REJECT')),
+    rejection_reasons    TEXT NOT NULL DEFAULT '[]',
+    warnings             TEXT NOT NULL DEFAULT '[]',
+    final_rank           INTEGER NOT NULL DEFAULT 0,
+    version              INTEGER NOT NULL DEFAULT 1,
+    telemetry            TEXT NOT NULL DEFAULT '{}',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+CREATE INDEX idx_clip_specifications_job ON clip_specifications(job_id, quality_status, final_rank);
+"""
+
+
+def _migration_v11(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V11)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -346,6 +384,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v8,
     _migration_v9,
     _migration_v10,
+    _migration_v11,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -470,3 +470,71 @@ class ClipCandidateRecord:
             updated_at=row["updated_at"],
         )
 
+
+@dataclass
+class ClipSpecificationRecord:
+    id: str
+    job_id: str
+    candidate_id: str
+    source_id: str
+    start_time: float
+    end_time: float
+    duration: float
+    start_word: int = 0
+    end_word: int = 0
+    hook_start: float | None = None
+    hook_end: float | None = None
+    hook_type: str = ""
+    climax_start: float | None = None
+    climax_end: float | None = None
+    cta_start: float | None = None
+    cta_end: float | None = None
+    boundary_adjustments: dict[str, Any] = field(default_factory=dict)
+    requirement_matches: list[dict[str, Any]] = field(default_factory=list)
+    quality_score: float = 0.0
+    quality_status: str = "QUALITY_PASS"  # QUALITY_PASS, QUALITY_WARN, QUALITY_REJECT
+    rejection_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    final_rank: int = 0
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.quality_status in ("QUALITY_PASS", "QUALITY_WARN")
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClipSpecificationRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            candidate_id=row["candidate_id"],
+            source_id=row["source_id"],
+            start_time=float(row["start_time"]),
+            end_time=float(row["end_time"]),
+            duration=float(row["duration"]),
+            start_word=row["start_word"] if "start_word" in keys else 0,
+            end_word=row["end_word"] if "end_word" in keys else 0,
+            hook_start=float(row["hook_start"]) if ("hook_start" in keys and row["hook_start"] is not None) else None,
+            hook_end=float(row["hook_end"]) if ("hook_end" in keys and row["hook_end"] is not None) else None,
+            hook_type=row["hook_type"] if "hook_type" in keys and row["hook_type"] else "",
+            climax_start=float(row["climax_start"]) if ("climax_start" in keys and row["climax_start"] is not None) else None,
+            climax_end=float(row["climax_end"]) if ("climax_end" in keys and row["climax_end"] is not None) else None,
+            cta_start=float(row["cta_start"]) if ("cta_start" in keys and row["cta_start"] is not None) else None,
+            cta_end=float(row["cta_end"]) if ("cta_end" in keys and row["cta_end"] is not None) else None,
+            boundary_adjustments=json.loads(row["boundary_adjustments"] or "{}") if "boundary_adjustments" in keys else {},
+            requirement_matches=json.loads(row["requirement_matches"] or "[]") if "requirement_matches" in keys else [],
+            quality_score=float(row["quality_score"] or 0.0),
+            quality_status=row["quality_status"] or "QUALITY_PASS",
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            warnings=json.loads(row["warnings"] or "[]") if "warnings" in keys else [],
+            final_rank=row["final_rank"] if "final_rank" in keys else 0,
+            version=row["version"] if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

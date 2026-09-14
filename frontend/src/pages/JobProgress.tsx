@@ -362,6 +362,51 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.assembly_telemetry && (
+        <div className="mt-6 rounded-xl border border-sky-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-sky-400">
+              Smart Clip Assembly & Quality Gate (Step 16)
+            </h3>
+            <span className="text-[11px] font-mono text-ink-400">
+              Elapsed: {job.settings.assembly_telemetry.elapsed_s}s
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-ink-100">
+                {job.settings.assembly_telemetry.candidates_received}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Received</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-sky-400">
+                {job.settings.assembly_telemetry.clips_optimized}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Optimized</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-emerald-500/30">
+              <div className="text-lg font-bold font-mono text-emerald-400">
+                {job.settings.assembly_telemetry.clips_passed}
+              </div>
+              <div className="text-[11px] text-emerald-500/80 uppercase tracking-wider font-semibold">Passed</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-amber-500/30">
+              <div className="text-lg font-bold font-mono text-amber-400">
+                {job.settings.assembly_telemetry.clips_warned}
+              </div>
+              <div className="text-[11px] text-amber-400/80 uppercase tracking-wider font-semibold">Warned</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-rose-500/30">
+              <div className="text-lg font-bold font-mono text-rose-400">
+                {job.settings.assembly_telemetry.clips_rejected}
+              </div>
+              <div className="text-[11px] text-rose-400/80 uppercase tracking-wider">Rejected</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

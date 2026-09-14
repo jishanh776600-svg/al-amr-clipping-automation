@@ -17,6 +17,7 @@ from .models import (
     Clip,
     ClipCandidateRecord,
     ClipEdit,
+    ClipSpecificationRecord,
     ClipStatus,
     CampaignEvaluationRow,
     CampaignPreset,
@@ -1073,5 +1074,107 @@ def get_clip_candidate(candidate_id: str) -> ClipCandidateRecord | None:
             "SELECT * FROM clip_candidates WHERE id = ?", (candidate_id,)
         ).fetchone()
     return ClipCandidateRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Clip Specifications (Step 16)
+# --------------------------------------------------------------------------
+
+
+def replace_clip_specifications(
+    job_id: str, specs: list[ClipSpecificationRecord]
+) -> list[ClipSpecificationRecord]:
+    """Atomically swap in a fresh set of clip specifications for a job."""
+    with connection() as conn:
+        conn.execute("DELETE FROM clip_specifications WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO clip_specifications (
+                id, job_id, candidate_id, source_id, start_time, end_time,
+                duration, start_word, end_word, hook_start, hook_end, hook_type,
+                climax_start, climax_end, cta_start, cta_end,
+                boundary_adjustments, requirement_matches, quality_score,
+                quality_status, rejection_reasons, warnings, final_rank,
+                version, telemetry, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    s.id,
+                    s.job_id,
+                    s.candidate_id,
+                    s.source_id,
+                    s.start_time,
+                    s.end_time,
+                    s.duration,
+                    s.start_word,
+                    s.end_word,
+                    s.hook_start,
+                    s.hook_end,
+                    s.hook_type,
+                    s.climax_start,
+                    s.climax_end,
+                    s.cta_start,
+                    s.cta_end,
+                    json.dumps(s.boundary_adjustments),
+                    json.dumps(s.requirement_matches),
+                    s.quality_score,
+                    s.quality_status,
+                    json.dumps(s.rejection_reasons),
+                    json.dumps(s.warnings),
+                    s.final_rank,
+                    s.version,
+                    json.dumps(s.telemetry),
+                    s.created_at,
+                    s.updated_at,
+                )
+                for s in specs
+            ],
+        )
+    return specs
+
+
+def list_clip_specifications(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[ClipSpecificationRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM clip_specifications
+                WHERE job_id = ? AND quality_status IN ('QUALITY_PASS', 'QUALITY_WARN')
+                ORDER BY final_rank ASC, quality_score DESC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM clip_specifications
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY final_rank ASC, quality_score DESC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM clip_specifications
+                WHERE job_id = ?
+                ORDER BY final_rank ASC, quality_score DESC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [ClipSpecificationRecord.from_row(r) for r in rows]
+
+
+def get_clip_specification(spec_id: str) -> ClipSpecificationRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM clip_specifications WHERE id = ?", (spec_id,)
+        ).fetchone()
+    return ClipSpecificationRecord.from_row(row) if row else None
+
 
 

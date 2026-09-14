@@ -204,6 +204,36 @@ export interface ClipCandidate {
   updated_at: string
 }
 
+export interface ClipSpecification {
+  id: string
+  job_id: string
+  candidate_id: string
+  source_id: string
+  start_time: number
+  end_time: number
+  duration: number
+  start_word: number
+  end_word: number
+  hook_start?: number | null
+  hook_end?: number | null
+  hook_type: string
+  climax_start?: number | null
+  climax_end?: number | null
+  cta_start?: number | null
+  cta_end?: number | null
+  boundary_adjustments: Record<string, any>
+  requirement_matches: Array<Record<string, any>>
+  quality_score: number
+  quality_status: 'QUALITY_PASS' | 'QUALITY_WARN' | 'QUALITY_REJECT'
+  rejection_reasons: string[]
+  warnings: string[]
+  final_rank: number
+  version: number
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -773,6 +803,11 @@ export const api = {
   getJobCandidates: (jobId: string, selectedOnly: boolean = false) => {
     const q = selectedOnly ? '?selected_only=true' : ''
     return request<ClipCandidate[]>(`/api/jobs/${jobId}/candidates${q}`)
+  },
+
+  getJobClipSpecifications: (jobId: string, approvedOnly: boolean = false) => {
+    const q = approvedOnly ? '?approved_only=true' : ''
+    return request<ClipSpecification[]>(`/api/jobs/${jobId}/clip-specifications${q}`)
   },
 }
 
