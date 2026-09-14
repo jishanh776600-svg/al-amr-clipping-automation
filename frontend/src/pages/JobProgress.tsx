@@ -13,6 +13,7 @@ const STAGES = [
   { key: 'transcribe', label: 'Transcribe', note: 'Word-level timing' },
   { key: 'highlights', label: 'Highlights', note: 'Choosing the moments worth cutting' },
   { key: 'reframe', label: 'Reframe', note: 'Tracking the speaker into vertical' },
+  { key: 'retention', label: 'Retention & Pacing', note: 'Optimizing pacing, dead air & final quality' },
   { key: 'captions', label: 'Captions', note: 'Building subtitle timing' },
   { key: 'export', label: 'Export', note: 'Rendering clips' },
 ] as const
@@ -443,6 +444,73 @@ export function JobProgress() {
               <div className="text-[11px] text-purple-400/80 uppercase tracking-wider">Target 9:16</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {job.settings?.retention_telemetry && (
+        <div className="mt-6 rounded-xl border border-amber-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-amber-400">
+              AI-Assisted Retention Editing & Quality Gate (Step 18)
+            </h3>
+            <span className="text-[11px] font-mono text-ink-400">
+              Avg Retention Score: {Math.round(job.settings.retention_telemetry.avg_retention_score ?? 0)}/100
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-ink-100">
+                {job.settings.retention_telemetry.clips_analyzed ?? 0}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Analyzed</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-ink-800">
+              <div className="text-lg font-bold font-mono text-amber-400">
+                {job.settings.retention_telemetry.clips_optimized ?? 0}
+              </div>
+              <div className="text-[11px] text-ink-400 uppercase tracking-wider">Optimized</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-emerald-500/30">
+              <div className="text-lg font-bold font-mono text-emerald-400">
+                {job.settings.retention_telemetry.clips_passed ?? 0}
+              </div>
+              <div className="text-[11px] text-emerald-500/80 uppercase tracking-wider font-semibold">Passed</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-amber-500/30">
+              <div className="text-lg font-bold font-mono text-amber-400">
+                {job.settings.retention_telemetry.clips_warned ?? 0}
+              </div>
+              <div className="text-[11px] text-amber-400/80 uppercase tracking-wider font-semibold">Warned</div>
+            </div>
+            <div className="rounded-lg bg-ink-850 p-3 border border-rose-500/30">
+              <div className="text-lg font-bold font-mono text-rose-400">
+                {job.settings.retention_telemetry.clips_rejected ?? 0}
+              </div>
+              <div className="text-[11px] text-rose-400/80 uppercase tracking-wider">Rejected</div>
+            </div>
+          </div>
+          {job.settings.retention_telemetry.optimizations && job.settings.retention_telemetry.optimizations.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-ink-800/60">
+              <div className="text-xs font-mono text-ink-400 mb-2 font-semibold">Retention & Pacing Breakdown:</div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {job.settings.retention_telemetry.optimizations.map((opt: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between text-[11px] font-mono bg-ink-950/60 p-2 rounded border border-ink-800">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${opt.quality_status === 'FINAL_PASS' ? 'bg-emerald-400' : opt.quality_status === 'FINAL_WARN' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                      <span className="text-ink-200">Clip #{idx + 1}</span>
+                      <span className="text-ink-500">({opt.quality_status})</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-ink-400">
+                      <span>Pacing: <strong className="text-ink-200">{Math.round(opt.pacing_score ?? 0)}</strong></span>
+                      <span>Density: <strong className="text-ink-200">{(opt.speech_density_wps ?? 0).toFixed(1)} wps</strong></span>
+                      <span>Retention: <strong className="text-amber-400">{Math.round(opt.retention_score ?? 0)}</strong></span>
+                      <span>Final: <strong className="text-emerald-400">{Math.round(opt.final_score ?? 0)}</strong></span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

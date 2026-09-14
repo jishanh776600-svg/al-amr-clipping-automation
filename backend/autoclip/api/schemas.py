@@ -800,3 +800,54 @@ class VisualCompositionOut(BaseModel):
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
+
+
+class RetentionOptimizationOut(BaseModel):
+    id: str
+    clip_id: str
+    job_id: str
+    retention_score: float
+    final_score: float
+    quality_status: str
+    hook_strength: float
+    speech_density_wps: float
+    dead_air_percentage: float
+    pacing_score: float
+    narrative_score: float
+    editing_decisions: dict[str, Any] = Field(default_factory=dict)
+    visual_emphasis: list[dict[str, Any]] = Field(default_factory=list)
+    scoring_breakdown: dict[str, Any] = Field(default_factory=dict)
+    rejection_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    processing_time_s: float = 0.0
+    version: int = 1
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.RetentionOptimizationRecord) -> RetentionOptimizationOut:
+        return cls(
+            id=record.id,
+            clip_id=record.clip_id,
+            job_id=record.job_id,
+            retention_score=record.retention_score,
+            final_score=record.final_score,
+            quality_status=record.quality_status,
+            hook_strength=record.hook_strength,
+            speech_density_wps=record.speech_density_wps,
+            dead_air_percentage=record.dead_air_percentage,
+            pacing_score=record.pacing_score,
+            narrative_score=record.narrative_score,
+            editing_decisions=record.editing_decisions or {},
+            visual_emphasis=record.visual_emphasis or [],
+            scoring_breakdown=record.scoring_breakdown or {},
+            rejection_reasons=record.rejection_reasons or [],
+            warnings=record.warnings or [],
+            processing_time_s=record.processing_time_s,
+            version=record.version,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+

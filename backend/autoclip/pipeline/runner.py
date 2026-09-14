@@ -38,6 +38,7 @@ from ..db.models import (
     Export,
     Job,
     Source,
+    RetentionOptimizationRecord,
     VisualCompositionRecord,
     new_id,
     utcnow,
@@ -48,6 +49,7 @@ from . import Stage, captions, export, ffmpeg, highlights, prepare, transcribe
 from .prepare import Silence
 from .reframe import ReframeConfig, VisualCompositionEngine, build_crop_path
 from .reframe.croppath import CropPath
+from .retention import RetentionEditingEngine
 from .transcript import Transcript
 from .validator import validate_media_output
 
@@ -57,9 +59,10 @@ log = logging.getLogger(__name__)
 #: time on a mid-range machine — transcription and export dominate.
 STAGE_WEIGHTS: dict[Stage, float] = {
     Stage.PREPARE: 0.05,
-    Stage.TRANSCRIBE: 0.35,
+    Stage.TRANSCRIBE: 0.30,
     Stage.HIGHLIGHTS: 0.15,
-    Stage.REFRAME: 0.20,
+    Stage.REFRAME: 0.15,
+    Stage.RETENTION: 0.10,
     Stage.CAPTIONS: 0.02,
     Stage.EXPORT: 0.23,
 }
@@ -214,13 +217,23 @@ class PipelineRunner:
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []
             crop_paths = self._stage_reframe(clips, transcript)
-            approved_clips = [c for c in clips if c.id in crop_paths]
-            if not approved_clips:
+            reframe_approved = [c for c in clips if c.id in crop_paths]
+            if not reframe_approved:
                 log.info("Job %s completed with 0 approved visual compositions.", self.job.id)
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []
-            self._stage_captions(approved_clips, transcript)
-            self._stage_export(approved_clips, transcript, crop_paths)
+
+            # Step 18: Retention Editing & Final Quality Gate
+            final_clips, final_crop_paths = self._stage_retention(
+                reframe_approved, transcript, crop_paths, silences
+            )
+            if not final_clips:
+                log.info("Job %s completed with 0 clips passing Final Quality Gate.", self.job.id)
+                store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
+                return []
+
+            self._stage_captions(final_clips, transcript)
+            self._stage_export(final_clips, transcript, final_crop_paths)
         except JobCancelled:
             store.update_job(self.job.id, status="cancelled", finished_at=utcnow(), progress=0.0)
             raise
@@ -230,7 +243,7 @@ class PipelineRunner:
             raise
 
         store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
-        return approved_clips
+        return final_clips
 
     # -- stages ------------------------------------------------------------
 
@@ -727,6 +740,61 @@ class PipelineRunner:
 
         self._finish_stage(stage)
         return crop_paths
+
+    def _stage_retention(
+        self,
+        clips: list[Clip],
+        transcript: Transcript,
+        crop_paths: dict[str, CropPath],
+        silences: list[Silence] | None = None,
+    ) -> tuple[list[Clip], dict[str, CropPath]]:
+        stage = Stage.RETENTION
+        self._check_cancelled()
+        source_path = Path(self.source.path)
+
+        # Check for campaign specification
+        campaign_spec: CampaignSpecification | None = None
+        spec_row = store.get_campaign_spec_for_job(self.job.id)
+        if spec_row:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(spec_row.spec)
+            except Exception as e:
+                log.warning("Failed parsing campaign spec in retention stage: %s", e)
+        if not campaign_spec and "campaign_spec" in self.job.settings:
+            try:
+                campaign_spec = CampaignSpecification.from_dict(self.job.settings["campaign_spec"])
+            except Exception as e:
+                log.warning("Failed parsing campaign_spec setting: %s", e)
+
+        engine = RetentionEditingEngine(campaign_spec=campaign_spec)
+
+        def on_retention_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
+            self._emit(stage, frac, f"Optimizing retention ({substage})")
+
+        final_clips, final_crop_paths, records, telemetry = engine.optimize_and_rank(
+            clips=clips,
+            transcript=transcript,
+            crop_paths=crop_paths,
+            source_path=source_path,
+            job_id=self.job.id,
+            silences=silences,
+            on_progress=on_retention_progress,
+        )
+
+        # Persist retention optimizations in SQLite
+        if records:
+            store.replace_retention_optimizations(self.job.id, records)
+
+        # Update telemetry in job.settings
+        self.job.settings["retention_telemetry"] = telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
+
+        # Update clips in store to reflect tightened start/end timings and new ranks
+        if final_clips:
+            store.replace_clips(self.job.id, final_clips)
+
+        self._finish_stage(stage)
+        return final_clips, final_crop_paths
 
     def _stage_captions(self, clips: list[Clip], transcript: Transcript) -> None:
         stage = Stage.CAPTIONS

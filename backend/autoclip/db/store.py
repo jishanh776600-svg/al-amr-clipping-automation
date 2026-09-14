@@ -19,6 +19,7 @@ from .models import (
     ClipEdit,
     ClipSpecificationRecord,
     ClipStatus,
+    RetentionOptimizationRecord,
     VisualCompositionRecord,
     CampaignEvaluationRow,
     CampaignPreset,
@@ -1272,6 +1273,101 @@ def get_visual_composition(clip_id: str) -> VisualCompositionRecord | None:
             "SELECT * FROM visual_compositions WHERE clip_id = ?", (clip_id,)
         ).fetchone()
     return VisualCompositionRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Retention Optimizations (Step 18)
+# --------------------------------------------------------------------------
+
+
+def replace_retention_optimizations(
+    job_id: str, records: list[RetentionOptimizationRecord]
+) -> list[RetentionOptimizationRecord]:
+    """Atomically swap in retention optimization records for a job."""
+    with connection() as conn:
+        conn.execute("DELETE FROM retention_optimizations WHERE job_id = ?", (job_id,))
+        conn.executemany(
+            """
+            INSERT INTO retention_optimizations (
+                id, clip_id, job_id, retention_score, final_score, quality_status,
+                hook_strength, speech_density_wps, dead_air_percentage, pacing_score,
+                narrative_score, editing_decisions, visual_emphasis, scoring_breakdown,
+                rejection_reasons, warnings, processing_time_s, version, telemetry,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id,
+                    r.clip_id,
+                    r.job_id,
+                    r.retention_score,
+                    r.final_score,
+                    r.quality_status,
+                    r.hook_strength,
+                    r.speech_density_wps,
+                    r.dead_air_percentage,
+                    r.pacing_score,
+                    r.narrative_score,
+                    json.dumps(r.editing_decisions),
+                    json.dumps(r.visual_emphasis),
+                    json.dumps(r.scoring_breakdown),
+                    json.dumps(r.rejection_reasons),
+                    json.dumps(r.warnings),
+                    r.processing_time_s,
+                    r.version,
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                )
+                for r in records
+            ],
+        )
+    return records
+
+
+def list_retention_optimizations(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[RetentionOptimizationRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM retention_optimizations
+                WHERE job_id = ? AND quality_status IN ('FINAL_PASS', 'FINAL_WARN')
+                ORDER BY final_score DESC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM retention_optimizations
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY final_score DESC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM retention_optimizations
+                WHERE job_id = ?
+                ORDER BY final_score DESC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [RetentionOptimizationRecord.from_row(r) for r in rows]
+
+
+def get_retention_optimization(clip_id: str) -> RetentionOptimizationRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM retention_optimizations WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return RetentionOptimizationRecord.from_row(row) if row else None
+
 
 
 

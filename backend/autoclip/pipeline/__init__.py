@@ -19,6 +19,7 @@ class Stage(StrEnum):
     TRANSCRIBE = "transcribe"
     HIGHLIGHTS = "highlights"
     REFRAME = "reframe"
+    RETENTION = "retention"
     CAPTIONS = "captions"
     EXPORT = "export"
 
@@ -29,6 +30,7 @@ class Stage(StrEnum):
             Stage.TRANSCRIBE: "Transcribing",
             Stage.HIGHLIGHTS: "Finding highlights",
             Stage.REFRAME: "Reframing to vertical",
+            Stage.RETENTION: "Optimizing retention & pacing",
             Stage.CAPTIONS: "Generating captions",
             Stage.EXPORT: "Exporting clips",
         }[self]

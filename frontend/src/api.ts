@@ -259,6 +259,30 @@ export interface VisualComposition {
   updated_at: string
 }
 
+export interface RetentionOptimization {
+  id: string
+  clip_id: string
+  job_id: string
+  retention_score: number
+  final_score: number
+  quality_status: 'FINAL_PASS' | 'FINAL_WARN' | 'FINAL_REJECT'
+  hook_strength: number
+  speech_density_wps: number
+  dead_air_percentage: number
+  pacing_score: number
+  narrative_score: number
+  editing_decisions: Record<string, any>
+  visual_emphasis: Array<Record<string, any>>
+  scoring_breakdown: Record<string, any>
+  rejection_reasons: string[]
+  warnings: string[]
+  processing_time_s: number
+  version: number
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -838,6 +862,14 @@ export const api = {
   getJobVisualCompositions: (jobId: string, status?: string) => {
     const q = status ? `?status=${encodeURIComponent(status)}` : ''
     return request<VisualComposition[]>(`/api/jobs/${jobId}/visual-compositions${q}`)
+  },
+
+  getJobRetentionOptimizations: (jobId: string, approvedOnly: boolean = false, status?: string) => {
+    const params = new URLSearchParams()
+    if (approvedOnly) params.set('approved_only', 'true')
+    if (status) params.set('status', status)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<RetentionOptimization[]>(`/api/jobs/${jobId}/retention-optimizations${qs}`)
   },
 }
 

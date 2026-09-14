@@ -49,6 +49,7 @@ from .schemas import (
     JobManifestOut,
     JobOut,
     JobSettingsIn,
+    RetentionOptimizationOut,
     VisualCompositionOut,
     WorkerCallbackIn,
 )
@@ -775,6 +776,23 @@ async def get_job_visual_compositions_endpoint(
         store.list_visual_compositions, job_id, status=status
     )
     return [VisualCompositionOut.of(c) for c in compositions]
+
+
+@router.get("/{job_id}/retention-optimizations", response_model=list[RetentionOptimizationOut])
+async def get_job_retention_optimizations_endpoint(
+    job_id: str,
+    approved_only: bool = False,
+    status: str | None = None,
+) -> list[RetentionOptimizationOut]:
+    """Retrieve retention optimization records, pacing edits, and final quality gate evaluations."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(
+        store.list_retention_optimizations, job_id, approved_only=approved_only, status=status
+    )
+    return [RetentionOptimizationOut.of(r) for r in records]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

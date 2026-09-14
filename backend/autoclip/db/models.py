@@ -568,6 +568,32 @@ class VisualCompositionRecord:
     def is_approved(self) -> bool:
         return self.quality_status in ("VISUAL_PASS", "VISUAL_WARN")
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "clip_id": self.clip_id,
+            "job_id": self.job_id,
+            "source_width": self.source_width,
+            "source_height": self.source_height,
+            "output_width": self.output_width,
+            "output_height": self.output_height,
+            "crop_strategy": self.crop_strategy,
+            "tracking_strategy": self.tracking_strategy,
+            "tracking_confidence": self.tracking_confidence,
+            "camera_movement_score": self.camera_movement_score,
+            "smoothing_parameters": self.smoothing_parameters,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "quality_score": self.quality_score,
+            "quality_status": self.quality_status,
+            "warnings": self.warnings,
+            "rejection_reasons": self.rejection_reasons,
+            "version": self.version,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> VisualCompositionRecord:
         keys = row.keys()
@@ -597,3 +623,82 @@ class VisualCompositionRecord:
         )
 
 
+@dataclass
+class RetentionOptimizationRecord:
+    id: str
+    clip_id: str
+    job_id: str
+    retention_score: float = 0.0
+    final_score: float = 0.0
+    quality_status: str = "FINAL_PASS"  # FINAL_PASS, FINAL_WARN, FINAL_REJECT
+    hook_strength: float = 0.0
+    speech_density_wps: float = 0.0
+    dead_air_percentage: float = 0.0
+    pacing_score: float = 0.0
+    narrative_score: float = 0.0
+    editing_decisions: dict[str, Any] = field(default_factory=dict)
+    visual_emphasis: list[dict[str, Any]] = field(default_factory=list)
+    scoring_breakdown: dict[str, Any] = field(default_factory=dict)
+    rejection_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    processing_time_s: float = 0.0
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.quality_status in ("FINAL_PASS", "FINAL_WARN")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "clip_id": self.clip_id,
+            "job_id": self.job_id,
+            "retention_score": self.retention_score,
+            "final_score": self.final_score,
+            "quality_status": self.quality_status,
+            "hook_strength": self.hook_strength,
+            "speech_density_wps": self.speech_density_wps,
+            "dead_air_percentage": self.dead_air_percentage,
+            "pacing_score": self.pacing_score,
+            "narrative_score": self.narrative_score,
+            "editing_decisions": self.editing_decisions,
+            "visual_emphasis": self.visual_emphasis,
+            "scoring_breakdown": self.scoring_breakdown,
+            "rejection_reasons": self.rejection_reasons,
+            "warnings": self.warnings,
+            "processing_time_s": self.processing_time_s,
+            "version": self.version,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> RetentionOptimizationRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            job_id=row["job_id"],
+            retention_score=float(row["retention_score"] or 0.0),
+            final_score=float(row["final_score"] or 0.0),
+            quality_status=row["quality_status"] or "FINAL_PASS",
+            hook_strength=float(row["hook_strength"] or 0.0) if "hook_strength" in keys else 0.0,
+            speech_density_wps=float(row["speech_density_wps"] or 0.0) if "speech_density_wps" in keys else 0.0,
+            dead_air_percentage=float(row["dead_air_percentage"] or 0.0) if "dead_air_percentage" in keys else 0.0,
+            pacing_score=float(row["pacing_score"] or 0.0) if "pacing_score" in keys else 0.0,
+            narrative_score=float(row["narrative_score"] or 0.0) if "narrative_score" in keys else 0.0,
+            editing_decisions=json.loads(row["editing_decisions"] or "{}") if "editing_decisions" in keys else {},
+            visual_emphasis=json.loads(row["visual_emphasis"] or "[]") if "visual_emphasis" in keys else [],
+            scoring_breakdown=json.loads(row["scoring_breakdown"] or "{}") if "scoring_breakdown" in keys else {},
+            rejection_reasons=json.loads(row["rejection_reasons"] or "[]") if "rejection_reasons" in keys else [],
+            warnings=json.loads(row["warnings"] or "[]") if "warnings" in keys else [],
+            processing_time_s=float(row["processing_time_s"] or 0.0) if "processing_time_s" in keys else 0.0,
+            version=int(row["version"]) if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
