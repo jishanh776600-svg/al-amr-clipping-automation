@@ -679,6 +679,66 @@ def _migration_v20(conn: sqlite3.Connection) -> None:
     conn.executescript(_V20)
 
 
+# ---------------------------------------------------------------------------
+# Step 26: Multi-Account Destinations and Publishing Queue (V21)
+# ---------------------------------------------------------------------------
+
+_V21 = """
+CREATE TABLE publishing_destinations (
+    id                 TEXT PRIMARY KEY,
+    platform           TEXT NOT NULL CHECK (platform IN ('youtube', 'instagram', 'telegram')),
+    display_name       TEXT NOT NULL,
+    account_identifier TEXT NOT NULL DEFAULT '',
+    enabled            INTEGER NOT NULL DEFAULT 1,
+    priority           INTEGER NOT NULL DEFAULT 0,
+    config_metadata    TEXT NOT NULL DEFAULT '{}',
+    daily_limit        INTEGER NOT NULL DEFAULT 10,
+    spacing_seconds    INTEGER NOT NULL DEFAULT 3600,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+CREATE INDEX idx_destinations_platform ON publishing_destinations(platform, enabled);
+
+CREATE TABLE publishing_queue (
+    id                TEXT PRIMARY KEY,
+    job_id            TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    clip_id           TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    destination_id    TEXT NOT NULL REFERENCES publishing_destinations(id) ON DELETE CASCADE,
+    publication_id    TEXT REFERENCES publications(id) ON DELETE SET NULL,
+    platform          TEXT NOT NULL,
+    scheduled_at      TEXT NOT NULL,
+    priority          INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'QUEUED'
+                      CHECK (status IN (
+                          'QUEUED',
+                          'SCHEDULED',
+                          'CLAIMED',
+                          'PUBLISHING',
+                          'PUBLISHED',
+                          'FAILED_RETRYABLE',
+                          'FAILED_PERMANENT',
+                          'CANCELLED',
+                          'SKIPPED'
+                      )),
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    claimed_by        TEXT,
+    claimed_at        TEXT,
+    lease_expires_at  TEXT,
+    error_message     TEXT,
+    idempotency_key   TEXT NOT NULL UNIQUE,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX idx_queue_claim ON publishing_queue(status, scheduled_at, priority);
+CREATE INDEX idx_queue_job_clip ON publishing_queue(job_id, clip_id);
+CREATE INDEX idx_queue_destination ON publishing_queue(destination_id, scheduled_at);
+"""
+
+
+def _migration_v21(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V21)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -702,6 +762,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v18,
     _migration_v19,
     _migration_v20,
+    _migration_v21,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

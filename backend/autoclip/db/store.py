@@ -2219,3 +2219,415 @@ def update_publication(record: PublicationRecord) -> PublicationRecord:
             ),
         )
     return record
+
+
+# --------------------------------------------------------------------------
+# Step 26: Publishing Destinations (Multi-Account)
+# --------------------------------------------------------------------------
+
+
+def create_destination(dest: models.DestinationRecord) -> models.DestinationRecord:
+    """Insert or update a multi-account publishing destination."""
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO publishing_destinations (
+                id, platform, display_name, account_identifier,
+                enabled, priority, config_metadata, daily_limit,
+                spacing_seconds, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dest.id,
+                dest.platform,
+                dest.display_name,
+                dest.account_identifier,
+                1 if dest.enabled else 0,
+                dest.priority,
+                json.dumps(dest.config_metadata),
+                dest.daily_limit,
+                dest.spacing_seconds,
+                dest.created_at,
+                dest.updated_at,
+            ),
+        )
+    return dest
+
+
+def get_destination(destination_id: str) -> models.DestinationRecord | None:
+    """Retrieve destination by ID."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publishing_destinations WHERE id = ?", (destination_id,)
+        ).fetchone()
+    return models.DestinationRecord.from_row(row) if row else None
+
+
+def list_destinations(
+    platform: str | None = None, enabled_only: bool = False
+) -> list[models.DestinationRecord]:
+    """List publishing destinations with optional filters."""
+    query = "SELECT * FROM publishing_destinations WHERE 1=1"
+    params: list[Any] = []
+    if platform:
+        query += " AND platform = ?"
+        params.append(platform.strip().lower())
+    if enabled_only:
+        query += " AND enabled = 1"
+    query += " ORDER BY priority DESC, created_at ASC"
+
+    with connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [models.DestinationRecord.from_row(r) for r in rows]
+
+
+def update_destination(
+    destination_id: str,
+    *,
+    display_name: str | None = None,
+    account_identifier: str | None = None,
+    enabled: bool | None = None,
+    priority: int | None = None,
+    config_metadata: dict[str, Any] | None = None,
+    daily_limit: int | None = None,
+    spacing_seconds: int | None = None,
+) -> models.DestinationRecord | None:
+    """Update fields on a publishing destination."""
+    updates: list[str] = []
+    params: list[Any] = []
+    now = models.utcnow()
+
+    if display_name is not None:
+        updates.append("display_name = ?")
+        params.append(display_name.strip())
+    if account_identifier is not None:
+        updates.append("account_identifier = ?")
+        params.append(account_identifier.strip())
+    if enabled is not None:
+        updates.append("enabled = ?")
+        params.append(1 if enabled else 0)
+    if priority is not None:
+        updates.append("priority = ?")
+        params.append(priority)
+    if config_metadata is not None:
+        updates.append("config_metadata = ?")
+        params.append(json.dumps(config_metadata))
+    if daily_limit is not None:
+        updates.append("daily_limit = ?")
+        params.append(daily_limit)
+    if spacing_seconds is not None:
+        updates.append("spacing_seconds = ?")
+        params.append(spacing_seconds)
+
+    if not updates:
+        return get_destination(destination_id)
+
+    updates.append("updated_at = ?")
+    params.append(now)
+    params.append(destination_id)
+
+    with connection() as conn:
+        cursor = conn.execute(
+            f"UPDATE publishing_destinations SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_destination(destination_id)
+
+
+def delete_destination(destination_id: str) -> bool:
+    """Delete a publishing destination."""
+    with connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM publishing_destinations WHERE id = ?", (destination_id,)
+        )
+        return cursor.rowcount > 0
+
+
+# --------------------------------------------------------------------------
+# Step 26: Publishing Queue & Scheduling Operations
+# --------------------------------------------------------------------------
+
+
+def create_queue_item(item: models.PublishingQueueRecord) -> models.PublishingQueueRecord:
+    """Insert or replace a publishing queue item."""
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO publishing_queue (
+                id, job_id, clip_id, destination_id, publication_id,
+                platform, scheduled_at, priority, status, attempt_count,
+                claimed_by, claimed_at, lease_expires_at, error_message,
+                idempotency_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.id,
+                item.job_id,
+                item.clip_id,
+                item.destination_id,
+                item.publication_id,
+                item.platform,
+                item.scheduled_at,
+                item.priority,
+                item.status,
+                item.attempt_count,
+                item.claimed_by,
+                item.claimed_at,
+                item.lease_expires_at,
+                item.error_message,
+                item.idempotency_key,
+                item.created_at,
+                item.updated_at,
+            ),
+        )
+    return item
+
+
+def get_queue_item(queue_id: str) -> models.PublishingQueueRecord | None:
+    """Retrieve queue item by ID."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publishing_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+    return models.PublishingQueueRecord.from_row(row) if row else None
+
+
+def get_queue_item_by_idempotency_key(key: str) -> models.PublishingQueueRecord | None:
+    """Retrieve queue item by its unique idempotency key."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publishing_queue WHERE idempotency_key = ?", (key,)
+        ).fetchone()
+    return models.PublishingQueueRecord.from_row(row) if row else None
+
+
+def list_queue_items(
+    job_id: str | None = None,
+    clip_id: str | None = None,
+    destination_id: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> list[models.PublishingQueueRecord]:
+    """List queue items matching optional filters, ordered by scheduled time."""
+    query = "SELECT * FROM publishing_queue WHERE 1=1"
+    params: list[Any] = []
+
+    if job_id:
+        query += " AND job_id = ?"
+        params.append(job_id)
+    if clip_id:
+        query += " AND clip_id = ?"
+        params.append(clip_id)
+    if destination_id:
+        query += " AND destination_id = ?"
+        params.append(destination_id)
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+
+    query += " ORDER BY priority DESC, scheduled_at ASC LIMIT ?"
+    params.append(limit)
+
+    with connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [models.PublishingQueueRecord.from_row(r) for r in rows]
+
+
+def count_destination_publications_today(destination_id: str) -> int:
+    """Count how many successful publications have been made to a destination today (UTC)."""
+    today_prefix = models.utcnow()[:10]  # "YYYY-MM-DD"
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM publishing_queue
+            WHERE destination_id = ? AND status = 'PUBLISHED' AND substr(updated_at, 1, 10) = ?
+            """,
+            (destination_id, today_prefix),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def get_latest_scheduled_time_for_destination(destination_id: str) -> str | None:
+    """Get the latest scheduled_at timestamp for pending/active items for this destination."""
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT MAX(scheduled_at) FROM publishing_queue
+            WHERE destination_id = ? AND status IN ('QUEUED', 'SCHEDULED', 'CLAIMED', 'PUBLISHING', 'PUBLISHED')
+            """,
+            (destination_id,),
+        ).fetchone()
+    return str(row[0]) if (row and row[0]) else None
+
+
+def recover_stale_queue_claims(lease_seconds: int = 300) -> int:
+    """Recover items stuck in CLAIMED or PUBLISHING whose lease has expired."""
+    now = models.utcnow()
+    with connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE publishing_queue
+            SET status = 'QUEUED',
+                claimed_by = NULL,
+                claimed_at = NULL,
+                lease_expires_at = NULL,
+                updated_at = ?
+            WHERE status IN ('CLAIMED', 'PUBLISHING')
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < ?
+            """,
+            (now, now),
+        )
+        return cursor.rowcount
+
+
+def claim_next_queue_item(
+    worker_id: str, lease_seconds: int = 300
+) -> models.PublishingQueueRecord | None:
+    """Safely and atomically claim the highest-priority, due item from the publishing queue."""
+    from datetime import datetime, timedelta, timezone
+
+    now_dt = datetime.now(timezone.utc)
+    now_str = now_dt.isoformat()
+    lease_expires_str = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+
+    with connection() as conn:
+        # 1. Recover expired leases first
+        conn.execute(
+            """
+            UPDATE publishing_queue
+            SET status = 'QUEUED',
+                claimed_by = NULL,
+                claimed_at = NULL,
+                lease_expires_at = NULL,
+                updated_at = ?
+            WHERE status IN ('CLAIMED', 'PUBLISHING')
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < ?
+            """,
+            (now_str, now_str),
+        )
+
+        # 2. Find next eligible candidate
+        row = conn.execute(
+            """
+            SELECT id FROM publishing_queue
+            WHERE status IN ('QUEUED', 'SCHEDULED')
+              AND scheduled_at <= ?
+            ORDER BY priority DESC, scheduled_at ASC, created_at ASC
+            LIMIT 1
+            """,
+            (now_str,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        queue_id = row[0]
+
+        # 3. Atomically update and claim
+        conn.execute(
+            """
+            UPDATE publishing_queue
+            SET status = 'CLAIMED',
+                claimed_by = ?,
+                claimed_at = ?,
+                lease_expires_at = ?,
+                attempt_count = attempt_count + 1,
+                updated_at = ?
+            WHERE id = ? AND status IN ('QUEUED', 'SCHEDULED')
+            """,
+            (worker_id, now_str, lease_expires_str, now_str, queue_id),
+        )
+
+        claimed_row = conn.execute(
+            "SELECT * FROM publishing_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+
+    return models.PublishingQueueRecord.from_row(claimed_row) if claimed_row else None
+
+
+def update_queue_item_status(
+    queue_id: str,
+    status: models.QueueStatus,
+    *,
+    error_message: str | None = None,
+    publication_id: str | None = None,
+) -> models.PublishingQueueRecord | None:
+    """Transition queue item to a new status with optional error or publication linkage."""
+    now = models.utcnow()
+    updates = ["status = ?", "updated_at = ?"]
+    params: list[Any] = [status, now]
+
+    if error_message is not None:
+        updates.append("error_message = ?")
+        params.append(error_message)
+
+    if publication_id is not None:
+        updates.append("publication_id = ?")
+        params.append(publication_id)
+
+    if status in ("PUBLISHED", "FAILED_PERMANENT", "CANCELLED", "SKIPPED"):
+        updates.append("lease_expires_at = NULL")
+
+    params.append(queue_id)
+
+    with connection() as conn:
+        cursor = conn.execute(
+            f"UPDATE publishing_queue SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_queue_item(queue_id)
+
+
+def reschedule_queue_item(
+    queue_id: str, new_scheduled_at: str
+) -> models.PublishingQueueRecord | None:
+    """Reschedule a queue item to a new scheduled time, resetting claims."""
+    now = models.utcnow()
+    with connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE publishing_queue
+            SET scheduled_at = ?,
+                status = 'SCHEDULED',
+                claimed_by = NULL,
+                claimed_at = NULL,
+                lease_expires_at = NULL,
+                error_message = NULL,
+                updated_at = ?
+            WHERE id = ? AND status NOT IN ('PUBLISHED', 'CANCELLED')
+            """,
+            (new_scheduled_at, now, queue_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_queue_item(queue_id)
+
+
+def cancel_queue_item(
+    queue_id: str, reason: str = "Cancelled by operator"
+) -> models.PublishingQueueRecord | None:
+    """Cancel a queue item."""
+    now = models.utcnow()
+    with connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE publishing_queue
+            SET status = 'CANCELLED',
+                claimed_by = NULL,
+                lease_expires_at = NULL,
+                error_message = ?,
+                updated_at = ?
+            WHERE id = ? AND status != 'PUBLISHED'
+            """,
+            (reason, now, queue_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+    return get_queue_item(queue_id)
+

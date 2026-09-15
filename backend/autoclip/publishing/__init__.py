@@ -2,6 +2,7 @@
 
 from .base import BasePublisher, PublishingMetadata, PublishingResult
 from .instagram import InstagramPublisher
+from .orchestrator import PublishingOrchestrator
 from .publisher import publish_clip, publish_to_telegram
 from .service import PublishingService
 from .telegram import TelegramPublisher
@@ -15,6 +16,8 @@ __all__ = [
     "YouTubePublisher",
     "InstagramPublisher",
     "PublishingService",
+    "PublishingOrchestrator",
     "publish_clip",
     "publish_to_telegram",
 ]
+

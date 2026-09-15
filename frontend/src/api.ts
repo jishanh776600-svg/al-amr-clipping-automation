@@ -490,6 +490,71 @@ export interface PublishingTelemetry {
   total_attempts: number
 }
 
+// ---------------------------------------------------------------------------
+// Step 26: Publishing Destinations & Queue Types
+// ---------------------------------------------------------------------------
+
+export interface Destination {
+  id: string
+  platform: 'youtube' | 'instagram' | 'telegram'
+  display_name: string
+  account_identifier: string
+  enabled: boolean
+  priority: number
+  config_metadata: Record<string, any>
+  daily_limit: number
+  spacing_seconds: number
+  created_at: string
+  updated_at: string
+}
+
+export type QueueStatus =
+  | 'QUEUED'
+  | 'SCHEDULED'
+  | 'CLAIMED'
+  | 'PUBLISHING'
+  | 'PUBLISHED'
+  | 'FAILED_RETRYABLE'
+  | 'FAILED_PERMANENT'
+  | 'CANCELLED'
+  | 'SKIPPED'
+
+export interface QueueItem {
+  id: string
+  job_id: string
+  clip_id: string
+  destination_id: string
+  destination_name?: string
+  platform: string
+  scheduled_at: string
+  priority: number
+  status: QueueStatus
+  attempt_count: number
+  claimed_by?: string | null
+  claimed_at?: string | null
+  lease_expires_at?: string | null
+  error_message?: string | null
+  publication_id?: string | null
+  idempotency_key: string
+  created_at: string
+  updated_at: string
+}
+
+export interface QueueTelemetry {
+  total: number
+  queued: number
+  scheduled: number
+  claimed: number
+  publishing: number
+  published: number
+  failed_retryable: number
+  failed_permanent: number
+  failed: number
+  cancelled: number
+  skipped: number
+}
+
+
 
 export interface JobManifestClipExport {
   export_id: string
@@ -1242,7 +1307,88 @@ export const api = {
     request<Publication>(`/api/publications/${publicationId}/retry?dry_run=${dryRun}`, {
       method: 'POST',
     }),
+
+  // Step 26: Multi-Account Destinations & Queue Orchestration
+  listDestinations: (platform?: string, enabledOnly = false) => {
+    const params = new URLSearchParams()
+    if (platform) params.set('platform', platform)
+    if (enabledOnly) params.set('enabled_only', 'true')
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<Destination[]>(`/api/publishing/destinations${qs}`)
+  },
+
+  createDestination: (dest: Partial<Destination>) =>
+    request<Destination>('/api/publishing/destinations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dest),
+    }),
+
+  updateDestination: (id: string, patch: Partial<Destination>) =>
+    request<Destination>(`/api/publishing/destinations/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  deleteDestination: (id: string) =>
+    request<{ ok: boolean }>(`/api/publishing/destinations/${id}`, {
+      method: 'DELETE',
+    }),
+
+  listQueue: (params?: {
+    job_id?: string
+    clip_id?: string
+    destination_id?: string
+    status?: string
+    limit?: number
+  }) => {
+    const sp = new URLSearchParams()
+    if (params?.job_id) sp.set('job_id', params.job_id)
+    if (params?.clip_id) sp.set('clip_id', params.clip_id)
+    if (params?.destination_id) sp.set('destination_id', params.destination_id)
+    if (params?.status) sp.set('status', params.status)
+    if (params?.limit) sp.set('limit', String(params.limit))
+    const qs = sp.toString() ? `?${sp.toString()}` : ''
+    return request<QueueItem[]>(`/api/publishing/queue${qs}`)
+  },
+
+  getQueueTelemetry: (jobId?: string) => {
+    const qs = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''
+    return request<QueueTelemetry>(`/api/publishing/queue/telemetry${qs}`)
+  },
+
+  scheduleClipPublication: (
+    jobId: string,
+    clipId: string,
+    data: { destination_id: string; scheduled_at?: string; priority?: number }
+  ) =>
+    request<QueueItem>(`/api/jobs/${jobId}/clips/${clipId}/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  cancelQueueItem: (queueId: string, reason?: string) =>
+    request<QueueItem>(`/api/publishing/queue/${queueId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason || 'Cancelled by operator' }),
+    }),
+
+  rescheduleQueueItem: (queueId: string, newScheduledAt: string) =>
+    request<QueueItem>(`/api/publishing/queue/${queueId}/reschedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_scheduled_at: newScheduledAt }),
+    }),
+
+  processNextQueueItem: (workerId = 'worker-ui', dryRun = false) =>
+    request<QueueItem | null>(`/api/publishing/queue/process-next?worker_id=${workerId}&dry_run=${dryRun}`, {
+      method: 'POST',
+    }),
 }
+
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */
 export function formatDuration(seconds: number): string {

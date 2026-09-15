@@ -1272,6 +1272,135 @@ class PublishingTelemetryOut(BaseModel):
     total_attempts: int = 0
 
 
+# ---------------------------------------------------------------------------
+# Step 26: Publishing Destinations & Queue Schemas
+# ---------------------------------------------------------------------------
+
+
+class DestinationIn(BaseModel):
+    platform: Literal["youtube", "instagram", "telegram"]
+    display_name: str
+    account_identifier: str = ""
+    enabled: bool = True
+    priority: int = 0
+    config_metadata: dict[str, Any] = Field(default_factory=dict)
+    daily_limit: int = 10
+    spacing_seconds: int = 3600
+
+
+class DestinationUpdateIn(BaseModel):
+    display_name: str | None = None
+    account_identifier: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    config_metadata: dict[str, Any] | None = None
+    daily_limit: int | None = None
+    spacing_seconds: int | None = None
+
+
+class DestinationOut(BaseModel):
+    id: str
+    platform: str
+    display_name: str
+    account_identifier: str
+    enabled: bool
+    priority: int
+    config_metadata: dict[str, Any] = Field(default_factory=dict)
+    daily_limit: int
+    spacing_seconds: int
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.DestinationRecord) -> "DestinationOut":
+        return cls(
+            id=record.id,
+            platform=record.platform,
+            display_name=record.display_name,
+            account_identifier=record.account_identifier,
+            enabled=record.enabled,
+            priority=record.priority,
+            config_metadata=record.config_metadata or {},
+            daily_limit=record.daily_limit,
+            spacing_seconds=record.spacing_seconds,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class SchedulePublicationIn(BaseModel):
+    destination_id: str
+    scheduled_at: str | None = None
+    priority: int = 0
+
+
+class RescheduleQueueIn(BaseModel):
+    new_scheduled_at: str
+
+
+class CancelQueueIn(BaseModel):
+    reason: str = "Cancelled by operator"
+
+
+class QueueItemOut(BaseModel):
+    id: str
+    job_id: str
+    clip_id: str
+    destination_id: str
+    destination_name: str = ""
+    platform: str
+    scheduled_at: str
+    priority: int
+    status: str
+    attempt_count: int = 0
+    claimed_by: str | None = None
+    claimed_at: str | None = None
+    lease_expires_at: str | None = None
+    error_message: str | None = None
+    publication_id: str | None = None
+    idempotency_key: str
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.PublishingQueueRecord, destination_name: str = "") -> "QueueItemOut":
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            clip_id=record.clip_id,
+            destination_id=record.destination_id,
+            destination_name=destination_name,
+            platform=record.platform,
+            scheduled_at=record.scheduled_at,
+            priority=record.priority,
+            status=record.status,
+            attempt_count=record.attempt_count,
+            claimed_by=record.claimed_by,
+            claimed_at=record.claimed_at,
+            lease_expires_at=record.lease_expires_at,
+            error_message=record.error_message,
+            publication_id=record.publication_id,
+            idempotency_key=record.idempotency_key,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class QueueTelemetryOut(BaseModel):
+    total: int = 0
+    queued: int = 0
+    scheduled: int = 0
+    claimed: int = 0
+    publishing: int = 0
+    published: int = 0
+    failed_retryable: int = 0
+    failed_permanent: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    skipped: int = 0
+
+
+
 
 
 

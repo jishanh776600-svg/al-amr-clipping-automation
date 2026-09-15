@@ -10,8 +10,10 @@ import {
   type ClipApproval,
   type ClipMetadata,
   type CropPath,
+  type Destination,
   type Job,
   type Publication,
+  type QueueItem,
   type Word,
 } from '../api'
 import { CaptionEditor } from '../components/CaptionEditor'
@@ -59,6 +61,16 @@ export function Review() {
     'instagram',
     'telegram',
   ])
+
+  // Step 26: Multi-Account Scheduling & Queue State
+  const [destinations, setDestinations] = useState<Destination[]>([])
+  const [selectedDestinationId, setSelectedDestinationId] = useState<string>('')
+  const [scheduledTime, setScheduledTime] = useState<string>('')
+  const [schedulePriority, setSchedulePriority] = useState<number>(0)
+  const [queueItems, setQueueItems] = useState<QueueItem[]>([])
+  const [schedulingLoading, setSchedulingLoading] = useState(false)
+  const [queueNotice, setQueueNotice] = useState<string | null>(null)
+
 
   useEffect(() => {
     if (!jobId) return
@@ -124,6 +136,25 @@ export function Review() {
           setPublishingNotice(null)
         })
         .catch(() => setPublications([]))
+
+      // Fetch Step 26 Multi-Account Destinations & Queue Items
+      api
+        .listDestinations()
+        .then((dests) => {
+          setDestinations(dests)
+          if (dests.length > 0 && !selectedDestinationId) {
+            setSelectedDestinationId(dests[0].id)
+          }
+        })
+        .catch(() => setDestinations([]))
+
+      api
+        .listQueue({ job_id: jobId, clip_id: selected.id })
+        .then((items) => {
+          setQueueItems(items)
+          setQueueNotice(null)
+        })
+        .catch(() => setQueueItems([]))
     }
   }, [selected?.id, jobId])
 
@@ -246,6 +277,60 @@ export function Review() {
       setError(err as Error)
     } finally {
       setPublishingLoading(false)
+    }
+  }
+
+  // Step 26: Queue scheduling handlers
+  const handleScheduleClip = async () => {
+    if (!jobId || !selected || !selectedDestinationId) return
+    setSchedulingLoading(true)
+    setQueueNotice(null)
+    try {
+      const scheduledIso = scheduledTime ? new Date(scheduledTime).toISOString() : undefined
+      await api.scheduleClipPublication(jobId, selected.id, {
+        destination_id: selectedDestinationId,
+        scheduled_at: scheduledIso,
+        priority: schedulePriority,
+      })
+      const items = await api.listQueue({ job_id: jobId, clip_id: selected.id })
+      setQueueItems(items)
+      setQueueNotice('Clip scheduled successfully into multi-account publishing queue!')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setSchedulingLoading(false)
+    }
+  }
+
+  const handleCancelQueueItem = async (queueId: string) => {
+    if (!jobId || !selected) return
+    setSchedulingLoading(true)
+    try {
+      await api.cancelQueueItem(queueId, 'Cancelled by operator in review')
+      const items = await api.listQueue({ job_id: jobId, clip_id: selected.id })
+      setQueueItems(items)
+      setQueueNotice('Queue item cancelled.')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setSchedulingLoading(false)
+    }
+  }
+
+  const handleProcessQueueNow = async (workerId = 'worker-review') => {
+    if (!jobId || !selected) return
+    setSchedulingLoading(true)
+    try {
+      await api.processNextQueueItem(workerId)
+      const items = await api.listQueue({ job_id: jobId, clip_id: selected.id })
+      setQueueItems(items)
+      const allPubs = await api.getJobPublications(jobId)
+      setPublications(allPubs)
+      setQueueNotice('Queue item processed.')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setSchedulingLoading(false)
     }
   }
 
@@ -1031,6 +1116,174 @@ export function Review() {
                 </div>
               </div>
             </section>
+          )}
+
+          {/* Step 26: Multi-Account Scheduling & Queue Orchestration Section */}
+          {selected && (
+            <section className="rounded-lg border border-indigo-500/30 bg-ink-850/60 p-4 space-y-4">
+              <div className="flex items-center justify-between border-b border-ink-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-display text-sm font-semibold text-ink-100">
+                    Step 26: Multi-Account Scheduling & Queue
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+                    ORCHESTRATOR
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleProcessQueueNow()}
+                    disabled={schedulingLoading}
+                    className="rounded border border-indigo-500/40 bg-indigo-950/50 px-2 py-0.5 text-[10px] text-indigo-300 hover:bg-indigo-900/60 disabled:opacity-40"
+                  >
+                    Process Next Due ⚡
+                  </button>
+                </div>
+              </div>
+
+              {queueNotice && (
+                <div className="rounded border border-indigo-500/30 bg-indigo-950/50 p-2.5 text-xs text-indigo-300 flex items-center justify-between">
+                  <span>{queueNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => setQueueNotice(null)}
+                    className="text-ink-400 hover:text-white text-xs ml-2"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Destination & Scheduling Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-400 block mb-1">
+                      Publishing Destination
+                    </label>
+                    <select
+                      value={selectedDestinationId}
+                      onChange={(e) => setSelectedDestinationId(e.target.value)}
+                      className="field text-xs w-full"
+                    >
+                      {destinations.map((d) => (
+                        <option key={d.id} value={d.id} className="bg-ink-900">
+                          {d.display_name} ({d.platform}) - Limit: {d.daily_limit}/day
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-400 block mb-1">
+                      Schedule Time (UTC / Optional)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={scheduledTime}
+                      onChange={(e) => setScheduledTime(e.target.value)}
+                      placeholder="Leave empty for immediate queue"
+                      className="field text-xs w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-ink-400 block mb-1">
+                      Queue Priority
+                    </label>
+                    <select
+                      value={schedulePriority}
+                      onChange={(e) => setSchedulePriority(Number(e.target.value))}
+                      className="field text-xs w-full"
+                    >
+                      <option value={0} className="bg-ink-900">Normal (0)</option>
+                      <option value={10} className="bg-ink-900">High (10)</option>
+                      <option value={20} className="bg-ink-900">Urgent (20)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-ink-800">
+                  <span className="text-[11px] text-ink-500">
+                    Rate limits, destination spacing, and quality gates enforced automatically.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleScheduleClip}
+                    disabled={schedulingLoading || approval?.current_status !== 'APPROVED' || !selectedDestinationId}
+                    className="btn btn-primary text-xs py-1 px-3 disabled:opacity-40"
+                  >
+                    {schedulingLoading ? 'Scheduling…' : 'Add to Queue'}
+                  </button>
+                </div>
+
+                {/* Scheduled Items List for This Clip */}
+                {queueItems.length > 0 && (
+                  <div className="border-t border-ink-800/80 pt-3 space-y-2">
+                    <p className="text-[11px] font-semibold text-ink-300">Queue Items for this Clip:</p>
+                    <div className="space-y-1.5">
+                      {queueItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between bg-ink-900/80 border border-ink-800 rounded p-2.5"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-ink-100 uppercase text-[10px] tracking-wide">
+                                {item.destination_name || item.destination_id}
+                              </span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase border ${
+                                  item.status === 'PUBLISHED'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                    : item.status === 'PUBLISHING' || item.status === 'CLAIMED'
+                                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                                    : item.status === 'SCHEDULED' || item.status === 'QUEUED'
+                                    ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                    : item.status === 'FAILED_RETRYABLE'
+                                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                    : item.status === 'FAILED_PERMANENT'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                    : 'bg-ink-700 text-ink-300 border-ink-600'
+                                }`}
+                              >
+                                {item.status}
+                              </span>
+                              <span className="text-ink-500 text-[10px]">
+                                Pri: {item.priority}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-ink-400 font-mono">
+                              Scheduled: {new Date(item.scheduled_at).toLocaleString()}
+                            </div>
+                            {item.error_message && (
+                              <p className="text-[10px] text-rose-400 font-mono line-clamp-1" title={item.error_message}>
+                                {item.error_message}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {['QUEUED', 'SCHEDULED', 'FAILED_RETRYABLE'].includes(item.status) && (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelQueueItem(item.id)}
+                                disabled={schedulingLoading}
+                                className="rounded border border-rose-600/40 bg-rose-950/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-900/50 disabled:opacity-40"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
           )}
         </div>
       )}

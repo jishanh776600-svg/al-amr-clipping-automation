@@ -928,6 +928,68 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.queue_telemetry && (
+        <div className="mt-6 rounded-xl border border-indigo-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-indigo-400">
+                Queue & Multi-Account Orchestration (Step 26)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.queue_telemetry.published === job.settings.queue_telemetry.total &&
+                  job.settings.queue_telemetry.total > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                }`}
+              >
+                {job.settings.queue_telemetry.published}/{job.settings.queue_telemetry.total} Published
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-6 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Total Items</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.queue_telemetry.total ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Queued</div>
+              <div className="text-lg font-bold text-amber-400 mt-0.5">
+                {job.settings.queue_telemetry.queued ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Scheduled</div>
+              <div className="text-lg font-bold text-sky-400 mt-0.5">
+                {job.settings.queue_telemetry.scheduled ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Published</div>
+              <div className="text-lg font-bold text-emerald-400 mt-0.5">
+                {job.settings.queue_telemetry.published ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Failed</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.queue_telemetry.failed > 0 ? 'text-rose-400' : 'text-ink-400'}`}>
+                {job.settings.queue_telemetry.failed ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Cancelled</div>
+              <div className="text-lg font-bold text-ink-400 mt-0.5">
+                {job.settings.queue_telemetry.cancelled ?? 0}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

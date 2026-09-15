@@ -1338,3 +1338,155 @@ class PublicationRecord:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Step 26: Publishing Destinations & Queue Records
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DestinationRecord:
+    """Normalized multi-account publishing destination (YouTube, Instagram, Telegram).
+
+    Contains account identifier, routing rules, rate limits, and non-secret config.
+    NEVER contains tokens, secrets, or passwords.
+    """
+
+    id: str
+    platform: str  # youtube | instagram | telegram
+    display_name: str
+    account_identifier: str = ""  # channel handle, page username, or chat id
+    enabled: bool = True
+    priority: int = 0
+    config_metadata: dict[str, Any] = field(default_factory=dict)
+    daily_limit: int = 10
+    spacing_seconds: int = 3600
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "display_name": self.display_name,
+            "account_identifier": self.account_identifier,
+            "enabled": self.enabled,
+            "priority": self.priority,
+            "config_metadata": self.config_metadata,
+            "daily_limit": self.daily_limit,
+            "spacing_seconds": self.spacing_seconds,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "DestinationRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            platform=row["platform"],
+            display_name=row["display_name"],
+            account_identifier=row["account_identifier"] if "account_identifier" in keys else "",
+            enabled=bool(row["enabled"]) if "enabled" in keys else True,
+            priority=int(row["priority"] or 0) if "priority" in keys else 0,
+            config_metadata=json.loads(row["config_metadata"] or "{}") if "config_metadata" in keys else {},
+            daily_limit=int(row["daily_limit"] or 10) if "daily_limit" in keys else 10,
+            spacing_seconds=int(row["spacing_seconds"] or 3600) if "spacing_seconds" in keys else 3600,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+QueueStatus = Literal[
+    "QUEUED",
+    "SCHEDULED",
+    "CLAIMED",
+    "PUBLISHING",
+    "PUBLISHED",
+    "FAILED_RETRYABLE",
+    "FAILED_PERMANENT",
+    "CANCELLED",
+    "SKIPPED",
+]
+
+
+@dataclass
+class PublishingQueueRecord:
+    """Persistent queue item for scheduled publication across multi-account destinations.
+
+    Includes transactional claiming, worker lease expiration, and idempotent keys.
+    """
+
+    id: str
+    job_id: str
+    clip_id: str
+    destination_id: str
+    platform: str
+    scheduled_at: str
+    idempotency_key: str
+    publication_id: str | None = None
+    priority: int = 0
+    status: QueueStatus = "QUEUED"
+    attempt_count: int = 0
+    claimed_by: str | None = None
+    claimed_at: str | None = None
+    lease_expires_at: str | None = None
+    error_message: str | None = None
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_claimable(self) -> bool:
+        return self.status in ("QUEUED", "SCHEDULED")
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in ("CLAIMED", "PUBLISHING")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "clip_id": self.clip_id,
+            "destination_id": self.destination_id,
+            "publication_id": self.publication_id,
+            "platform": self.platform,
+            "scheduled_at": self.scheduled_at,
+            "priority": self.priority,
+            "status": self.status,
+            "attempt_count": self.attempt_count,
+            "claimed_by": self.claimed_by,
+            "claimed_at": self.claimed_at,
+            "lease_expires_at": self.lease_expires_at,
+            "error_message": self.error_message,
+            "idempotency_key": self.idempotency_key,
+            "is_claimable": self.is_claimable,
+            "is_active": self.is_active,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "PublishingQueueRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            clip_id=row["clip_id"],
+            destination_id=row["destination_id"],
+            publication_id=row["publication_id"] if "publication_id" in keys else None,
+            platform=row["platform"],
+            scheduled_at=row["scheduled_at"],
+            priority=int(row["priority"] or 0) if "priority" in keys else 0,
+            status=row["status"] if "status" in keys else "QUEUED",
+            attempt_count=int(row["attempt_count"] or 0) if "attempt_count" in keys else 0,
+            claimed_by=row["claimed_by"] if "claimed_by" in keys else None,
+            claimed_at=row["claimed_at"] if "claimed_at" in keys else None,
+            lease_expires_at=row["lease_expires_at"] if "lease_expires_at" in keys else None,
+            error_message=row["error_message"] if "error_message" in keys else None,
+            idempotency_key=row["idempotency_key"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+

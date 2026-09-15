@@ -11,8 +11,13 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..db import models, store
 from ..publishing.base import PublishingMetadata
+from ..publishing.orchestrator import PublishingOrchestrator
 from ..publishing.service import PublishingService
 from .schemas import (
+    CancelQueueIn,
+    DestinationIn,
+    DestinationOut,
+    DestinationUpdateIn,
     PublicationOut,
     PublishAllClipsIn,
     PublishClipIn,
@@ -20,12 +25,18 @@ from .schemas import (
     PublishingRecordOut,
     PublishingTelemetryOut,
     PublishRequestIn,
+    QueueItemOut,
+    QueueTelemetryOut,
+    RescheduleQueueIn,
+    SchedulePublicationIn,
 )
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["publishing"])
 _service = PublishingService()
+_orchestrator = PublishingOrchestrator(_service)
+
 
 
 @router.get("/publishing", response_model=list[PublishingRecordOut])
@@ -369,4 +380,218 @@ async def retry_publication_endpoint(
         return PublicationOut.of(updated)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Step 26: Multi-Account Destinations API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/publishing/destinations", response_model=list[DestinationOut])
+@router.get("/destinations", response_model=list[DestinationOut])
+async def list_publishing_destinations(
+    platform: str | None = Query(default=None),
+    enabled_only: bool = Query(default=False),
+) -> list[DestinationOut]:
+    """List multi-account publishing destinations, initializing defaults if empty."""
+    # Ensure defaults exist
+    await asyncio.to_thread(_orchestrator.ensure_default_destinations)
+    destinations = await asyncio.to_thread(
+        store.list_destinations, platform=platform, enabled_only=enabled_only
+    )
+    return [DestinationOut.of(d) for d in destinations]
+
+
+@router.post("/publishing/destinations", response_model=DestinationOut)
+@router.post("/destinations", response_model=DestinationOut)
+async def create_publishing_destination(payload: DestinationIn) -> DestinationOut:
+    """Create a new publishing destination account/channel."""
+    now = models.utcnow()
+    dest = models.DestinationRecord(
+        id=models.new_id(),
+        platform=payload.platform,
+        display_name=payload.display_name.strip(),
+        account_identifier=payload.account_identifier.strip(),
+        enabled=payload.enabled,
+        priority=payload.priority,
+        config_metadata=payload.config_metadata,
+        daily_limit=payload.daily_limit,
+        spacing_seconds=payload.spacing_seconds,
+        created_at=now,
+        updated_at=now,
+    )
+    created = await asyncio.to_thread(store.create_destination, dest)
+    return DestinationOut.of(created)
+
+
+@router.get("/publishing/destinations/{destination_id}", response_model=DestinationOut)
+@router.get("/destinations/{destination_id}", response_model=DestinationOut)
+async def get_publishing_destination(destination_id: str) -> DestinationOut:
+    """Get single destination by ID."""
+    dest = await asyncio.to_thread(store.get_destination, destination_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found.")
+    return DestinationOut.of(dest)
+
+
+@router.patch("/publishing/destinations/{destination_id}", response_model=DestinationOut)
+@router.patch("/destinations/{destination_id}", response_model=DestinationOut)
+async def update_publishing_destination(
+    destination_id: str, payload: DestinationUpdateIn
+) -> DestinationOut:
+    """Update settings on a destination."""
+    dest = await asyncio.to_thread(store.get_destination, destination_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found.")
+
+    updated = await asyncio.to_thread(
+        store.update_destination,
+        destination_id,
+        display_name=payload.display_name,
+        account_identifier=payload.account_identifier,
+        enabled=payload.enabled,
+        priority=payload.priority,
+        config_metadata=payload.config_metadata,
+        daily_limit=payload.daily_limit,
+        spacing_seconds=payload.spacing_seconds,
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update destination.")
+    return DestinationOut.of(updated)
+
+
+@router.delete("/publishing/destinations/{destination_id}")
+@router.delete("/destinations/{destination_id}")
+async def delete_publishing_destination(destination_id: str) -> dict[str, bool]:
+    """Delete a publishing destination."""
+    dest = await asyncio.to_thread(store.get_destination, destination_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination not found.")
+    success = await asyncio.to_thread(store.delete_destination, destination_id)
+    return {"ok": success}
+
+
+# ---------------------------------------------------------------------------
+# Step 26: Publishing Queue & Scheduling API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/publishing/queue", response_model=list[QueueItemOut])
+async def list_queue(
+    job_id: str | None = Query(default=None),
+    clip_id: str | None = Query(default=None),
+    destination_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[QueueItemOut]:
+    """List publishing queue items ordered by scheduled time."""
+    items = await asyncio.to_thread(
+        store.list_queue_items,
+        job_id=job_id,
+        clip_id=clip_id,
+        destination_id=destination_id,
+        status=status,
+        limit=limit,
+    )
+    dest_map: dict[str, str] = {}
+    destinations = await asyncio.to_thread(store.list_destinations)
+    for d in destinations:
+        dest_map[d.id] = d.display_name
+
+    return [QueueItemOut.of(i, destination_name=dest_map.get(i.destination_id, "")) for i in items]
+
+
+@router.get("/publishing/queue/telemetry", response_model=QueueTelemetryOut)
+async def get_queue_telemetry(job_id: str | None = Query(default=None)) -> QueueTelemetryOut:
+    """Retrieve summary telemetry counts for the publishing queue."""
+    counts = await asyncio.to_thread(_orchestrator.get_telemetry, job_id=job_id)
+    return QueueTelemetryOut(**counts)
+
+
+@router.post("/jobs/{job_id}/clips/{clip_id}/schedule", response_model=QueueItemOut)
+async def schedule_clip_publication_endpoint(
+    job_id: str,
+    clip_id: str,
+    payload: SchedulePublicationIn,
+) -> QueueItemOut:
+    """Schedule an approved clip for publication on a specific destination."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    try:
+        item = await asyncio.to_thread(
+            _orchestrator.enqueue_publication,
+            job_id=job_id,
+            clip_id=clip_id,
+            destination_id=payload.destination_id,
+            scheduled_at=payload.scheduled_at,
+            priority=payload.priority,
+        )
+        dest = await asyncio.to_thread(store.get_destination, item.destination_id)
+        return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/publishing/queue/{queue_id}/cancel", response_model=QueueItemOut)
+async def cancel_queue_item_endpoint(
+    queue_id: str,
+    payload: CancelQueueIn = CancelQueueIn(),
+) -> QueueItemOut:
+    """Cancel a pending or scheduled queue item."""
+    try:
+        item = await asyncio.to_thread(_orchestrator.cancel_item, queue_id, payload.reason)
+        dest = await asyncio.to_thread(store.get_destination, item.destination_id)
+        return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/publishing/queue/{queue_id}/reschedule", response_model=QueueItemOut)
+async def reschedule_queue_item_endpoint(
+    queue_id: str,
+    payload: RescheduleQueueIn,
+) -> QueueItemOut:
+    """Reschedule a queue item to a new timestamp."""
+    try:
+        item = await asyncio.to_thread(
+            _orchestrator.reschedule_item, queue_id, payload.new_scheduled_at
+        )
+        dest = await asyncio.to_thread(store.get_destination, item.destination_id)
+        return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/publishing/queue/process-next", response_model=QueueItemOut | None)
+async def process_next_queue_item_endpoint(
+    worker_id: str = Query(default="worker-manual"),
+    dry_run: bool = Query(default=False),
+) -> QueueItemOut | None:
+    """Manually trigger claim and execution of the next due queue item."""
+    item = await _orchestrator.claim_and_process_next(worker_id=worker_id, dry_run=dry_run)
+    if not item:
+        return None
+    dest = await asyncio.to_thread(store.get_destination, item.destination_id)
+    return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
+
+
+@router.post("/publishing/queue/{queue_id}/process", response_model=QueueItemOut)
+async def process_queue_item_endpoint(
+    queue_id: str,
+    dry_run: bool = Query(default=False),
+) -> QueueItemOut:
+    """Manually trigger execution of a specific queue item."""
+    try:
+        item = await _orchestrator.process_queue_item(queue_id, dry_run=dry_run)
+        dest = await asyncio.to_thread(store.get_destination, item.destination_id)
+        return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
 
