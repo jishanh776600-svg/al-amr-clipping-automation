@@ -696,6 +696,77 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.render_telemetry && (
+        <div className="mt-6 rounded-xl border border-emerald-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-emerald-400">
+                Final Render & Quality Gate (Step 22)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.render_telemetry.approved > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                }`}
+              >
+                {job.settings.render_telemetry.approved}/{job.settings.render_telemetry.total_clips} Approved
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-ink-400">
+              Avg Quality: <strong className="text-emerald-300">{job.settings.render_telemetry.avg_quality_score ?? 0}</strong>/100
+            </span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Clips Rendered</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.render_telemetry.rendered ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Resolution</div>
+              <div className="text-lg font-bold text-emerald-300 mt-0.5">1080x1920</div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Container / Codec</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">MP4 · H.264</div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Publishing Gate</div>
+              <div className="text-lg font-bold text-emerald-400 mt-0.5">
+                {job.settings.render_telemetry.approved} Passed
+              </div>
+            </div>
+          </div>
+
+          {job.settings.render_telemetry.records && job.settings.render_telemetry.records.length > 0 && (
+            <div className="mt-4 border-t border-ink-800 pt-3">
+              <div className="text-xs font-mono text-ink-400 mb-2 font-semibold">Clip Render Packages & Quality Checks:</div>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {job.settings.render_telemetry.records.map((rec: any, idx: number) => (
+                  <div key={rec.id || idx} className="text-xs font-mono bg-ink-950/40 p-2 rounded flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${rec.quality_status === 'RENDER_PASS' ? 'bg-emerald-400' : rec.quality_status === 'RENDER_WARN' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                      <span className="text-ink-200">Clip #{idx + 1}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-ink-800 text-ink-400 uppercase">{rec.caption_style}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-ink-400 text-[11px]">
+                      <span>Dur: <strong className="text-ink-200">{rec.duration}s</strong></span>
+                      <span>Score: <strong className="text-emerald-400">{Math.round(rec.quality_score ?? 0)}</strong></span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${rec.quality_status === 'RENDER_PASS' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : rec.quality_status === 'RENDER_WARN' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-rose-950 text-rose-300 border border-rose-800'}`}>
+                        {rec.quality_status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

@@ -347,6 +347,30 @@ export interface BGMMix {
   updated_at: string
 }
 
+export interface FinalRender {
+  id: string
+  job_id: string
+  clip_id: string
+  output_path: string
+  package_dir: string
+  duration: number
+  width: number
+  height: number
+  fps: number
+  video_codec: string
+  audio_codec: string
+  caption_style: string
+  bgm_asset_id?: string | null
+  quality_score: number
+  quality_status: 'RENDER_PASS' | 'RENDER_WARN' | 'RENDER_REJECT'
+  render_status: 'completed' | 'failed'
+  render_attempt: number
+  error_details: string[]
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -950,6 +974,14 @@ export const api = {
     if (status) params.set('status', status)
     const qs = params.toString() ? `?${params.toString()}` : ''
     return request<BGMMix[]>(`/api/jobs/${jobId}/audio-mix${qs}`)
+  },
+
+  getJobFinalRenders: (jobId: string, approvedOnly: boolean = false, status?: string) => {
+    const params = new URLSearchParams()
+    if (approvedOnly) params.set('approved_only', 'true')
+    if (status) params.set('status', status)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return request<FinalRender[]>(`/api/jobs/${jobId}/final-renders${qs}`)
   },
 
   listBGMAssets: (enabledOnly: boolean = false, genre?: string) => {

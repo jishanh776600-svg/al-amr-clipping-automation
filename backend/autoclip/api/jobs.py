@@ -54,6 +54,7 @@ from .schemas import (
     VisualCompositionOut,
     CaptionOptimizationOut,
     BGMMixOut,
+    FinalRenderOut,
     WorkerCallbackIn,
 )
 
@@ -888,6 +889,23 @@ async def get_job_audio_mix_endpoint(
         store.list_bgm_mixes, job_id, approved_only=approved_only, status=status
     )
     return [BGMMixOut.of(r) for r in records]
+
+
+@router.get("/{job_id}/final-renders", response_model=list[FinalRenderOut])
+async def get_job_final_renders_endpoint(
+    job_id: str,
+    approved_only: bool = False,
+    status: str | None = None,
+) -> list[FinalRenderOut]:
+    """Retrieve Step 22 final render records, quality gate scores, and output packaging details."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(
+        store.list_final_renders, job_id, approved_only=approved_only, status=status
+    )
+    return [FinalRenderOut.of(r) for r in records]
 
 
 @router.get("/{job_id}/manifest", response_model=JobManifestOut)

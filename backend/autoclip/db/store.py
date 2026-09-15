@@ -21,6 +21,7 @@ from .models import (
     ClipStatus,
     BGMAssetRecord,
     BGMMixRecord,
+    FinalRenderRecord,
     CaptionOptimizationRecord,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
@@ -1668,6 +1669,101 @@ def get_bgm_mix(clip_id: str) -> BGMMixRecord | None:
             "SELECT * FROM bgm_mixes WHERE clip_id = ?", (clip_id,)
         ).fetchone()
     return BGMMixRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Final Renders (Step 22 Final Render & Quality Gate)
+# --------------------------------------------------------------------------
+
+
+def replace_final_renders(
+    job_id: str, records: list[FinalRenderRecord]
+) -> list[FinalRenderRecord]:
+    with connection() as conn:
+        conn.execute(
+            "DELETE FROM final_renders WHERE job_id = ?",
+            (job_id,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO final_renders (
+                id, job_id, clip_id, output_path, package_dir, duration,
+                width, height, fps, video_codec, audio_codec, caption_style,
+                bgm_asset_id, quality_score, quality_status, render_status,
+                render_attempt, error_details, telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id,
+                    r.job_id,
+                    r.clip_id,
+                    r.output_path,
+                    r.package_dir,
+                    r.duration,
+                    r.width,
+                    r.height,
+                    r.fps,
+                    r.video_codec,
+                    r.audio_codec,
+                    r.caption_style,
+                    r.bgm_asset_id,
+                    r.quality_score,
+                    r.quality_status,
+                    r.render_status,
+                    r.render_attempt,
+                    json.dumps(r.error_details),
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                )
+                for r in records
+            ],
+        )
+    return records
+
+
+def list_final_renders(
+    job_id: str, approved_only: bool = False, status: str | None = None
+) -> list[FinalRenderRecord]:
+    with connection() as conn:
+        if approved_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM final_renders
+                WHERE job_id = ? AND render_status = 'completed' AND quality_status IN ('RENDER_PASS', 'RENDER_WARN')
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+        elif status:
+            rows = conn.execute(
+                """
+                SELECT * FROM final_renders
+                WHERE job_id = ? AND quality_status = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id, status),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM final_renders
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                """,
+                (job_id,),
+            ).fetchall()
+    return [FinalRenderRecord.from_row(r) for r in rows]
+
+
+def get_final_render(clip_id: str) -> FinalRenderRecord | None:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM final_renders WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return FinalRenderRecord.from_row(row) if row else None
+
 
 
 

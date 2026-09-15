@@ -525,6 +525,39 @@ def _migration_v16(conn: sqlite3.Connection) -> None:
     conn.executescript(_V16)
 
 
+_V17 = """
+CREATE TABLE final_renders (
+    id             TEXT PRIMARY KEY,
+    job_id         TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    clip_id        TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    output_path    TEXT NOT NULL,
+    package_dir    TEXT NOT NULL DEFAULT '',
+    duration       REAL NOT NULL DEFAULT 0.0,
+    width          INTEGER NOT NULL DEFAULT 0,
+    height         INTEGER NOT NULL DEFAULT 0,
+    fps            REAL NOT NULL DEFAULT 0.0,
+    video_codec    TEXT NOT NULL DEFAULT '',
+    audio_codec    TEXT NOT NULL DEFAULT '',
+    caption_style  TEXT NOT NULL DEFAULT '',
+    bgm_asset_id   TEXT,
+    quality_score  REAL NOT NULL DEFAULT 0.0,
+    quality_status TEXT NOT NULL DEFAULT 'RENDER_PASS' CHECK (quality_status IN ('RENDER_PASS', 'RENDER_WARN', 'RENDER_REJECT')),
+    render_status  TEXT NOT NULL DEFAULT 'completed' CHECK (render_status IN ('completed', 'failed')),
+    render_attempt INTEGER NOT NULL DEFAULT 1,
+    error_details  TEXT NOT NULL DEFAULT '[]',
+    telemetry      TEXT NOT NULL DEFAULT '{}',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+CREATE INDEX idx_final_renders_job ON final_renders(job_id, quality_status);
+CREATE INDEX idx_final_renders_clip ON final_renders(clip_id);
+"""
+
+
+def _migration_v17(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V17)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -544,6 +577,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v14,
     _migration_v15,
     _migration_v16,
+    _migration_v17,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

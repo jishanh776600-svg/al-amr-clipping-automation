@@ -150,6 +150,15 @@ async def publish_export_endpoint(
     if not clip:
         raise HTTPException(status_code=404, detail="Associated clip not found.")
 
+    # Step 22 Quality Gate Publishing Guard
+    final_render = await asyncio.to_thread(store.get_final_render, clip.id)
+    if final_render and not final_render.is_approved:
+        rejection_msg = "; ".join(final_render.error_details) or "Quality gate rejected this clip render."
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot publish clip '{clip.id}': Final render failed quality gate ({rejection_msg}).",
+        )
+
     title = request.title or clip.title or "AL AMR Highlight"
     desc = request.description or clip.hook or ""
     tags = request.tags or ["ALAMR", "Shorts"]

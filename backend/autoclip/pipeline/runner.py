@@ -42,6 +42,7 @@ from ..db.models import (
     VisualCompositionRecord,
     CaptionOptimizationRecord,
     BGMMixRecord,
+    FinalRenderRecord,
     new_id,
     utcnow,
 )
@@ -1017,93 +1018,83 @@ class PipelineRunner:
         style = captions.resolve_style(selected_style)
         ratio = self.settings.export.ratio
         source_path = Path(self.source.path)
-        destination_dir = paths.exports_dir() / self.job.id
-        destination_dir.mkdir(parents=True, exist_ok=True)
+        exports_base = paths.exports_dir()
+        exports_base.mkdir(parents=True, exist_ok=True)
+
+        from .final_render import FinalRenderConfig, FinalRenderEngine
+
+        render_engine = FinalRenderEngine(config=FinalRenderConfig(ratio=ratio))
+        final_render_records: list[FinalRenderRecord] = []
 
         for index, clip in enumerate(clips):
             self._check_cancelled()
 
             crop_path = crop_paths.get(clip.id) or self._fallback_crop_path(clip, ratio)
-            words = transcript.slice(clip.start_word, clip.end_word)
-            destination = destination_dir / export.output_filename(
-                clip.title or f"clip-{clip.rank}", ratio
-            )
-
-            def clip_progress(fraction: float, i: int = index) -> None:
-                self._emit(stage, (i + fraction) / len(clips), f"Exporting clip {i + 1}")
-
-            # Idempotency / restart recovery: verify if valid rendered clip already exists
-            expected_dur = clip.end_s - clip.start_s
-            if destination.is_file():
-                validation = validate_media_output(
-                    destination,
-                    expected_ratio=ratio,
-                    expected_duration_s=expected_dur,
-                )
-                if validation.is_valid:
-                    log.info("Clip %s export already exists and is valid at %s; skipping re-render.", clip.id, destination)
-                    existing_exports = store.list_exports(clip.id)
-                    if not any(e.path == str(destination) for e in existing_exports):
-                        store.create_export(
-                            Export(
-                                id=new_id(),
-                                clip_id=clip.id,
-                                path=str(destination),
-                                ratio=ratio,
-                                style=style.key,
-                                size_bytes=destination.stat().st_size,
-                            )
-                        )
-                    store.update_clip(clip.id, status="exported")
-                    clip_progress(1.0, index)
-                    continue
-                else:
-                    log.warning("Existing clip file %s invalid or corrupt (%s); removing before re-export.", destination, validation.issues)
-                    destination.unlink(missing_ok=True)
-                    destination.with_suffix(".srt").unlink(missing_ok=True)
-
             clip_ass = (ass_paths or {}).get(clip.id)
             clip_audio = (audio_paths or {}).get(clip.id)
 
-            request = export.ExportRequest(
-                source=source_path,
-                destination=destination,
-                start_s=clip.start_s,
-                end_s=clip.end_s,
+            def clip_progress(fraction: float, i: int = index) -> None:
+                self._emit(stage, (i + fraction) / len(clips), f"Rendering & validating clip {i + 1}/{len(clips)}")
+
+            final_path, render_rec = render_engine.render_and_package(
+                clip=clip,
+                source_media_path=source_path,
                 crop_path=crop_path,
-                words=words,
-                style=style,
-                ratio=ratio,
+                caption_style_key=style.key,
                 ass_path=clip_ass,
                 audio_path=clip_audio,
+                bgm_asset_id=bgm_asset_id if bgm_enabled else None,
+                bgm_asset_name=bgm_asset_name if bgm_enabled else "",
+                exports_base_dir=exports_base,
+                render_work_dir=self.workspace.captions_dir,
+                on_progress=clip_progress,
+                cancelled=self._is_cancelled,
             )
+            final_render_records.append(render_rec)
 
-            try:
-                export.export_clip(
-                    request,
-                    work_dir=self.workspace.captions_dir,
-                    settings=self.settings.export,
-                    on_progress=clip_progress,
-                    cancelled=self._is_cancelled,
-                )
-            except Exception:
-                destination.unlink(missing_ok=True)
-                destination.with_suffix(".srt").unlink(missing_ok=True)
-                raise
-
-            existing_exports = store.list_exports(clip.id)
-            if not any(e.path == str(destination) for e in existing_exports):
-                store.create_export(
-                    Export(
-                        id=new_id(),
-                        clip_id=clip.id,
-                        path=str(destination),
-                        ratio=ratio,
-                        style=style.key,
-                        size_bytes=destination.stat().st_size,
+            if render_rec.is_approved:
+                existing_exports = store.list_exports(clip.id)
+                if not any(e.path == str(final_path) for e in existing_exports):
+                    store.create_export(
+                        Export(
+                            id=new_id(),
+                            clip_id=clip.id,
+                            path=str(final_path),
+                            ratio=ratio,
+                            style=style.key,
+                            size_bytes=final_path.stat().st_size if final_path.is_file() else 0,
+                        )
                     )
+                store.update_clip(clip.id, status="exported")
+                log.info(
+                    "Clip %s final render approved (status=%s, score=%.1f) -> %s",
+                    clip.id, render_rec.quality_status, render_rec.quality_score, final_path
                 )
-            store.update_clip(clip.id, status="exported")
+            else:
+                log.warning(
+                    "Clip %s final render rejected by quality gate (%s); not marked as exported.",
+                    clip.id, render_rec.error_details
+                )
+                store.update_clip(clip.id, status="candidate")
+
+        if final_render_records:
+            store.replace_final_renders(self.job.id, final_render_records)
+
+        approved_renders = sum(1 for r in final_render_records if r.is_approved)
+        render_telemetry = {
+            "total_clips": len(clips),
+            "rendered": len(final_render_records),
+            "approved": approved_renders,
+            "warned": sum(1 for r in final_render_records if r.quality_status == "RENDER_WARN"),
+            "rejected": sum(1 for r in final_render_records if r.quality_status == "RENDER_REJECT"),
+            "failed": sum(1 for r in final_render_records if r.render_status == "failed"),
+            "avg_quality_score": round(
+                sum(r.quality_score for r in final_render_records) / max(1, len(final_render_records)), 1
+            ),
+            "records": [r.to_dict() for r in final_render_records],
+        }
+        self.job.settings["render_telemetry"] = render_telemetry
+        store.update_job(self.job.id, settings=self.job.settings)
 
         self._finish_stage(stage)
 

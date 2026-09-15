@@ -995,5 +995,56 @@ class BGMMixOut(BaseModel):
         )
 
 
+class FinalRenderOut(BaseModel):
+    id: str
+    job_id: str
+    clip_id: str
+    output_path: str
+    package_dir: str = ""
+    duration: float = 0.0
+    width: int = 0
+    height: int = 0
+    fps: float = 0.0
+    video_codec: str = ""
+    audio_codec: str = ""
+    caption_style: str = ""
+    bgm_asset_id: str | None = None
+    quality_score: float = 0.0
+    quality_status: str = "RENDER_PASS"
+    render_status: str = "completed"
+    render_attempt: int = 1
+    error_details: list[str] = Field(default_factory=list)
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.FinalRenderRecord) -> FinalRenderOut:
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            clip_id=record.clip_id,
+            output_path=record.output_path,
+            package_dir=record.package_dir,
+            duration=record.duration,
+            width=record.width,
+            height=record.height,
+            fps=record.fps,
+            video_codec=record.video_codec,
+            audio_codec=record.audio_codec,
+            caption_style=record.caption_style,
+            bgm_asset_id=record.bgm_asset_id,
+            quality_score=record.quality_score,
+            quality_status=record.quality_status,
+            render_status=record.render_status,
+            render_attempt=record.render_attempt,
+            error_details=record.error_details or [],
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+
 
 

@@ -922,3 +922,85 @@ class BGMMixRecord:
         )
 
 
+@dataclass
+class FinalRenderRecord:
+    id: str
+    job_id: str
+    clip_id: str
+    output_path: str
+    package_dir: str = ""
+    duration: float = 0.0
+    width: int = 0
+    height: int = 0
+    fps: float = 0.0
+    video_codec: str = ""
+    audio_codec: str = ""
+    caption_style: str = ""
+    bgm_asset_id: str | None = None
+    quality_score: float = 0.0
+    quality_status: str = "RENDER_PASS"  # "RENDER_PASS", "RENDER_WARN", "RENDER_REJECT"
+    render_status: str = "completed"  # "completed", "failed"
+    render_attempt: int = 1
+    error_details: list[str] = field(default_factory=list)
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.render_status == "completed" and self.quality_status in ("RENDER_PASS", "RENDER_WARN")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "clip_id": self.clip_id,
+            "output_path": self.output_path,
+            "package_dir": self.package_dir,
+            "duration": self.duration,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "video_codec": self.video_codec,
+            "audio_codec": self.audio_codec,
+            "caption_style": self.caption_style,
+            "bgm_asset_id": self.bgm_asset_id,
+            "quality_score": self.quality_score,
+            "quality_status": self.quality_status,
+            "render_status": self.render_status,
+            "render_attempt": self.render_attempt,
+            "error_details": self.error_details,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> FinalRenderRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            clip_id=row["clip_id"],
+            output_path=row["output_path"],
+            package_dir=row["package_dir"] if "package_dir" in keys else "",
+            duration=float(row["duration"] or 0.0) if "duration" in keys else 0.0,
+            width=int(row["width"] or 0) if "width" in keys else 0,
+            height=int(row["height"] or 0) if "height" in keys else 0,
+            fps=float(row["fps"] or 0.0) if "fps" in keys else 0.0,
+            video_codec=row["video_codec"] if "video_codec" in keys else "",
+            audio_codec=row["audio_codec"] if "audio_codec" in keys else "",
+            caption_style=row["caption_style"] if "caption_style" in keys else "",
+            bgm_asset_id=row["bgm_asset_id"] if "bgm_asset_id" in keys else None,
+            quality_score=float(row["quality_score"] or 0.0) if "quality_score" in keys else 0.0,
+            quality_status=row["quality_status"] if "quality_status" in keys else "RENDER_PASS",
+            render_status=row["render_status"] if "render_status" in keys else "completed",
+            render_attempt=int(row["render_attempt"] or 1) if "render_attempt" in keys else 1,
+            error_details=json.loads(row["error_details"] or "[]") if "error_details" in keys else [],
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+
