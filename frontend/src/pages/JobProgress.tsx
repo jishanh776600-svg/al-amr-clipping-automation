@@ -767,6 +767,57 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.seo_telemetry && (
+        <div className="mt-6 rounded-xl border border-teal-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-teal-400">
+                SEO & Metadata Engine (Step 23)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.seo_telemetry.reject_count === 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                }`}
+              >
+                {job.settings.seo_telemetry.pass_count + job.settings.seo_telemetry.warn_count}/{job.settings.seo_telemetry.total_metadata} Publish Ready
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-ink-400">
+              Avg Compliance: <strong className="text-teal-300">{job.settings.seo_telemetry.avg_compliance_score ?? 0}</strong>/100
+            </span>
+          </div>
+
+          <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Clips With Metadata</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.seo_telemetry.total_metadata ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">SEO Pass</div>
+              <div className="text-lg font-bold text-emerald-400 mt-0.5">
+                {job.settings.seo_telemetry.pass_count ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">SEO Warn</div>
+              <div className="text-lg font-bold text-amber-400 mt-0.5">
+                {job.settings.seo_telemetry.warn_count ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Publish Blocked</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.seo_telemetry.reject_count > 0 ? 'text-rose-400' : 'text-ink-400'}`}>
+                {job.settings.seo_telemetry.reject_count ?? 0}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

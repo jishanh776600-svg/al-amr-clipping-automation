@@ -55,6 +55,8 @@ from .schemas import (
     CaptionOptimizationOut,
     BGMMixOut,
     FinalRenderOut,
+    ClipMetadataOut,
+    ClipMetadataUpdateIn,
     WorkerCallbackIn,
 )
 
@@ -1213,3 +1215,70 @@ async def worker_callback(
     updated_job = await asyncio.to_thread(store.get_job, job_id)
     source = await asyncio.to_thread(store.get_source, job.source_id)
     return JobOut.of(updated_job or job, source)
+
+
+@router.get("/{job_id}/metadata", response_model=list[ClipMetadataOut])
+async def list_job_metadata(job_id: str) -> list[ClipMetadataOut]:
+    """Retrieve SEO and publishing metadata records for all clips in a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    records = await asyncio.to_thread(store.list_clip_metadata_for_job, job_id)
+    return [ClipMetadataOut.of(r) for r in records]
+
+
+@router.get("/{job_id}/clips/{clip_id}/metadata", response_model=ClipMetadataOut)
+async def get_clip_metadata_endpoint(job_id: str, clip_id: str) -> ClipMetadataOut:
+    """Retrieve SEO and publishing metadata record for a single clip."""
+    record = await asyncio.to_thread(store.get_clip_metadata, clip_id)
+    if not record or record.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip metadata not found.")
+    return ClipMetadataOut.of(record)
+
+
+@router.patch("/{job_id}/clips/{clip_id}/metadata", response_model=ClipMetadataOut)
+async def update_clip_metadata_endpoint(
+    job_id: str,
+    clip_id: str,
+    payload: ClipMetadataUpdateIn,
+) -> ClipMetadataOut:
+    """Operator update or reset to generated for a clip's metadata package."""
+    record = await asyncio.to_thread(store.get_clip_metadata, clip_id)
+    if not record or record.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip metadata not found.")
+
+    # Resolve CampaignSpecification for validation
+    job = await asyncio.to_thread(store.get_job, job_id)
+    campaign_spec = None
+    if job:
+        if getattr(job, "campaign_spec_id", None):
+            spec_rec = await asyncio.to_thread(store.get_campaign_spec, job.campaign_spec_id)
+            if spec_rec:
+                campaign_spec = CampaignSpecification.from_dict(spec_rec.spec)
+        if campaign_spec is None:
+            spec_rec = await asyncio.to_thread(store.get_campaign_spec_for_job, job_id)
+            if spec_rec:
+                campaign_spec = CampaignSpecification.from_dict(spec_rec.spec)
+        if campaign_spec is None and "campaign_spec" in job.settings and isinstance(job.settings["campaign_spec"], dict):
+            campaign_spec = CampaignSpecification.from_dict(job.settings["campaign_spec"])
+        if campaign_spec is None:
+            guideline = await asyncio.to_thread(store.get_guideline_for_job, job_id)
+            if guideline and guideline.parsed_brief:
+                campaign_spec = CampaignSpecification.from_campaign_brief(guideline.parsed_brief, filename=guideline.filename)
+
+    from autoclip.seo import SEOEngine
+    engine = SEOEngine.from_campaign_spec(campaign_spec)
+
+    reset = payload.action == "reset_to_generated"
+    updated = await asyncio.to_thread(
+        engine.update_operator_metadata,
+        clip_id=clip_id,
+        final_title=payload.final_title,
+        final_description=payload.final_description,
+        final_hashtags=payload.final_hashtags,
+        final_mentions=payload.final_mentions,
+        final_cta=payload.final_cta,
+        reset_to_generated=reset,
+    )
+    return ClipMetadataOut.of(updated)
+

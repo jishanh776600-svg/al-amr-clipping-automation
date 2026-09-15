@@ -371,6 +371,32 @@ export interface FinalRender {
   updated_at: string
 }
 
+export interface ClipMetadata {
+  id: string
+  job_id: string
+  clip_id: string
+  generated_title: string
+  final_title: string
+  generated_description: string
+  final_description: string
+  generated_hashtags: string[]
+  final_hashtags: string[]
+  generated_mentions: string[]
+  final_mentions: string[]
+  generated_cta: string
+  final_cta: string
+  campaign_requirements_matched: Record<string, any>
+  compliance_status: 'SEO_PASS' | 'SEO_WARN' | 'SEO_REJECT'
+  compliance_score: number
+  validation_errors: string[]
+  validation_warnings: string[]
+  version: number
+  is_publish_ready: boolean
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -983,6 +1009,30 @@ export const api = {
     const qs = params.toString() ? `?${params.toString()}` : ''
     return request<FinalRender[]>(`/api/jobs/${jobId}/final-renders${qs}`)
   },
+
+  getJobMetadata: (jobId: string) =>
+    request<ClipMetadata[]>(`/api/jobs/${jobId}/metadata`),
+
+  getClipMetadata: (jobId: string, clipId: string) =>
+    request<ClipMetadata>(`/api/jobs/${jobId}/clips/${clipId}/metadata`),
+
+  patchClipMetadata: (
+    jobId: string,
+    clipId: string,
+    data: {
+      final_title?: string
+      final_description?: string
+      final_hashtags?: string[]
+      final_mentions?: string[]
+      final_cta?: string
+      action?: string
+    }
+  ) =>
+    request<ClipMetadata>(`/api/jobs/${jobId}/clips/${clipId}/metadata`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
 
   listBGMAssets: (enabledOnly: boolean = false, genre?: string) => {
     const params = new URLSearchParams()

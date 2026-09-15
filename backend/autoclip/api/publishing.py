@@ -159,9 +159,23 @@ async def publish_export_endpoint(
             detail=f"Cannot publish clip '{clip.id}': Final render failed quality gate ({rejection_msg}).",
         )
 
-    title = request.title or clip.title or "AL AMR Highlight"
-    desc = request.description or clip.hook or ""
-    tags = request.tags or ["ALAMR", "Shorts"]
+    # Step 23 SEO & Metadata Compliance Guard
+    clip_metadata = await asyncio.to_thread(store.get_clip_metadata, clip.id)
+    if clip_metadata is not None:
+        if not clip_metadata.is_publish_ready:
+            reasons = "; ".join(clip_metadata.validation_errors) or "Metadata failed compliance quality gate."
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot publish clip '{clip.id}': SEO metadata failed compliance check ({reasons}).",
+            )
+        # Authoritative operator final_* metadata takes precedence
+        title = request.title or clip_metadata.final_title or clip.title or "AL AMR Highlight"
+        desc = request.description or clip_metadata.final_description or clip.hook or ""
+        tags = request.tags or clip_metadata.final_hashtags or ["ALAMR", "Shorts"]
+    else:
+        title = request.title or clip.title or "AL AMR Highlight"
+        desc = request.description or clip.hook or ""
+        tags = request.tags or ["ALAMR", "Shorts"]
 
     eval_row = await asyncio.to_thread(store.get_campaign_evaluation, clip.id)
     if eval_row and eval_row.campaign_id:

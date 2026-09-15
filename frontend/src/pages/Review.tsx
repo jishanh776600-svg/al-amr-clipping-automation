@@ -7,6 +7,7 @@ import {
   formatDuration,
   type CaptionStyle,
   type Clip,
+  type ClipMetadata,
   type CropPath,
   type Job,
   type Word,
@@ -30,6 +31,16 @@ export function Review() {
   const [savingWords, setSavingWords] = useState(false)
   const [exporting, setExporting] = useState<Set<string>>(new Set())
   const [error, setError] = useState<Error | null>(null)
+
+  // Step 23: SEO & Publishing Metadata State
+  const [metadata, setMetadata] = useState<ClipMetadata | null>(null)
+  const [metadataTitle, setMetadataTitle] = useState('')
+  const [metadataDesc, setMetadataDesc] = useState('')
+  const [metadataHashtags, setMetadataHashtags] = useState('')
+  const [metadataMentions, setMetadataMentions] = useState('')
+  const [metadataCta, setMetadataCta] = useState('')
+  const [savingMetadata, setSavingMetadata] = useState(false)
+  const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!jobId) return
@@ -61,7 +72,66 @@ export function Review() {
       .getCropPath(selected.id)
       .then(setCropPath)
       .catch(() => setCropPath(null))
-  }, [selected?.id])
+
+    // Fetch Step 23 SEO & Publishing Metadata
+    if (jobId) {
+      api
+        .getClipMetadata(jobId, selected.id)
+        .then((m) => {
+          setMetadata(m)
+          setMetadataTitle(m.final_title)
+          setMetadataDesc(m.final_description)
+          setMetadataHashtags((m.final_hashtags || []).join(' '))
+          setMetadataMentions((m.final_mentions || []).join(' '))
+          setMetadataCta(m.final_cta || '')
+          setMetadataNotice(null)
+        })
+        .catch(() => setMetadata(null))
+    }
+  }, [selected?.id, jobId])
+
+  const saveMetadata = async () => {
+    if (!jobId || !selected || !metadata) return
+    setSavingMetadata(true)
+    setMetadataNotice(null)
+    try {
+      const updated = await api.patchClipMetadata(jobId, selected.id, {
+        final_title: metadataTitle,
+        final_description: metadataDesc,
+        final_hashtags: metadataHashtags.split(/\s+/).filter(Boolean),
+        final_mentions: metadataMentions.split(/\s+/).filter(Boolean),
+        final_cta: metadataCta,
+      })
+      setMetadata(updated)
+      setMetadataNotice('Metadata saved successfully!')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setSavingMetadata(false)
+    }
+  }
+
+  const resetMetadata = async () => {
+    if (!jobId || !selected || !metadata) return
+    setSavingMetadata(true)
+    setMetadataNotice(null)
+    try {
+      const updated = await api.patchClipMetadata(jobId, selected.id, {
+        action: 'reset_to_generated',
+      })
+      setMetadata(updated)
+      setMetadataTitle(updated.final_title)
+      setMetadataDesc(updated.final_description)
+      setMetadataHashtags((updated.final_hashtags || []).join(' '))
+      setMetadataMentions((updated.final_mentions || []).join(' '))
+      setMetadataCta(updated.final_cta || '')
+      setMetadataNotice('Reset to original generated metadata.')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setSavingMetadata(false)
+    }
+  }
 
   const patchClip = useCallback((updated: Clip) => {
     setClips((current) => current.map((clip) => (clip.id === updated.id ? updated : clip)))
@@ -385,6 +455,144 @@ export function Review() {
                           "{selected.evaluation.reasoning || selected.reason}"
                         </p>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 23: SEO & Publishing Metadata Card */}
+                {metadata && (
+                  <div className="border-t border-ink-800 pt-6">
+                    <div className="flex items-center justify-between">
+                      <p className="eyebrow text-emerald-400">SEO & Publishing Metadata</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-ink-500">v{metadata.version}</span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase border ${
+                            metadata.compliance_status === 'SEO_PASS'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : metadata.compliance_status === 'SEO_WARN'
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          }`}
+                        >
+                          {metadata.compliance_status} ({Math.round(metadata.compliance_score)})
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 rounded border border-ink-800 bg-ink-850 p-4 text-xs space-y-3.5">
+                      {metadataNotice && (
+                        <div className="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px]">
+                          {metadataNotice}
+                        </div>
+                      )}
+
+                      {metadata.validation_errors && metadata.validation_errors.length > 0 && (
+                        <div className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] space-y-1">
+                          <p className="font-semibold">Compliance Violations (Publishing Blocked):</p>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {metadata.validation_errors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {metadata.validation_warnings && metadata.validation_warnings.length > 0 && (
+                        <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] space-y-1">
+                          <p className="font-semibold">Compliance Warnings:</p>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {metadata.validation_warnings.map((warn, i) => (
+                              <li key={i}>{warn}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div>
+                        <div className="flex justify-between text-[11px] text-ink-400 mb-1">
+                          <span>Final Title</span>
+                          <span className={metadataTitle.length > 100 ? 'text-rose-400' : 'text-ink-500'}>
+                            {metadataTitle.length}/100
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={metadataTitle}
+                          onChange={(e) => setMetadataTitle(e.target.value)}
+                          className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-emerald-500 focus:outline-none font-sans"
+                          placeholder="Publishing title..."
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-[11px] text-ink-400 mb-1">
+                          <span>Final Description</span>
+                          <span className={metadataDesc.length > 2000 ? 'text-rose-400' : 'text-ink-500'}>
+                            {metadataDesc.length}/2000
+                          </span>
+                        </div>
+                        <textarea
+                          rows={3}
+                          value={metadataDesc}
+                          onChange={(e) => setMetadataDesc(e.target.value)}
+                          className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-emerald-500 focus:outline-none font-sans resize-y"
+                          placeholder="Publishing description..."
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[11px] text-ink-400 block mb-1">Hashtags</span>
+                          <input
+                            type="text"
+                            value={metadataHashtags}
+                            onChange={(e) => setMetadataHashtags(e.target.value)}
+                            className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-emerald-500 focus:outline-none font-mono"
+                            placeholder="#ALAMR #Shorts"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[11px] text-ink-400 block mb-1">Mentions</span>
+                          <input
+                            type="text"
+                            value={metadataMentions}
+                            onChange={(e) => setMetadataMentions(e.target.value)}
+                            className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-emerald-500 focus:outline-none font-mono"
+                            placeholder="@alamr"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] text-ink-400 block mb-1">Call to Action (CTA)</span>
+                        <input
+                          type="text"
+                          value={metadataCta}
+                          onChange={(e) => setMetadataCta(e.target.value)}
+                          className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-emerald-500 focus:outline-none font-sans"
+                          placeholder="Subscribe for more insights..."
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-ink-800">
+                        <button
+                          type="button"
+                          onClick={resetMetadata}
+                          disabled={savingMetadata}
+                          className="text-[11px] text-ink-400 hover:text-ink-200 underline"
+                        >
+                          Reset to generated
+                        </button>
+                        <button
+                          type="button"
+                          onClick={saveMetadata}
+                          disabled={savingMetadata}
+                          className="btn btn-primary text-xs py-1 px-3"
+                        >
+                          {savingMetadata ? 'Saving…' : 'Save Metadata'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

@@ -1045,6 +1045,70 @@ class FinalRenderOut(BaseModel):
         )
 
 
+class ClipMetadataOut(BaseModel):
+    id: str
+    job_id: str
+    clip_id: str
+    generated_title: str
+    final_title: str
+    generated_description: str
+    final_description: str
+    generated_hashtags: list[str] = Field(default_factory=list)
+    final_hashtags: list[str] = Field(default_factory=list)
+    generated_mentions: list[str] = Field(default_factory=list)
+    final_mentions: list[str] = Field(default_factory=list)
+    generated_cta: str = ""
+    final_cta: str = ""
+    campaign_requirements_matched: dict[str, Any] = Field(default_factory=dict)
+    compliance_status: str = "SEO_PASS"
+    compliance_score: float = 100.0
+    validation_errors: list[str] = Field(default_factory=list)
+    validation_warnings: list[str] = Field(default_factory=list)
+    version: int = 1
+    is_publish_ready: bool = True
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.ClipMetadataRecord) -> ClipMetadataOut:
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            clip_id=record.clip_id,
+            generated_title=record.generated_title,
+            final_title=record.final_title,
+            generated_description=record.generated_description,
+            final_description=record.final_description,
+            generated_hashtags=record.generated_hashtags,
+            final_hashtags=record.final_hashtags,
+            generated_mentions=record.generated_mentions,
+            final_mentions=record.final_mentions,
+            generated_cta=record.generated_cta,
+            final_cta=record.final_cta,
+            campaign_requirements_matched=record.campaign_requirements_matched,
+            compliance_status=record.compliance_status,
+            compliance_score=record.compliance_score,
+            validation_errors=record.validation_errors,
+            validation_warnings=record.validation_warnings,
+            version=record.version,
+            is_publish_ready=record.is_publish_ready,
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class ClipMetadataUpdateIn(BaseModel):
+    final_title: str | None = None
+    final_description: str | None = None
+    final_hashtags: list[str] | None = None
+    final_mentions: list[str] | None = None
+    final_cta: str | None = None
+    action: str | None = None  # e.g., "reset_to_generated"
+
+
+
 
 
 

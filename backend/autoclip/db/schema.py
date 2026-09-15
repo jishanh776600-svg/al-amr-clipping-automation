@@ -558,6 +558,40 @@ def _migration_v17(conn: sqlite3.Connection) -> None:
     conn.executescript(_V17)
 
 
+_V18 = """
+CREATE TABLE clip_metadata (
+    id                             TEXT PRIMARY KEY,
+    job_id                         TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    clip_id                        TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE UNIQUE,
+    generated_title                TEXT NOT NULL,
+    final_title                    TEXT NOT NULL,
+    generated_description          TEXT NOT NULL,
+    final_description              TEXT NOT NULL,
+    generated_hashtags             TEXT NOT NULL DEFAULT '[]',
+    final_hashtags                 TEXT NOT NULL DEFAULT '[]',
+    generated_mentions             TEXT NOT NULL DEFAULT '[]',
+    final_mentions                 TEXT NOT NULL DEFAULT '[]',
+    generated_cta                  TEXT NOT NULL DEFAULT '',
+    final_cta                      TEXT NOT NULL DEFAULT '',
+    campaign_requirements_matched  TEXT NOT NULL DEFAULT '{}',
+    compliance_status              TEXT NOT NULL DEFAULT 'SEO_PASS' CHECK (compliance_status IN ('SEO_PASS', 'SEO_WARN', 'SEO_REJECT')),
+    compliance_score               REAL NOT NULL DEFAULT 100.0,
+    validation_errors              TEXT NOT NULL DEFAULT '[]',
+    validation_warnings            TEXT NOT NULL DEFAULT '[]',
+    version                        INTEGER NOT NULL DEFAULT 1,
+    telemetry                      TEXT NOT NULL DEFAULT '{}',
+    created_at                     TEXT NOT NULL,
+    updated_at                     TEXT NOT NULL
+);
+CREATE INDEX idx_clip_metadata_job ON clip_metadata(job_id, compliance_status);
+CREATE INDEX idx_clip_metadata_clip ON clip_metadata(clip_id);
+"""
+
+
+def _migration_v18(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V18)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -578,6 +612,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v15,
     _migration_v16,
     _migration_v17,
+    _migration_v18,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

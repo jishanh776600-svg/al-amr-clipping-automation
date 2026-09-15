@@ -1096,6 +1096,47 @@ class PipelineRunner:
         self.job.settings["render_telemetry"] = render_telemetry
         store.update_job(self.job.id, settings=self.job.settings)
 
+        # Step 23: Generate Campaign-Aware SEO & Metadata for Approved Clips
+        from autoclip.seo import SEOEngine
+        from autoclip.campaign.models_intelligence import CampaignSpecification
+
+        campaign_spec = None
+        if getattr(self.job, "campaign_spec_id", None):
+            spec_rec = store.get_campaign_spec(self.job.campaign_spec_id)
+            if spec_rec:
+                campaign_spec = CampaignSpecification.from_dict(spec_rec.spec)
+        if campaign_spec is None:
+            spec_rec = store.get_campaign_spec_for_job(self.job.id)
+            if spec_rec:
+                campaign_spec = CampaignSpecification.from_dict(spec_rec.spec)
+        if campaign_spec is None and "campaign_spec" in self.job.settings and isinstance(self.job.settings["campaign_spec"], dict):
+            campaign_spec = CampaignSpecification.from_dict(self.job.settings["campaign_spec"])
+        if campaign_spec is None:
+            guideline = store.get_guideline_for_job(self.job.id)
+            if guideline and guideline.parsed_brief:
+                campaign_spec = CampaignSpecification.from_campaign_brief(guideline.parsed_brief, filename=guideline.filename)
+
+        seo_engine = SEOEngine.from_campaign_spec(campaign_spec)
+        seo_records = []
+        for clip in clips:
+            matching_render = next((r for r in final_render_records if r.clip_id == clip.id and r.is_approved), None)
+            if matching_render is not None:
+                clip_words = transcript.slice(clip.start_word, clip.end_word)
+                slice_text = " ".join(w.word for w in clip_words)
+                meta_rec = seo_engine.generate_for_clip(clip, transcript_text=slice_text)
+                seo_records.append(meta_rec)
+
+        if seo_records:
+            store.replace_clip_metadata(self.job.id, seo_records)
+            self.job.settings["seo_telemetry"] = {
+                "total_metadata": len(seo_records),
+                "pass_count": sum(1 for m in seo_records if m.compliance_status == "SEO_PASS"),
+                "warn_count": sum(1 for m in seo_records if m.compliance_status == "SEO_WARN"),
+                "reject_count": sum(1 for m in seo_records if m.compliance_status == "SEO_REJECT"),
+                "avg_compliance_score": round(sum(m.compliance_score for m in seo_records) / len(seo_records), 1),
+            }
+            store.update_job(self.job.id, settings=self.job.settings)
+
         self._finish_stage(stage)
 
     def _fallback_crop_path(self, clip: Clip, ratio: str) -> CropPath:

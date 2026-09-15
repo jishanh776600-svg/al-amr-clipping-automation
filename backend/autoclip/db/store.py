@@ -22,6 +22,7 @@ from .models import (
     BGMAssetRecord,
     BGMMixRecord,
     FinalRenderRecord,
+    ClipMetadataRecord,
     CaptionOptimizationRecord,
     RetentionOptimizationRecord,
     VisualCompositionRecord,
@@ -1763,6 +1764,134 @@ def get_final_render(clip_id: str) -> FinalRenderRecord | None:
             "SELECT * FROM final_renders WHERE clip_id = ?", (clip_id,)
         ).fetchone()
     return FinalRenderRecord.from_row(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Step 23: Clip SEO & Metadata
+# --------------------------------------------------------------------------
+
+
+def create_clip_metadata(record: ClipMetadataRecord) -> ClipMetadataRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO clip_metadata (
+                id, job_id, clip_id, generated_title, final_title,
+                generated_description, final_description, generated_hashtags,
+                final_hashtags, generated_mentions, final_mentions, generated_cta,
+                final_cta, campaign_requirements_matched, compliance_status,
+                compliance_score, validation_errors, validation_warnings, version,
+                telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.job_id,
+                record.clip_id,
+                record.generated_title,
+                record.final_title,
+                record.generated_description,
+                record.final_description,
+                json.dumps(record.generated_hashtags),
+                json.dumps(record.final_hashtags),
+                json.dumps(record.generated_mentions),
+                json.dumps(record.final_mentions),
+                record.generated_cta,
+                record.final_cta,
+                json.dumps(record.campaign_requirements_matched),
+                record.compliance_status,
+                record.compliance_score,
+                json.dumps(record.validation_errors),
+                json.dumps(record.validation_warnings),
+                record.version,
+                json.dumps(record.telemetry),
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return record
+
+
+def get_clip_metadata(clip_id: str) -> ClipMetadataRecord | None:
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM clip_metadata WHERE clip_id = ?", (clip_id,)).fetchone()
+    return ClipMetadataRecord.from_row(row) if row else None
+
+
+def list_clip_metadata_for_job(job_id: str) -> list[ClipMetadataRecord]:
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM clip_metadata WHERE job_id = ? ORDER BY created_at ASC",
+            (job_id,),
+        ).fetchall()
+    return [ClipMetadataRecord.from_row(r) for r in rows]
+
+
+def update_clip_metadata(clip_id: str, **updates: Any) -> ClipMetadataRecord | None:
+    existing = get_clip_metadata(clip_id)
+    if not existing:
+        return None
+
+    # Handle JSON serializations
+    for list_key in ("final_hashtags", "final_mentions", "validation_errors", "validation_warnings", "generated_hashtags", "generated_mentions"):
+        if list_key in updates and isinstance(updates[list_key], (list, tuple)):
+            updates[list_key] = json.dumps(updates[list_key])
+
+    for dict_key in ("campaign_requirements_matched", "telemetry"):
+        if dict_key in updates and isinstance(updates[dict_key], dict):
+            updates[dict_key] = json.dumps(updates[dict_key])
+
+    if "updated_at" not in updates:
+        updates["updated_at"] = utcnow()
+
+    fields = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [clip_id]
+
+    with connection() as conn:
+        conn.execute(f"UPDATE clip_metadata SET {fields} WHERE clip_id = ?", values)
+
+    return get_clip_metadata(clip_id)
+
+
+def replace_clip_metadata(job_id: str, records: list[ClipMetadataRecord]) -> None:
+    with connection() as conn:
+        for r in records:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO clip_metadata (
+                    id, job_id, clip_id, generated_title, final_title,
+                    generated_description, final_description, generated_hashtags,
+                    final_hashtags, generated_mentions, final_mentions, generated_cta,
+                    final_cta, campaign_requirements_matched, compliance_status,
+                    compliance_score, validation_errors, validation_warnings, version,
+                    telemetry, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    r.id,
+                    r.job_id,
+                    r.clip_id,
+                    r.generated_title,
+                    r.final_title,
+                    r.generated_description,
+                    r.final_description,
+                    json.dumps(r.generated_hashtags),
+                    json.dumps(r.final_hashtags),
+                    json.dumps(r.generated_mentions),
+                    json.dumps(r.final_mentions),
+                    r.generated_cta,
+                    r.final_cta,
+                    json.dumps(r.campaign_requirements_matched),
+                    r.compliance_status,
+                    r.compliance_score,
+                    json.dumps(r.validation_errors),
+                    json.dumps(r.validation_warnings),
+                    r.version,
+                    json.dumps(r.telemetry),
+                    r.created_at,
+                    r.updated_at,
+                ),
+            )
 
 
 

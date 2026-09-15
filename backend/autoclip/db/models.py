@@ -1003,4 +1003,89 @@ class FinalRenderRecord:
         )
 
 
+@dataclass
+class ClipMetadataRecord:
+    id: str
+    job_id: str
+    clip_id: str
+    generated_title: str
+    final_title: str
+    generated_description: str
+    final_description: str
+    generated_hashtags: list[str] = field(default_factory=list)
+    final_hashtags: list[str] = field(default_factory=list)
+    generated_mentions: list[str] = field(default_factory=list)
+    final_mentions: list[str] = field(default_factory=list)
+    generated_cta: str = ""
+    final_cta: str = ""
+    campaign_requirements_matched: dict[str, Any] = field(default_factory=dict)
+    compliance_status: str = "SEO_PASS"
+    compliance_score: float = 100.0
+    validation_errors: list[str] = field(default_factory=list)
+    validation_warnings: list[str] = field(default_factory=list)
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_publish_ready(self) -> bool:
+        return self.compliance_status in ("SEO_PASS", "SEO_WARN") and len(self.validation_errors) == 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "clip_id": self.clip_id,
+            "generated_title": self.generated_title,
+            "final_title": self.final_title,
+            "generated_description": self.generated_description,
+            "final_description": self.final_description,
+            "generated_hashtags": self.generated_hashtags,
+            "final_hashtags": self.final_hashtags,
+            "generated_mentions": self.generated_mentions,
+            "final_mentions": self.final_mentions,
+            "generated_cta": self.generated_cta,
+            "final_cta": self.final_cta,
+            "campaign_requirements_matched": self.campaign_requirements_matched,
+            "compliance_status": self.compliance_status,
+            "compliance_score": self.compliance_score,
+            "validation_errors": self.validation_errors,
+            "validation_warnings": self.validation_warnings,
+            "version": self.version,
+            "is_publish_ready": self.is_publish_ready,
+            "telemetry": self.telemetry,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClipMetadataRecord:
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            clip_id=row["clip_id"],
+            generated_title=row["generated_title"] or "",
+            final_title=row["final_title"] or "",
+            generated_description=row["generated_description"] or "",
+            final_description=row["final_description"] or "",
+            generated_hashtags=json.loads(row["generated_hashtags"] or "[]") if "generated_hashtags" in keys else [],
+            final_hashtags=json.loads(row["final_hashtags"] or "[]") if "final_hashtags" in keys else [],
+            generated_mentions=json.loads(row["generated_mentions"] or "[]") if "generated_mentions" in keys else [],
+            final_mentions=json.loads(row["final_mentions"] or "[]") if "final_mentions" in keys else [],
+            generated_cta=row["generated_cta"] or "" if "generated_cta" in keys else "",
+            final_cta=row["final_cta"] or "" if "final_cta" in keys else "",
+            campaign_requirements_matched=json.loads(row["campaign_requirements_matched"] or "{}") if "campaign_requirements_matched" in keys else {},
+            compliance_status=row["compliance_status"] if "compliance_status" in keys else "SEO_PASS",
+            compliance_score=float(row["compliance_score"] or 100.0) if "compliance_score" in keys else 100.0,
+            validation_errors=json.loads(row["validation_errors"] or "[]") if "validation_errors" in keys else [],
+            validation_warnings=json.loads(row["validation_warnings"] or "[]") if "validation_warnings" in keys else [],
+            version=int(row["version"] or 1) if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
 
