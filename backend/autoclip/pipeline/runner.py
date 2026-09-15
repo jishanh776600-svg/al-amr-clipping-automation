@@ -365,12 +365,16 @@ class PipelineRunner:
             self._finish_stage(stage)
             return transcript
 
+        def on_status(message: str, fraction: float = 0.0) -> None:
+            self._emit(stage, max(0.0, min(1.0, fraction)), message=message)
+
         self._emit(stage, 0.0, "Loading speech model...")
         transcript = transcribe.transcribe(
             audio,
             self.settings.whisper,
             duration_s=self.source.duration_s,
             on_progress=self._stage_progress(stage, "Transcribing speech"),
+            on_status=on_status,
             cancelled=self._is_cancelled,
         )
 

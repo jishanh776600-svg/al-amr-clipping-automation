@@ -89,6 +89,7 @@ def transcribe(
     *,
     duration_s: float | None = None,
     on_progress: Callable[[float], None] | None = None,
+    on_status: Callable[[str, float], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> Transcript:
     """Transcribe an audio file into a :class:`Transcript` with word timings.
@@ -98,6 +99,9 @@ def transcribe(
         :func:`autoclip.pipeline.prepare.extract_audio`.
     """
     settings = settings or WhisperSettings()
+
+    if on_status:
+        on_status("Preparing speech transcription engine...", 0.01)
 
     # Must happen before faster-whisper pulls in CTranslate2, which resolves its
     # CUDA dependencies at import.
@@ -114,6 +118,14 @@ def transcribe(
 
     device, compute_type = resolve_compute(settings)
 
+    import os
+    # Tune CPU threads for available cores to avoid OpenMP over-subscription
+    if device == "cpu":
+        avail_cpus = os.cpu_count() or 2
+        cpu_threads = min(avail_cpus, 2)
+    else:
+        cpu_threads = 4
+
     model = None
     candidate_models = [settings.model]
     if settings.model not in ("base", "tiny"):
@@ -126,15 +138,20 @@ def transcribe(
     for cand in candidate_models:
         try:
             log.info(
-                "Loading Whisper model=%s device=%s compute_type=%s",
+                "Loading Whisper model=%s device=%s compute_type=%s cpu_threads=%d",
                 cand,
                 device,
                 compute_type,
+                cpu_threads,
             )
+            if on_status:
+                on_status(f"Loading Whisper {cand} model...", 0.03)
             model = WhisperModel(
                 cand,
                 device=device,
                 compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                num_workers=1,
                 download_root=str(whisper_cache_dir),
             )
             settings.model = cand
@@ -153,6 +170,9 @@ def transcribe(
     if model is None:
         raise _model_load_error(last_load_exc or RuntimeError("Failed to load Whisper model"), device, compute_type) from last_load_exc
 
+    if on_status:
+        on_status("Detecting voice activity (VAD) & audio features...", 0.06)
+
     segments_iter, info = model.transcribe(
         str(audio),
         language=settings.language or None,
@@ -163,6 +183,9 @@ def transcribe(
         vad_parameters={"min_silence_duration_ms": 500},
         condition_on_previous_text=False,
     )
+
+    if on_status:
+        on_status("Transcribing initial speech segment...", 0.09)
 
     total = duration_s or getattr(info, "duration", 0.0) or 0.0
     transcript = Transcript(

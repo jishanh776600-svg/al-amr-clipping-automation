@@ -578,6 +578,7 @@ class WorkerCallbackIn(BaseModel):
     status: str | None = None
     stage: str | None = None
     progress: float | None = None
+    message: str | None = None
     error: str | None = None
     github_run_id: str | None = None
     clips: list[dict[str, Any]] | None = None

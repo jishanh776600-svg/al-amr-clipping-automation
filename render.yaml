@@ -32,8 +32,10 @@ services:
         value: "1"
       - key: AL_AMR_MASTER_KEY
         generateValue: true
+      - key: AUTOCLIP_NO_WORKER
+        value: "1"
       - key: AUTOCLIP_DISPATCH_MODE
-        value: auto
+        value: github
       - key: GITHUB_REPOSITORY
         value: jishanh776600-svg/al-amr-clipping-automation
       - key: GITHUB_WORKFLOW

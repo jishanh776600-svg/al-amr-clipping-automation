@@ -120,6 +120,14 @@ jobs:
           sleep 5
           curl -s http://127.0.0.1:4416/ping || true
 
+      - name: Cache Whisper Model Weights
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.autoclip/models/whisper
+          key: whisper-models-${{ runner.os }}-${{ github.event.inputs.whisper_model || 'base' }}-v1
+          restore-keys: |
+            whisper-models-${{ runner.os }}-
+
       - name: Run AL AMR Worker Runner
         env:
           GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}

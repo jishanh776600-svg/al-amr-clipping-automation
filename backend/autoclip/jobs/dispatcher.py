@@ -49,11 +49,22 @@ def get_github_token() -> str | None:
     return None
 
 
+def is_cloud_environment() -> bool:
+    """True when running in a cloud/container hosting environment like Render."""
+    return bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("KUBERNETES_SERVICE_HOST")
+        or os.environ.get("AUTOCLIP_ENV") == "production"
+    )
+
+
 def is_github_dispatch_enabled() -> bool:
     mode = get_dispatch_mode()
     if mode == "github":
-        return True
+        return bool(get_github_token())
     if mode == "auto":
+        # In cloud environments, dispatch must be github if token is present
         return bool(get_github_token())
     return False
 
@@ -158,15 +169,33 @@ async def dispatch_job_to_github(
         broker.publish(Event(type="failed", job_id=job.id, data={"error": err}))
         raise RuntimeError(err)
 
-    store.update_job(
-        job.id,
-        status="running",
-        current_stage="dispatched_to_github",
-        dispatch_mode="github",
-        progress=0.05,
-        started_at=now,
-        last_heartbeat_at=now,
-    )
+    run_id = None
+    run_url = None
+    try:
+        runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=3"
+        runs_resp = await client.get(runs_url, headers=headers)
+        if runs_resp.status_code == 200:
+            runs_data = runs_resp.json().get("workflow_runs", [])
+            if runs_data:
+                latest_run = runs_data[0]
+                run_id = str(latest_run.get("id"))
+                run_url = latest_run.get("html_url")
+    except Exception as exc:
+        log.debug("Could not immediately fetch GitHub run ID: %s", exc)
+
+    update_payload: dict[str, Any] = {
+        "status": "running",
+        "current_stage": "dispatched_to_github",
+        "dispatch_mode": "github",
+        "progress": 0.05,
+        "started_at": now,
+        "last_heartbeat_at": now,
+    }
+    if run_id:
+        update_payload["github_run_id"] = run_id
+        update_payload["github_run_url"] = run_url
+
+    store.update_job(job.id, **update_payload)
     broker.publish(
         Event(
             type="dispatched",
@@ -176,14 +205,18 @@ async def dispatch_job_to_github(
                 "repo": repo,
                 "workflow": workflow,
                 "ref": ref,
+                "github_run_id": run_id,
+                "github_run_url": run_url,
             },
         )
     )
-    log.info("Successfully dispatched job %s to GitHub Actions.", job.id)
+    log.info("Successfully dispatched job %s to GitHub Actions (run_id=%s).", job.id, run_id)
     return {
         "status": "dispatched",
         "job_id": job.id,
         "repo": repo,
         "workflow": workflow,
         "ref": ref,
+        "github_run_id": run_id,
+        "github_run_url": run_url,
     }

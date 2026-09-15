@@ -596,17 +596,19 @@ async def create_autonomous_job(
     has_egress_proxy = bool(resolve_egress_proxy(base_settings.ingest.proxy))
     github_enabled = is_github_dispatch_enabled()
 
-    if is_yt and is_cloud and not github_enabled and not has_egress_proxy:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cloud YouTube acquisition requires either GitHub Actions worker dispatch (configure GITHUB_PAT in Settings or environment) "
-                "or an active WARP egress proxy (socks5://127.0.0.1:1080). "
-                "Direct local execution from cloud datacenter IPs is blocked by YouTube anti-bot protection."
-            ),
-        )
-
-    dispatch_mode = "github" if github_enabled else "local"
+    if is_cloud:
+        if not github_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "GitHub Actions worker dispatch is required for cloud execution on Render. "
+                    "In-process pipeline execution is disabled on the control plane to prevent memory exhaustion and compute hang. "
+                    "Please configure GITHUB_PAT in Settings or environment variables to enable remote worker dispatch."
+                ),
+            )
+        dispatch_mode = "github"
+    else:
+        dispatch_mode = "github" if github_enabled else "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
@@ -706,17 +708,19 @@ async def create_job(
     has_egress_proxy = bool(resolve_egress_proxy(settings.ingest.proxy))
     github_enabled = is_github_dispatch_enabled()
 
-    if is_yt and is_cloud and not github_enabled and not has_egress_proxy:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cloud YouTube acquisition requires either GitHub Actions worker dispatch (configure GITHUB_PAT in Settings or environment) "
-                "or an active WARP egress proxy (socks5://127.0.0.1:1080). "
-                "Direct local execution from cloud datacenter IPs is blocked by YouTube anti-bot protection."
-            ),
-        )
-
-    dispatch_mode = "github" if github_enabled else "local"
+    if is_cloud:
+        if not github_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "GitHub Actions worker dispatch is required for cloud execution on Render. "
+                    "In-process pipeline execution is disabled on the control plane to prevent memory exhaustion and compute hang. "
+                    "Please configure GITHUB_PAT in Settings or environment variables to enable remote worker dispatch."
+                ),
+            )
+        dispatch_mode = "github"
+    else:
+        dispatch_mode = "github" if github_enabled else "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
@@ -1002,11 +1006,30 @@ async def retry_job(job_id: str) -> JobOut:
     broker.publish(Event(type="retried", job_id=job_id, data={"attempt": next_attempt}))
 
     source = await asyncio.to_thread(store.get_source, job.source_id)
-    if job.dispatch_mode == "github" or is_github_dispatch_enabled():
+    is_cloud = bool(
+        os.environ.get("RENDER")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("KUBERNETES_SERVICE_HOST")
+        or os.environ.get("AUTOCLIP_ENV") == "production"
+    )
+    if is_cloud:
+        if not is_github_dispatch_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "GitHub Actions worker dispatch is required for cloud execution on Render. "
+                    "In-process pipeline execution is disabled on the control plane to prevent compute hang. "
+                    "Please configure GITHUB_PAT in Settings or environment variables."
+                ),
+            )
         if source:
             asyncio.create_task(dispatch_job_to_github(job, source))
     else:
-        queue.notify()
+        if job.dispatch_mode == "github" or is_github_dispatch_enabled():
+            if source:
+                asyncio.create_task(dispatch_job_to_github(job, source))
+        else:
+            queue.notify()
 
     updated = await asyncio.to_thread(store.get_job, job_id)
     return JobOut.of(updated or job, source)
@@ -1208,6 +1231,8 @@ async def worker_callback(
         "stage": payload.stage or job.current_stage,
         "progress": payload.progress if payload.progress is not None else job.progress,
     }
+    if payload.message:
+        event_data["message"] = payload.message
     if payload.error:
         event_data["error"] = payload.error
     if payload.github_run_id:

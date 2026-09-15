@@ -58,6 +58,7 @@ def send_callback(
     status: str | None = None,
     stage: str | None = None,
     progress: float | None = None,
+    message: str | None = None,
     error: str | None = None,
     clips: list[dict[str, Any]] | None = None,
     evaluations: list[dict[str, Any]] | None = None,
@@ -78,6 +79,8 @@ def send_callback(
         payload["stage"] = stage
     if progress is not None:
         payload["progress"] = progress
+    if message is not None:
+        payload["message"] = message
     if error is not None:
         payload["error"] = error
     if clips is not None:
@@ -249,7 +252,7 @@ async def async_main() -> None:
     # 5. Execute PipelineRunner
     def on_progress(event):
         stage_name = event.stage.value if hasattr(event.stage, "value") else str(event.stage)
-        report(stage=stage_name, progress=round(event.overall, 3))
+        report(stage=stage_name, progress=round(event.overall, 3), message=getattr(event, "message", None))
 
     runner = PipelineRunner(
         job,
