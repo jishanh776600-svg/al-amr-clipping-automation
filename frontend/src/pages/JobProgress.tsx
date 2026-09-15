@@ -818,6 +818,61 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.approval_telemetry && (
+        <div className="mt-6 rounded-xl border border-violet-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-violet-400">
+                Operator Approval (Step 24)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.approval_telemetry.publish_ready === job.settings.approval_telemetry.total_eligible &&
+                  job.settings.approval_telemetry.total_eligible > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-violet-500/20 text-violet-300 border-violet-500/30'
+                }`}
+              >
+                {job.settings.approval_telemetry.publish_ready}/{job.settings.approval_telemetry.total_eligible} Approved
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-5 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Eligible</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.approval_telemetry.total_eligible ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Pending</div>
+              <div className="text-lg font-bold text-ink-400 mt-0.5">
+                {job.settings.approval_telemetry.pending ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Approved</div>
+              <div className="text-lg font-bold text-emerald-400 mt-0.5">
+                {job.settings.approval_telemetry.approved ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Rejected</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.approval_telemetry.rejected > 0 ? 'text-rose-400' : 'text-ink-400'}`}>
+                {job.settings.approval_telemetry.rejected ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Changes Req.</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.approval_telemetry.changes_requested > 0 ? 'text-amber-400' : 'text-ink-400'}`}>
+                {job.settings.approval_telemetry.changes_requested ?? 0}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

@@ -57,6 +57,9 @@ from .schemas import (
     FinalRenderOut,
     ClipMetadataOut,
     ClipMetadataUpdateIn,
+    ClipApprovalOut,
+    ClipApprovalActionIn,
+    ClipApprovalTelemetryOut,
     WorkerCallbackIn,
 )
 
@@ -1282,3 +1285,263 @@ async def update_clip_metadata_endpoint(
     )
     return ClipMetadataOut.of(updated)
 
+
+# ---------------------------------------------------------------------------
+# Step 24: Clip Approval & Publishing Control
+# ---------------------------------------------------------------------------
+
+_APPROVAL_ACTION_MAP: dict[str, str] = {
+    "APPROVE": "APPROVED",
+    "REJECT": "REJECTED",
+    "REQUEST_CHANGES": "CHANGES_REQUESTED",
+    "LOCK": "PUBLISHING_LOCKED",
+}
+
+
+def _check_publish_readiness(clip_id: str) -> tuple[bool, list[str]]:
+    """Deterministic publish-readiness gate. Checks Steps 22 & 23 quality gates.
+
+    Returns (eligible, blocking_reasons).
+    """
+    blocking: list[str] = []
+
+    final_render = store.get_final_render(clip_id)
+    if final_render is None:
+        blocking.append("No final render record found (Step 22 not completed).")
+    elif not final_render.is_approved:
+        blocking.append(
+            f"Final render quality gate failed: {final_render.quality_status}. "
+            f"Errors: {'; '.join(final_render.error_details) or 'none'}"
+        )
+
+    clip_meta = store.get_clip_metadata(clip_id)
+    if clip_meta is None:
+        blocking.append("No SEO metadata record found (Step 23 not completed).")
+    elif not clip_meta.is_publish_ready:
+        blocking.append(
+            f"SEO metadata compliance gate failed: {clip_meta.compliance_status}. "
+            f"Errors: {'; '.join(clip_meta.validation_errors) or 'none'}"
+        )
+
+    if final_render and final_render.output_path:
+        from pathlib import Path
+        if not Path(final_render.output_path).exists():
+            blocking.append(
+                f"Final render output file not accessible: {final_render.output_path}"
+            )
+
+    return (len(blocking) == 0), blocking
+
+
+@router.get("/{job_id}/approvals", response_model=list[ClipApprovalOut])
+async def list_job_approvals(job_id: str) -> list[ClipApprovalOut]:
+    """List all clip approval records for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    records = await asyncio.to_thread(store.list_clip_approvals_for_job, job_id)
+    return [ClipApprovalOut.of(r) for r in records]
+
+
+@router.get("/{job_id}/approvals/telemetry", response_model=ClipApprovalTelemetryOut)
+async def get_approval_telemetry(job_id: str) -> ClipApprovalTelemetryOut:
+    """Return Step 24 approval summary telemetry for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(store.list_clip_approvals_for_job, job_id)
+    clips = await asyncio.to_thread(store.list_clips, job_id)
+
+    # Total eligible = clips with final render PASS or WARN
+    total_eligible = 0
+    for clip in clips:
+        render = await asyncio.to_thread(store.get_final_render, clip.id)
+        if render and render.quality_status in ("RENDER_PASS", "RENDER_WARN"):
+            total_eligible += 1
+
+    pending = sum(1 for r in records if r.current_status == "PENDING_REVIEW")
+    approved = sum(1 for r in records if r.current_status == "APPROVED")
+    rejected = sum(1 for r in records if r.current_status == "REJECTED")
+    changes_requested = sum(1 for r in records if r.current_status == "CHANGES_REQUESTED")
+    publishing_locked = sum(1 for r in records if r.current_status == "PUBLISHING_LOCKED")
+    publish_ready = sum(1 for r in records if r.is_approved_for_publishing)
+
+    return ClipApprovalTelemetryOut(
+        total_eligible=total_eligible,
+        pending=pending,
+        approved=approved,
+        rejected=rejected,
+        changes_requested=changes_requested,
+        publishing_locked=publishing_locked,
+        publish_ready=publish_ready,
+    )
+
+
+@router.get("/{job_id}/clips/{clip_id}/approval", response_model=ClipApprovalOut)
+async def get_clip_approval_endpoint(job_id: str, clip_id: str) -> ClipApprovalOut:
+    """Retrieve the current approval state for a clip."""
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    record = await asyncio.to_thread(store.get_clip_approval, clip_id)
+    if not record:
+        # Auto-initialise — compute eligibility on first fetch
+        eligible, blocking = await asyncio.to_thread(_check_publish_readiness, clip_id)
+        record = models.ClipApprovalRecord(
+            id=models.new_id(),
+            job_id=job_id,
+            clip_id=clip_id,
+            current_status="PENDING_REVIEW",
+            publish_eligible=eligible,
+            blocking_reasons=blocking,
+        )
+        await asyncio.to_thread(store.create_clip_approval, record)
+
+    return ClipApprovalOut.of(record)
+
+
+@router.post("/{job_id}/clips/{clip_id}/approval", response_model=ClipApprovalOut)
+async def post_clip_approval_action(
+    job_id: str,
+    clip_id: str,
+    payload: ClipApprovalActionIn,
+) -> ClipApprovalOut:
+    """Apply an operator approval action (APPROVE / REJECT / REQUEST_CHANGES / LOCK).
+
+    Enforces:
+    - Deterministic state machine transitions
+    - Optimistic concurrency via expected_version
+    - Operator note required for REJECT and REQUEST_CHANGES
+    - Publish-readiness gate re-evaluated before APPROVE
+    """
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    action_upper = payload.action.strip().upper()
+    new_status = _APPROVAL_ACTION_MAP.get(action_upper)
+    if not new_status:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown action '{payload.action}'. "
+                f"Valid actions: APPROVE, REJECT, REQUEST_CHANGES, LOCK"
+            ),
+        )
+
+    # Note required for REJECT / REQUEST_CHANGES
+    if action_upper in ("REJECT", "REQUEST_CHANGES") and not payload.operator_note.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=f"operator_note is required when action is '{payload.action}'.",
+        )
+
+    # Get or auto-init the approval record
+    record = await asyncio.to_thread(store.get_clip_approval, clip_id)
+    if not record:
+        eligible, blocking = await asyncio.to_thread(_check_publish_readiness, clip_id)
+        record = models.ClipApprovalRecord(
+            id=models.new_id(),
+            job_id=job_id,
+            clip_id=clip_id,
+            current_status="PENDING_REVIEW",
+            publish_eligible=eligible,
+            blocking_reasons=blocking,
+        )
+        await asyncio.to_thread(store.create_clip_approval, record)
+
+    # Optimistic concurrency check
+    if payload.expected_version is not None and payload.expected_version != record.version:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Stale approval version: expected v{payload.expected_version}, "
+                f"current is v{record.version}. Refresh and retry."
+            ),
+        )
+
+    # Idempotency: already in the target state
+    if record.current_status == new_status:
+        return ClipApprovalOut.of(record)
+
+    # State transition validation
+    if not record.can_transition_to(new_status):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid state transition: {record.current_status} → {new_status}. "
+                f"Current state does not allow this action."
+            ),
+        )
+
+    # Re-evaluate publish readiness before approving
+    if new_status == "APPROVED":
+        eligible, blocking = await asyncio.to_thread(_check_publish_readiness, clip_id)
+        record.publish_eligible = eligible
+        record.blocking_reasons = blocking
+        if not eligible:
+            # Don't block approval, but note the gate issues
+            log.warning(
+                "Approving clip %s despite %d blocking reasons: %s",
+                clip_id,
+                len(blocking),
+                blocking,
+            )
+
+    # Apply the action
+    try:
+        record.apply_action(
+            new_status=new_status,
+            operator_action=action_upper,
+            operator_note=payload.operator_note.strip(),
+            actor="operator",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    await asyncio.to_thread(store.update_clip_approval, record)
+
+    log.info(
+        "Clip %s approval → %s (v%d) note=%r",
+        clip_id,
+        new_status,
+        record.version,
+        payload.operator_note[:80],
+    )
+
+    return ClipApprovalOut.of(record)
+
+
+@router.post("/{job_id}/clips/{clip_id}/approval/reset", response_model=ClipApprovalOut)
+async def reset_clip_approval_endpoint(
+    job_id: str,
+    clip_id: str,
+) -> ClipApprovalOut:
+    """Reset a clip's approval status back to PENDING_REVIEW (preserves history)."""
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    record = await asyncio.to_thread(store.reset_clip_approval, clip_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Approval record not found for this clip.")
+
+    return ClipApprovalOut.of(record)
+
+
+@router.get("/{job_id}/clips/{clip_id}/approval/review-package")
+async def get_clip_review_package(job_id: str, clip_id: str) -> dict:
+    """Return the assembled review package for Telegram/operator review.
+
+    Reuses Step 17–23 artifacts. Does NOT recompute anything.
+    """
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    pkg = await asyncio.to_thread(
+        store.build_clip_approval_review_package, clip_id, job_id
+    )
+    return pkg

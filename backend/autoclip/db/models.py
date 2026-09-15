@@ -1088,4 +1088,140 @@ class ClipMetadataRecord:
         )
 
 
+# ---------------------------------------------------------------------------
+# Step 24: Clip Approval Record
+# ---------------------------------------------------------------------------
+
+ApprovalStatus = Literal[
+    "PENDING_REVIEW",
+    "APPROVED",
+    "REJECTED",
+    "CHANGES_REQUESTED",
+    "PUBLISHING_LOCKED",
+]
+
+# Valid deterministic state transitions
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    "PENDING_REVIEW": {"APPROVED", "REJECTED", "CHANGES_REQUESTED", "PUBLISHING_LOCKED"},
+    "APPROVED": {"REJECTED", "CHANGES_REQUESTED", "PUBLISHING_LOCKED"},
+    "REJECTED": {"PENDING_REVIEW", "APPROVED", "CHANGES_REQUESTED"},
+    "CHANGES_REQUESTED": {"PENDING_REVIEW", "APPROVED", "REJECTED"},
+    "PUBLISHING_LOCKED": {"APPROVED"},  # can only unlock to approved
+}
+
+
+@dataclass
+class ClipApprovalRecord:
+    """Operator approval state for a single clip.
+
+    Persists full immutable audit trail in ``history``. Optimistic concurrency
+    is enforced via ``version`` — a stale update (incoming version < current)
+    is rejected deterministically.
+    """
+
+    id: str
+    job_id: str
+    clip_id: str
+    current_status: ApprovalStatus = "PENDING_REVIEW"
+    operator_action: str | None = None
+    operator_note: str = ""
+    version: int = 1
+    previous_status: str | None = None
+    publish_eligible: bool = False
+    blocking_reasons: list[str] = field(default_factory=list)
+    history: list[dict[str, Any]] = field(default_factory=list)
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    # ------------------------------------------------------------------
+    # Business logic
+    # ------------------------------------------------------------------
+
+    @property
+    def is_approved_for_publishing(self) -> bool:
+        """True only when the operator explicitly set APPROVED and there are
+        no blocking quality-gate reasons preventing publication."""
+        return self.current_status == "APPROVED" and self.publish_eligible
+
+    def can_transition_to(self, new_status: str) -> bool:
+        """Check if transition from current_status → new_status is valid."""
+        allowed = _VALID_TRANSITIONS.get(self.current_status, set())
+        return new_status in allowed
+
+    def apply_action(
+        self,
+        new_status: ApprovalStatus,
+        operator_action: str,
+        operator_note: str = "",
+        actor: str = "operator",
+    ) -> None:
+        """Mutate approval state deterministically, recording audit entry."""
+        if not self.can_transition_to(new_status):
+            raise ValueError(
+                f"Invalid transition: {self.current_status} → {new_status}"
+            )
+        old_status = self.current_status
+        self.previous_status = old_status
+        self.current_status = new_status
+        self.operator_action = operator_action
+        self.operator_note = operator_note
+        self.version += 1
+        self.updated_at = utcnow()
+
+        self.history.append({
+            "from_status": old_status,
+            "to_status": new_status,
+            "operator_action": operator_action,
+            "operator_note": operator_note,
+            "actor": actor,
+            "version": self.version,
+            "timestamp": self.updated_at,
+        })
+
+    # ------------------------------------------------------------------
+    # Serialisation helpers
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "clip_id": self.clip_id,
+            "current_status": self.current_status,
+            "operator_action": self.operator_action,
+            "operator_note": self.operator_note,
+            "version": self.version,
+            "previous_status": self.previous_status,
+            "publish_eligible": self.publish_eligible,
+            "blocking_reasons": self.blocking_reasons,
+            "history": self.history,
+            "telemetry": self.telemetry,
+            "is_approved_for_publishing": self.is_approved_for_publishing,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ClipApprovalRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            clip_id=row["clip_id"],
+            current_status=row["current_status"] if "current_status" in keys else "PENDING_REVIEW",
+            operator_action=row["operator_action"] if "operator_action" in keys else None,
+            operator_note=row["operator_note"] or "" if "operator_note" in keys else "",
+            version=int(row["version"] or 1) if "version" in keys else 1,
+            previous_status=row["previous_status"] if "previous_status" in keys else None,
+            publish_eligible=bool(row["publish_eligible"]) if "publish_eligible" in keys else False,
+            blocking_reasons=json.loads(row["blocking_reasons"] or "[]") if "blocking_reasons" in keys else [],
+            history=json.loads(row["history"] or "[]") if "history" in keys else [],
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+
 

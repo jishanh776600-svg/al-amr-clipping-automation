@@ -1108,6 +1108,84 @@ class ClipMetadataUpdateIn(BaseModel):
     action: str | None = None  # e.g., "reset_to_generated"
 
 
+# ---------------------------------------------------------------------------
+# Step 24: Clip Approval
+# ---------------------------------------------------------------------------
+
+
+class ClipApprovalHistoryEntry(BaseModel):
+    from_status: str
+    to_status: str
+    operator_action: str
+    operator_note: str = ""
+    actor: str = "operator"
+    version: int
+    timestamp: str
+
+
+class ClipApprovalOut(BaseModel):
+    id: str
+    job_id: str
+    clip_id: str
+    current_status: str
+    operator_action: str | None = None
+    operator_note: str = ""
+    version: int = 1
+    previous_status: str | None = None
+    publish_eligible: bool = False
+    blocking_reasons: list[str] = Field(default_factory=list)
+    is_approved_for_publishing: bool = False
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.ClipApprovalRecord) -> "ClipApprovalOut":
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            clip_id=record.clip_id,
+            current_status=record.current_status,
+            operator_action=record.operator_action,
+            operator_note=record.operator_note,
+            version=record.version,
+            previous_status=record.previous_status,
+            publish_eligible=record.publish_eligible,
+            blocking_reasons=record.blocking_reasons or [],
+            is_approved_for_publishing=record.is_approved_for_publishing,
+            history=record.history or [],
+            telemetry=record.telemetry or {},
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class ClipApprovalActionIn(BaseModel):
+    """Operator approval action payload.
+
+    ``action`` must be one of: APPROVE, REJECT, REQUEST_CHANGES.
+    ``operator_note`` is required for REJECT and REQUEST_CHANGES.
+    ``expected_version`` enables optimistic concurrency — submit the current
+    version you saw; the server rejects if a newer version exists.
+    """
+    action: str  # APPROVE | REJECT | REQUEST_CHANGES
+    operator_note: str = ""
+    expected_version: int | None = None
+
+
+class ClipApprovalTelemetryOut(BaseModel):
+    """Summary telemetry for Step 24 progress card."""
+    total_eligible: int = 0
+    pending: int = 0
+    approved: int = 0
+    rejected: int = 0
+    changes_requested: int = 0
+    publishing_locked: int = 0
+    publish_ready: int = 0
+
+
+
 
 
 

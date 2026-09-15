@@ -15,6 +15,7 @@ from .models import (
     CampaignGuideline,
     CampaignSpecificationRecord,
     Clip,
+    ClipApprovalRecord,
     ClipCandidateRecord,
     ClipEdit,
     ClipSpecificationRecord,
@@ -1898,6 +1899,193 @@ def replace_clip_metadata(job_id: str, records: list[ClipMetadataRecord]) -> Non
 
 
 
+# --------------------------------------------------------------------------
+# Step 24: Clip Approval
+# --------------------------------------------------------------------------
+
+
+def create_clip_approval(record: ClipApprovalRecord) -> ClipApprovalRecord:
+    """Persist a new clip approval record (upsert on clip_id UNIQUE)."""
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO clip_approvals (
+                id, job_id, clip_id, current_status, operator_action,
+                operator_note, version, previous_status, publish_eligible,
+                blocking_reasons, history, telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.job_id,
+                record.clip_id,
+                record.current_status,
+                record.operator_action,
+                record.operator_note,
+                record.version,
+                record.previous_status,
+                int(record.publish_eligible),
+                json.dumps(record.blocking_reasons),
+                json.dumps(record.history),
+                json.dumps(record.telemetry),
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return record
+
+
+def get_clip_approval(clip_id: str) -> ClipApprovalRecord | None:
+    """Retrieve the approval record for a single clip."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM clip_approvals WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+    return ClipApprovalRecord.from_row(row) if row else None
+
+
+def get_clip_approval_by_id(approval_id: str) -> ClipApprovalRecord | None:
+    """Retrieve approval record by its primary key."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM clip_approvals WHERE id = ?", (approval_id,)
+        ).fetchone()
+    return ClipApprovalRecord.from_row(row) if row else None
+
+
+def list_clip_approvals_for_job(job_id: str) -> list[ClipApprovalRecord]:
+    """List all approval records for clips belonging to a job."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM clip_approvals WHERE job_id = ? ORDER BY created_at ASC",
+            (job_id,),
+        ).fetchall()
+    return [ClipApprovalRecord.from_row(r) for r in rows]
+
+
+def update_clip_approval(record: ClipApprovalRecord) -> ClipApprovalRecord:
+    """Overwrite the approval record (use after ClipApprovalRecord.apply_action)."""
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE clip_approvals
+            SET current_status  = ?,
+                operator_action = ?,
+                operator_note   = ?,
+                version         = ?,
+                previous_status = ?,
+                publish_eligible= ?,
+                blocking_reasons= ?,
+                history         = ?,
+                telemetry       = ?,
+                updated_at      = ?
+            WHERE clip_id = ?
+            """,
+            (
+                record.current_status,
+                record.operator_action,
+                record.operator_note,
+                record.version,
+                record.previous_status,
+                int(record.publish_eligible),
+                json.dumps(record.blocking_reasons),
+                json.dumps(record.history),
+                json.dumps(record.telemetry),
+                record.updated_at,
+                record.clip_id,
+            ),
+        )
+    return record
+
+
+def reset_clip_approval(clip_id: str) -> ClipApprovalRecord | None:
+    """Reset a clip's approval back to PENDING_REVIEW, preserving history.
+
+    Designed for the API's reset endpoint. Records the reset action in history.
+    """
+    existing = get_clip_approval(clip_id)
+    if not existing:
+        return None
+
+    old_status = existing.current_status
+    existing.previous_status = old_status
+    existing.current_status = "PENDING_REVIEW"
+    existing.operator_action = "reset"
+    existing.operator_note = "Reset to PENDING_REVIEW by operator"
+    existing.version += 1
+    existing.updated_at = utcnow()
+    existing.history.append({
+        "from_status": old_status,
+        "to_status": "PENDING_REVIEW",
+        "operator_action": "reset",
+        "operator_note": "Reset to PENDING_REVIEW by operator",
+        "actor": "system",
+        "version": existing.version,
+        "timestamp": existing.updated_at,
+    })
+
+    return update_clip_approval(existing)
+
+
+def is_clip_approved_for_publishing(clip_id: str) -> tuple[bool, list[str]]:
+    """Publishing guard for Step 25.
+
+    Returns ``(True, [])`` if the clip is APPROVED and publish-eligible.
+    Returns ``(False, reasons)`` otherwise with human-readable blocking reasons.
+    """
+    record = get_clip_approval(clip_id)
+    if record is None:
+        return False, ["Clip has not been reviewed. Approval required before publishing."]
+    if record.current_status != "APPROVED":
+        return False, [f"Clip approval status is '{record.current_status}' — must be 'APPROVED'."]
+    if not record.publish_eligible:
+        reasons = record.blocking_reasons or ["Clip failed publish-readiness gate."]
+        return False, reasons
+    return True, []
+
+
+def build_clip_approval_review_package(
+    clip_id: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Assemble a review package for Telegram notification.
+
+    Reuses already-computed Step 17–23 artifacts from DB. Does NOT recompute
+    rendering, BGM mixing, captions, or SEO.
+    """
+    from .models import new_id  # local import to avoid circular at module level
+
+    clip_row = None
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+        if row:
+            from .models import Clip
+            clip_row = Clip.from_row(row)
+
+    final_render = get_final_render(clip_id)
+    clip_meta = get_clip_metadata(clip_id)
+    approval = get_clip_approval(clip_id)
+
+    pkg: dict[str, Any] = {
+        "clip_id": clip_id,
+        "job_id": job_id,
+        "rank": clip_row.rank if clip_row else 0,
+        "title": clip_row.title if clip_row else "",
+        "score": clip_row.score if clip_row else 0,
+        "duration_s": clip_row.duration_s if clip_row else 0.0,
+        "output_path": final_render.output_path if final_render else None,
+        "quality_score": final_render.quality_score if final_render else None,
+        "quality_status": final_render.quality_status if final_render else None,
+        "seo_title": clip_meta.final_title if clip_meta else "",
+        "seo_description": clip_meta.final_description if clip_meta else "",
+        "seo_hashtags": clip_meta.final_hashtags if clip_meta else [],
+        "seo_compliance_status": clip_meta.compliance_status if clip_meta else None,
+        "approval_status": approval.current_status if approval else "PENDING_REVIEW",
+        "approval_version": approval.version if approval else 1,
+        "publish_eligible": approval.publish_eligible if approval else False,
+        "blocking_reasons": approval.blocking_reasons if approval else [],
+    }
+    return pkg
 
 
 

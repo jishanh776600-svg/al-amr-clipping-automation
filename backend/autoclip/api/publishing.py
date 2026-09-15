@@ -177,6 +177,17 @@ async def publish_export_endpoint(
         desc = request.description or clip.hook or ""
         tags = request.tags or ["ALAMR", "Shorts"]
 
+    # Step 24 Operator Approval Guard
+    clip_approval = await asyncio.to_thread(store.get_clip_approval, clip.id)
+    if clip_approval is not None:
+        approved, approval_reasons = store.is_clip_approved_for_publishing(clip.id)
+        if not approved:
+            reasons_str = "; ".join(approval_reasons) or "Clip has not been approved by operator."
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot publish clip '{clip.id}': {reasons_str}",
+            )
+
     eval_row = await asyncio.to_thread(store.get_campaign_evaluation, clip.id)
     if eval_row and eval_row.campaign_id:
         campaign = await asyncio.to_thread(store.get_campaign, eval_row.campaign_id)

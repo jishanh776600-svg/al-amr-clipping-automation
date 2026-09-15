@@ -7,6 +7,7 @@ import {
   formatDuration,
   type CaptionStyle,
   type Clip,
+  type ClipApproval,
   type ClipMetadata,
   type CropPath,
   type Job,
@@ -41,6 +42,12 @@ export function Review() {
   const [metadataCta, setMetadataCta] = useState('')
   const [savingMetadata, setSavingMetadata] = useState(false)
   const [metadataNotice, setMetadataNotice] = useState<string | null>(null)
+
+  // Step 24: Clip Approval State
+  const [approval, setApproval] = useState<ClipApproval | null>(null)
+  const [approvalNote, setApprovalNote] = useState('')
+  const [approvalLoading, setApprovalLoading] = useState(false)
+  const [approvalNotice, setApprovalNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (!jobId) return
@@ -87,6 +94,16 @@ export function Review() {
           setMetadataNotice(null)
         })
         .catch(() => setMetadata(null))
+
+      // Fetch Step 24 Approval
+      api
+        .getClipApproval(jobId, selected.id)
+        .then((a) => {
+          setApproval(a)
+          setApprovalNote('')
+          setApprovalNotice(null)
+        })
+        .catch(() => setApproval(null))
     }
   }, [selected?.id, jobId])
 
@@ -130,6 +147,46 @@ export function Review() {
       setError(err as Error)
     } finally {
       setSavingMetadata(false)
+    }
+  }
+
+  // Step 24: Approval action handlers
+  const doApprovalAction = async (
+    action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES' | 'LOCK',
+    note: string = ''
+  ) => {
+    if (!jobId || !selected) return
+    setApprovalLoading(true)
+    setApprovalNotice(null)
+    try {
+      const updated = await api.postClipApprovalAction(jobId, selected.id, {
+        action,
+        operator_note: note,
+        expected_version: approval?.version,
+      })
+      setApproval(updated)
+      setApprovalNote('')
+      setApprovalNotice(`Clip ${action.toLowerCase().replace('_', ' ')} — status: ${updated.current_status}`)
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setApprovalLoading(false)
+    }
+  }
+
+  const resetApproval = async () => {
+    if (!jobId || !selected) return
+    setApprovalLoading(true)
+    setApprovalNotice(null)
+    try {
+      const updated = await api.resetClipApproval(jobId, selected.id)
+      setApproval(updated)
+      setApprovalNote('')
+      setApprovalNotice('Approval reset to PENDING_REVIEW.')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setApprovalLoading(false)
     }
   }
 
@@ -599,6 +656,144 @@ export function Review() {
               </>
             )}
           </section>
+
+          {/* Step 24: Operator Approval Card */}
+          {selected && (
+            <section className="border-t border-ink-800 pt-6">
+              <div className="flex items-center justify-between mb-3">
+                <p className="eyebrow text-violet-400">Operator Approval (Step 24)</p>
+                {approval && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-ink-500">v{approval.version}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase border ${
+                        approval.current_status === 'APPROVED'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          : approval.current_status === 'REJECTED'
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          : approval.current_status === 'CHANGES_REQUESTED'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          : approval.current_status === 'PUBLISHING_LOCKED'
+                          ? 'bg-orange-500/20 text-orange-300 border-orange-500/30'
+                          : 'bg-ink-700/60 text-ink-300 border-ink-600'
+                      }`}
+                    >
+                      {approval.current_status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded border border-ink-800 bg-ink-850 p-4 text-xs space-y-3.5">
+                {approvalNotice && (
+                  <div className="p-2 rounded bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[11px]">
+                    {approvalNotice}
+                  </div>
+                )}
+
+                {/* Blocking reasons */}
+                {approval && approval.blocking_reasons && approval.blocking_reasons.length > 0 && (
+                  <div className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] space-y-1">
+                    <p className="font-semibold">Publish-Readiness Blocking Conditions:</p>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {approval.blocking_reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Eligibility indicator */}
+                {approval && (
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className={`w-2 h-2 rounded-full ${approval.publish_eligible ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                    <span className={approval.publish_eligible ? 'text-emerald-300' : 'text-rose-300'}>
+                      {approval.publish_eligible ? 'Publish-eligible (Steps 22+23 passed)' : 'Not publish-eligible'}
+                    </span>
+                    {approval.is_approved_for_publishing && (
+                      <span className="ml-auto text-emerald-400 font-semibold">✓ Ready for Step 25 publishing</span>
+                    )}
+                  </div>
+                )}
+
+                {/* Operator note input */}
+                <div>
+                  <span className="text-[11px] text-ink-400 block mb-1">
+                    Operator Note <span className="text-ink-600">(required for Reject / Request Changes)</span>
+                  </span>
+                  <textarea
+                    rows={2}
+                    value={approvalNote}
+                    onChange={(e) => setApprovalNote(e.target.value)}
+                    disabled={approvalLoading}
+                    className="w-full rounded border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100 focus:border-violet-500 focus:outline-none font-sans resize-y"
+                    placeholder="Reason for rejection or requested changes..."
+                  />
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex flex-wrap gap-2 pt-1 border-t border-ink-800">
+                  <button
+                    type="button"
+                    onClick={() => doApprovalAction('APPROVE', approvalNote)}
+                    disabled={approvalLoading || approval?.current_status === 'APPROVED'}
+                    className="btn btn-primary text-xs py-1 px-3 disabled:opacity-40"
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => doApprovalAction('REJECT', approvalNote)}
+                    disabled={approvalLoading || !approvalNote.trim()}
+                    className="rounded border border-rose-700 bg-rose-950/60 px-3 py-1 text-xs text-rose-300 hover:bg-rose-900/60 disabled:opacity-40"
+                  >
+                    ✕ Reject
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => doApprovalAction('REQUEST_CHANGES', approvalNote)}
+                    disabled={approvalLoading || !approvalNote.trim()}
+                    className="rounded border border-amber-700 bg-amber-950/60 px-3 py-1 text-xs text-amber-300 hover:bg-amber-900/60 disabled:opacity-40"
+                  >
+                    ⟳ Request Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetApproval}
+                    disabled={approvalLoading || approval?.current_status === 'PENDING_REVIEW'}
+                    className="ml-auto text-[11px] text-ink-400 hover:text-ink-200 underline disabled:opacity-40"
+                  >
+                    Reset to Pending
+                  </button>
+                </div>
+
+                {/* Audit history */}
+                {approval && approval.history && approval.history.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-[11px] text-ink-500 cursor-pointer hover:text-ink-300">
+                      Approval history ({approval.history.length} entries)
+                    </summary>
+                    <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                      {[...approval.history].reverse().map((entry, i) => (
+                        <div key={i} className="flex items-start gap-2 text-[10px] font-mono text-ink-400 bg-ink-900/60 rounded px-2 py-1.5">
+                          <span className={`font-semibold shrink-0 ${entry.to_status === 'APPROVED' ? 'text-emerald-400' : entry.to_status === 'REJECTED' ? 'text-rose-400' : 'text-amber-400'}`}>
+                            {entry.from_status} → {entry.to_status}
+                          </span>
+                          <span className="text-ink-500 shrink-0">v{entry.version}</span>
+                          {entry.operator_note && (
+                            <span className="text-ink-400 italic truncate" title={entry.operator_note}>
+                              "{entry.operator_note}"
+                            </span>
+                          )}
+                          <span className="ml-auto text-ink-600 shrink-0">{entry.timestamp?.slice(0, 19).replace('T', ' ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </div>

@@ -397,6 +397,51 @@ export interface ClipMetadata {
   updated_at: string
 }
 
+export type ApprovalStatus =
+  | 'PENDING_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CHANGES_REQUESTED'
+  | 'PUBLISHING_LOCKED'
+
+export interface ClipApprovalHistoryEntry {
+  from_status: string
+  to_status: string
+  operator_action: string
+  operator_note: string
+  actor: string
+  version: number
+  timestamp: string
+}
+
+export interface ClipApproval {
+  id: string
+  job_id: string
+  clip_id: string
+  current_status: ApprovalStatus
+  operator_action: string | null
+  operator_note: string
+  version: number
+  previous_status: string | null
+  publish_eligible: boolean
+  blocking_reasons: string[]
+  is_approved_for_publishing: boolean
+  history: ClipApprovalHistoryEntry[]
+  telemetry: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+export interface ClipApprovalTelemetry {
+  total_eligible: number
+  pending: number
+  approved: number
+  rejected: number
+  changes_requested: number
+  publishing_locked: number
+  publish_ready: number
+}
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -1070,6 +1115,39 @@ export const api = {
     request<{ status: string; id: string }>(`/api/bgm/${id}`, {
       method: 'DELETE',
     }),
+
+  // Step 24: Clip Approvals
+  listJobApprovals: (jobId: string) =>
+    request<ClipApproval[]>(`/api/jobs/${jobId}/approvals`),
+
+  getApprovalTelemetry: (jobId: string) =>
+    request<ClipApprovalTelemetry>(`/api/jobs/${jobId}/approvals/telemetry`),
+
+  getClipApproval: (jobId: string, clipId: string) =>
+    request<ClipApproval>(`/api/jobs/${jobId}/clips/${clipId}/approval`),
+
+  postClipApprovalAction: (
+    jobId: string,
+    clipId: string,
+    data: {
+      action: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES' | 'LOCK'
+      operator_note?: string
+      expected_version?: number
+    }
+  ) =>
+    request<ClipApproval>(`/api/jobs/${jobId}/clips/${clipId}/approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  resetClipApproval: (jobId: string, clipId: string) =>
+    request<ClipApproval>(`/api/jobs/${jobId}/clips/${clipId}/approval/reset`, {
+      method: 'POST',
+    }),
+
+  getClipReviewPackage: (jobId: string, clipId: string) =>
+    request<Record<string, any>>(`/api/jobs/${jobId}/clips/${clipId}/approval/review-package`),
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

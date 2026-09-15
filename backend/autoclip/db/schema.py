@@ -592,6 +592,43 @@ def _migration_v18(conn: sqlite3.Connection) -> None:
     conn.executescript(_V18)
 
 
+# ---------------------------------------------------------------------------
+# Step 24: Clip Approval (V19)
+# ---------------------------------------------------------------------------
+
+_V19 = """
+CREATE TABLE clip_approvals (
+    id               TEXT PRIMARY KEY,
+    job_id           TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    clip_id          TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE UNIQUE,
+    current_status   TEXT NOT NULL DEFAULT 'PENDING_REVIEW'
+                     CHECK (current_status IN (
+                         'PENDING_REVIEW',
+                         'APPROVED',
+                         'REJECTED',
+                         'CHANGES_REQUESTED',
+                         'PUBLISHING_LOCKED'
+                     )),
+    operator_action  TEXT,
+    operator_note    TEXT NOT NULL DEFAULT '',
+    version          INTEGER NOT NULL DEFAULT 1,
+    previous_status  TEXT,
+    publish_eligible INTEGER NOT NULL DEFAULT 0,
+    blocking_reasons TEXT NOT NULL DEFAULT '[]',
+    history          TEXT NOT NULL DEFAULT '[]',
+    telemetry        TEXT NOT NULL DEFAULT '{}',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+CREATE INDEX idx_clip_approvals_job    ON clip_approvals(job_id, current_status);
+CREATE INDEX idx_clip_approvals_clip   ON clip_approvals(clip_id);
+"""
+
+
+def _migration_v19(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V19)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -613,6 +650,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v16,
     _migration_v17,
     _migration_v18,
+    _migration_v19,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
