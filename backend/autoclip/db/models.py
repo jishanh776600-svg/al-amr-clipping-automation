@@ -1223,5 +1223,118 @@ class ClipApprovalRecord:
         )
 
 
+# ---------------------------------------------------------------------------
+# Step 25: Remote Publication Record
+# ---------------------------------------------------------------------------
+
+PublicationStatus = Literal[
+    "PENDING",
+    "UPLOADING",
+    "PUBLISHED",
+    "FAILED_RETRYABLE",
+    "FAILED_PERMANENT",
+    "SKIPPED",
+    "CANCELLED",
+]
 
 
+@dataclass
+class PublicationRecord:
+    """Represents a discrete publication attempt of a clip to a specific platform/destination.
+
+    Includes full idempotency tracking, retry metrics, remote identifiers,
+    and sanitized response metadata.
+    """
+
+    id: str
+    job_id: str
+    clip_id: str
+    platform: str
+    idempotency_key: str
+    final_render_id: str | None = None
+    account_id: str = ""
+    destination_id: str = ""
+    status: PublicationStatus = "PENDING"
+    attempt_number: int = 1
+    remote_media_id: str | None = None
+    remote_post_id: str | None = None
+    permalink: str | None = None
+    upload_started_at: str | None = None
+    upload_completed_at: str | None = None
+    published_at: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    response_metadata: dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
+    version: int = 1
+    telemetry: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    @property
+    def is_published(self) -> bool:
+        return self.status == "PUBLISHED"
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.status == "FAILED_RETRYABLE"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "clip_id": self.clip_id,
+            "final_render_id": self.final_render_id,
+            "platform": self.platform,
+            "account_id": self.account_id,
+            "destination_id": self.destination_id,
+            "status": self.status,
+            "attempt_number": self.attempt_number,
+            "idempotency_key": self.idempotency_key,
+            "remote_media_id": self.remote_media_id,
+            "remote_post_id": self.remote_post_id,
+            "permalink": self.permalink,
+            "upload_started_at": self.upload_started_at,
+            "upload_completed_at": self.upload_completed_at,
+            "published_at": self.published_at,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "response_metadata": self.response_metadata,
+            "retry_count": self.retry_count,
+            "version": self.version,
+            "telemetry": self.telemetry,
+            "is_published": self.is_published,
+            "is_retryable": self.is_retryable,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "PublicationRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            job_id=row["job_id"],
+            clip_id=row["clip_id"],
+            final_render_id=row["final_render_id"] if "final_render_id" in keys else None,
+            platform=row["platform"],
+            account_id=row["account_id"] or "" if "account_id" in keys else "",
+            destination_id=row["destination_id"] or "" if "destination_id" in keys else "",
+            status=row["status"] if "status" in keys else "PENDING",
+            attempt_number=int(row["attempt_number"] or 1) if "attempt_number" in keys else 1,
+            idempotency_key=row["idempotency_key"],
+            remote_media_id=row["remote_media_id"] if "remote_media_id" in keys else None,
+            remote_post_id=row["remote_post_id"] if "remote_post_id" in keys else None,
+            permalink=row["permalink"] if "permalink" in keys else None,
+            upload_started_at=row["upload_started_at"] if "upload_started_at" in keys else None,
+            upload_completed_at=row["upload_completed_at"] if "upload_completed_at" in keys else None,
+            published_at=row["published_at"] if "published_at" in keys else None,
+            error_code=row["error_code"] if "error_code" in keys else None,
+            error_message=row["error_message"] if "error_message" in keys else None,
+            response_metadata=json.loads(row["response_metadata"] or "{}") if "response_metadata" in keys else {},
+            retry_count=int(row["retry_count"] or 0) if "retry_count" in keys else 0,
+            version=int(row["version"] or 1) if "version" in keys else 1,
+            telemetry=json.loads(row["telemetry"] or "{}") if "telemetry" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

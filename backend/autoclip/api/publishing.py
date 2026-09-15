@@ -12,7 +12,15 @@ from fastapi import APIRouter, HTTPException, Query
 from ..db import models, store
 from ..publishing.base import PublishingMetadata
 from ..publishing.service import PublishingService
-from .schemas import PublishingPlatformInfo, PublishingRecordOut, PublishRequestIn
+from .schemas import (
+    PublicationOut,
+    PublishAllClipsIn,
+    PublishClipIn,
+    PublishingPlatformInfo,
+    PublishingRecordOut,
+    PublishingTelemetryOut,
+    PublishRequestIn,
+)
 
 log = logging.getLogger(__name__)
 
@@ -216,3 +224,149 @@ async def publish_export_endpoint(
         results.append(PublishingRecordOut.of(record))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Step 25: Remote Publishing APIs (Clips + Publications)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs/{job_id}/publications", response_model=list[PublicationOut])
+async def list_job_publications(
+    job_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[PublicationOut]:
+    """Retrieve all remote publication records for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    records = await asyncio.to_thread(store.list_publications_for_job, job_id, limit)
+    return [PublicationOut.of(r) for r in records]
+
+
+@router.get("/jobs/{job_id}/publications/telemetry", response_model=PublishingTelemetryOut)
+async def get_job_publishing_telemetry(job_id: str) -> PublishingTelemetryOut:
+    """Retrieve aggregate publishing telemetry for a job."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    records = await asyncio.to_thread(store.list_publications_for_job, job_id, 500)
+    total = len(records)
+    published = sum(1 for r in records if r.status == "PUBLISHED")
+    failed_retryable = sum(1 for r in records if r.status == "FAILED_RETRYABLE")
+    failed_permanent = sum(1 for r in records if r.status == "FAILED_PERMANENT")
+    skipped = sum(1 for r in records if r.status == "SKIPPED")
+    total_attempts = sum(r.attempt_number for r in records)
+
+    return PublishingTelemetryOut(
+        total_destinations=total,
+        published=published,
+        failed=failed_retryable + failed_permanent,
+        retryable_failures=failed_retryable,
+        permanent_failures=failed_permanent,
+        skipped=skipped,
+        total_attempts=total_attempts,
+    )
+
+
+@router.get("/jobs/{job_id}/publications/{publication_id}", response_model=PublicationOut)
+async def get_single_publication(job_id: str, publication_id: str) -> PublicationOut:
+    """Retrieve a single remote publication record by ID."""
+    record = await asyncio.to_thread(store.get_publication, publication_id)
+    if not record or record.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Publication record not found.")
+    return PublicationOut.of(record)
+
+
+@router.post("/jobs/{job_id}/clips/{clip_id}/publish", response_model=list[PublicationOut])
+async def publish_clip_endpoint(
+    job_id: str,
+    clip_id: str,
+    request: PublishClipIn,
+) -> list[PublicationOut]:
+    """Publish an approved clip to one or more remote destinations with quality gate enforcement."""
+    job = await asyncio.to_thread(store.get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if not clip or clip.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    # Check eligibility first to return clear 400 on gate failures
+    is_eligible, reasons, _, _ = _service.verify_publishing_eligibility(clip_id)
+    if not is_eligible:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot publish clip '{clip_id}': {'; '.join(reasons)}",
+        )
+
+    results: list[PublicationOut] = []
+    for platform in request.platforms:
+        try:
+            record = await _service.publish_clip(
+                job_id=job_id,
+                clip_id=clip_id,
+                platform=platform,
+                destination=request.destination,
+                dry_run=request.dry_run,
+            )
+            results.append(PublicationOut.of(record))
+        except Exception as exc:
+            log.warning("Platform %s failed during publish of clip %s: %s", platform, clip_id, exc)
+            # Fetch latest record if created
+            dest = request.destination.strip() or "default"
+            key = f"{job_id}:{clip_id}:{platform.strip().lower()}:{dest}"
+            rec = await asyncio.to_thread(store.get_publication_by_idempotency_key, key)
+            if rec:
+                results.append(PublicationOut.of(rec))
+            else:
+                raise HTTPException(status_code=500, detail=str(exc))
+
+    return results
+
+
+@router.post("/jobs/{job_id}/clips/{clip_id}/publish-all", response_model=list[PublicationOut])
+async def publish_all_endpoint(
+    job_id: str,
+    clip_id: str,
+    request: PublishAllClipsIn,
+) -> list[PublicationOut]:
+    """Publish a single clip across all specified platforms."""
+    return await publish_clip_endpoint(
+        job_id=job_id,
+        clip_id=clip_id,
+        request=PublishClipIn(
+            platforms=request.platforms,
+            destination=request.destination,
+            dry_run=request.dry_run,
+        ),
+    )
+
+
+@router.post("/publications/{publication_id}/retry", response_model=PublicationOut)
+async def retry_publication_endpoint(
+    publication_id: str,
+    dry_run: bool = Query(default=False),
+) -> PublicationOut:
+    """Retry a failed retryable publication attempt."""
+    record = await asyncio.to_thread(store.get_publication, publication_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Publication record not found.")
+
+    if record.status == "PUBLISHED":
+        return PublicationOut.of(record)
+
+    if record.status == "FAILED_PERMANENT":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot retry permanent failure: {record.error_message}",
+        )
+
+    try:
+        updated = await _service.retry_publication(publication_id, dry_run=dry_run)
+        return PublicationOut.of(updated)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+

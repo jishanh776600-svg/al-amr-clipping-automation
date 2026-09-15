@@ -19,6 +19,24 @@ GRAPH_API_VERSION = "v19.0"
 GRAPH_API_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 
+def classify_meta_error(status_code: int, response_text: str) -> tuple[str, bool]:
+    """Classify Meta Graph API error into (error_code, retryable)."""
+    text = response_text.lower()
+    if status_code == 429 or "rate limit" in text or '"code": 4' in text or '"code": 17' in text or '"code": 613' in text:
+        return "rate_limit", True
+    if status_code == 401 or "oauthexception" in text or '"code": 190' in text or '"code": 102' in text or "token" in text:
+        return "authentication_error", False
+    if status_code == 403 or '"code": 200' in text or "permission" in text:
+        return "permission_error", False
+    if "media" in text or "aspect ratio" in text or "resolution" in text or "duration" in text:
+        return "invalid_media", False
+    if status_code in (500, 502, 503, 504):
+        return "platform_error", True
+    if "timeout" in text or "timed out" in text or "connection" in text:
+        return "network_error", True
+    return "platform_error", False
+
+
 class InstagramPublisher(BasePublisher):
     platform_name = "instagram"
 
@@ -65,7 +83,6 @@ class InstagramPublisher(BasePublisher):
             return f"{self.control_plane_url}/api/exports/{export_id}/stream{query}"
 
         if drive_link and "drive.google.com/file/d/" in drive_link:
-            # Extract file ID from https://drive.google.com/file/d/{file_id}/view...
             try:
                 parts = drive_link.split("/file/d/")
                 file_id = parts[1].split("/")[0].split("?")[0]
@@ -82,12 +99,17 @@ class InstagramPublisher(BasePublisher):
         drive_link: str | None = None,
         dry_run: bool = False,
     ) -> PublishingResult:
+        destination_id = metadata.destination or self.account_id or "default"
+
         if not self.is_configured():
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="skipped",
                 error="META_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID not configured.",
+                error_code="authentication_error",
+                retryable=False,
             )
 
         export_id = metadata.extra.get("export_id")
@@ -96,7 +118,6 @@ class InstagramPublisher(BasePublisher):
 
         # Dry run or validation
         if dry_run or not os.getenv("META_PUBLISH_LIVE", "").lower() in ("true", "1", "yes"):
-            # Verify access token with Graph API
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(
@@ -108,6 +129,7 @@ class InstagramPublisher(BasePublisher):
                     log.info("Instagram Publisher: Meta credentials verified for %s.", user_info.get("name", "Account"))
                     return PublishingResult(
                         platform=self.platform_name,
+                        destination_id=destination_id,
                         success=True,
                         status="ready_for_upload",
                         details={
@@ -119,26 +141,36 @@ class InstagramPublisher(BasePublisher):
                         },
                     )
                 else:
+                    code, retryable = classify_meta_error(resp.status_code, resp.text)
                     return PublishingResult(
                         platform=self.platform_name,
+                        destination_id=destination_id,
                         success=False,
                         status="failed",
                         error=f"Meta Graph API authentication failed ({resp.status_code}): {resp.text}",
+                        error_code=code,
+                        retryable=retryable,
                     )
             except Exception as exc:
                 return PublishingResult(
                     platform=self.platform_name,
+                    destination_id=destination_id,
                     success=False,
                     status="failed",
                     error=f"Meta Graph API connection failed: {exc}",
+                    error_code="network_error",
+                    retryable=True,
                 )
 
         if not public_url:
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="failed",
                 error="Instagram Reels requires a publicly accessible video URL. Ensure CONTROL_PLANE_URL is configured.",
+                error_code="invalid_media",
+                retryable=False,
             )
 
         caption = metadata.title
@@ -161,15 +193,27 @@ class InstagramPublisher(BasePublisher):
             if create_resp.status_code != 200:
                 err = f"Failed to create Instagram Reel container ({create_resp.status_code}): {create_resp.text}"
                 log.error(err)
-                return PublishingResult(platform=self.platform_name, success=False, status="failed", error=err)
+                code, retryable = classify_meta_error(create_resp.status_code, create_resp.text)
+                return PublishingResult(
+                    platform=self.platform_name,
+                    destination_id=destination_id,
+                    success=False,
+                    status="failed",
+                    error=err,
+                    error_code=code,
+                    retryable=retryable,
+                )
 
             container_id = create_resp.json().get("id")
             if not container_id:
                 return PublishingResult(
                     platform=self.platform_name,
+                    destination_id=destination_id,
                     success=False,
                     status="failed",
                     error=f"No container ID in response: {create_resp.text}",
+                    error_code="platform_error",
+                    retryable=True,
                 )
 
             # Step 2: Poll container status
@@ -185,14 +229,25 @@ class InstagramPublisher(BasePublisher):
                         break
                     elif status_code == "ERROR":
                         err = f"Instagram media container processing error: {stat_resp.text}"
-                        return PublishingResult(platform=self.platform_name, success=False, status="failed", error=err)
+                        return PublishingResult(
+                            platform=self.platform_name,
+                            destination_id=destination_id,
+                            success=False,
+                            status="failed",
+                            error=err,
+                            error_code="invalid_media",
+                            retryable=False,
+                        )
 
             if not is_ready:
                 return PublishingResult(
                     platform=self.platform_name,
+                    destination_id=destination_id,
                     success=False,
                     status="failed",
                     error="Timeout waiting for Instagram media container processing.",
+                    error_code="network_error",
+                    retryable=True,
                 )
 
             # Step 3: Publish container
@@ -200,21 +255,43 @@ class InstagramPublisher(BasePublisher):
             pub_resp = await client.post(publish_url, data={"creation_id": container_id, "access_token": self.access_token})
             if pub_resp.status_code != 200:
                 err = f"Failed to publish Instagram Reel ({pub_resp.status_code}): {pub_resp.text}"
-                return PublishingResult(platform=self.platform_name, success=False, status="failed", error=err)
+                code, retryable = classify_meta_error(pub_resp.status_code, pub_resp.text)
+                return PublishingResult(
+                    platform=self.platform_name,
+                    destination_id=destination_id,
+                    success=False,
+                    status="failed",
+                    error=err,
+                    error_code=code,
+                    retryable=retryable,
+                )
 
             media_id = pub_resp.json().get("id", container_id)
 
             # Retrieve permalink
             permalink = None
-            perm_resp = await client.get(f"{GRAPH_API_BASE}/{media_id}", params={"fields": "permalink", "access_token": self.access_token})
-            if perm_resp.status_code == 200:
-                permalink = perm_resp.json().get("permalink")
+            try:
+                perm_resp = await client.get(f"{GRAPH_API_BASE}/{media_id}", params={"fields": "permalink", "access_token": self.access_token})
+                if perm_resp.status_code == 200:
+                    permalink = perm_resp.json().get("permalink")
+            except Exception:
+                pass
+
+            from datetime import datetime, timezone
+            now_iso = datetime.now(timezone.utc).isoformat()
+            final_permalink = permalink or f"https://www.instagram.com/reel/{media_id}/"
 
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=True,
                 status="published",
                 external_id=media_id,
-                url=permalink or f"https://www.instagram.com/reel/{media_id}/",
+                remote_media_id=media_id,
+                remote_post_id=media_id,
+                permalink=final_permalink,
+                url=final_permalink,
+                published_at=now_iso,
                 details={"container_id": container_id, "media_id": media_id},
             )
+

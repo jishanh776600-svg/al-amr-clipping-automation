@@ -873,6 +873,61 @@ export function JobProgress() {
         </div>
       )}
 
+      {job.settings?.publishing_telemetry && (
+        <div className="mt-6 rounded-xl border border-sky-500/30 bg-ink-900/90 p-5 shadow-lg max-w-3xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-sky-400">
+                Remote Publishing (Step 25)
+              </h3>
+              <span
+                className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border font-semibold ${
+                  job.settings.publishing_telemetry.published === job.settings.publishing_telemetry.total_destinations &&
+                  job.settings.publishing_telemetry.total_destinations > 0
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                }`}
+              >
+                {job.settings.publishing_telemetry.published}/{job.settings.publishing_telemetry.total_destinations} Published
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-5 gap-2 text-center">
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Destinations</div>
+              <div className="text-lg font-bold text-ink-100 mt-0.5">
+                {job.settings.publishing_telemetry.total_destinations ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Published</div>
+              <div className="text-lg font-bold text-emerald-400 mt-0.5">
+                {job.settings.publishing_telemetry.published ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Retryable Fail</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.publishing_telemetry.retryable_failures > 0 ? 'text-amber-400' : 'text-ink-400'}`}>
+                {job.settings.publishing_telemetry.retryable_failures ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Permanent Fail</div>
+              <div className={`text-lg font-bold mt-0.5 ${job.settings.publishing_telemetry.permanent_failures > 0 ? 'text-rose-400' : 'text-ink-400'}`}>
+                {job.settings.publishing_telemetry.permanent_failures ?? 0}
+              </div>
+            </div>
+            <div className="bg-ink-950/60 p-2.5 rounded border border-ink-800">
+              <div className="text-[10px] font-mono text-ink-500 uppercase">Total Attempts</div>
+              <div className="text-lg font-bold text-sky-400 mt-0.5">
+                {job.settings.publishing_telemetry.total_attempts ?? 0}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ol className="mt-12 max-w-3xl">
         {STAGES.map((stage, index) => {
           // A failed job stopped *at* current_stage, so that stage must read as

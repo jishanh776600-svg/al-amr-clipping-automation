@@ -442,6 +442,55 @@ export interface ClipApprovalTelemetry {
   publish_ready: number
 }
 
+export type PublicationStatus =
+  | 'PENDING'
+  | 'UPLOADING'
+  | 'PUBLISHED'
+  | 'FAILED_RETRYABLE'
+  | 'FAILED_PERMANENT'
+  | 'SKIPPED'
+  | 'CANCELLED'
+
+export interface Publication {
+  id: string
+  job_id: string
+  clip_id: string
+  platform: string
+  destination_id: string
+  account_id: string
+  status: PublicationStatus
+  attempt_number: number
+  idempotency_key: string
+  final_render_id?: string | null
+  remote_media_id?: string | null
+  remote_post_id?: string | null
+  permalink?: string | null
+  upload_started_at?: string | null
+  upload_completed_at?: string | null
+  published_at?: string | null
+  error_code?: string | null
+  error_message?: string | null
+  response_metadata: Record<string, any>
+  retry_count: number
+  version: number
+  telemetry: Record<string, any>
+  is_published: boolean
+  is_retryable: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PublishingTelemetry {
+  total_destinations: number
+  published: number
+  failed: number
+  retryable_failures: number
+  permanent_failures: number
+  skipped: number
+  total_attempts: number
+}
+
+
 export interface JobManifestClipExport {
   export_id: string
   ratio: string
@@ -1148,6 +1197,51 @@ export const api = {
 
   getClipReviewPackage: (jobId: string, clipId: string) =>
     request<Record<string, any>>(`/api/jobs/${jobId}/clips/${clipId}/approval/review-package`),
+
+  // Step 25: Remote Publishing
+  getJobPublications: (jobId: string) =>
+    request<Publication[]>(`/api/jobs/${jobId}/publications`),
+
+  getJobPublishingTelemetry: (jobId: string) =>
+    request<PublishingTelemetry>(`/api/jobs/${jobId}/publications/telemetry`),
+
+  getPublication: (jobId: string, publicationId: string) =>
+    request<Publication>(`/api/jobs/${jobId}/publications/${publicationId}`),
+
+  publishClip: (
+    jobId: string,
+    clipId: string,
+    data: {
+      platforms: string[]
+      destination?: string
+      dry_run?: boolean
+    }
+  ) =>
+    request<Publication[]>(`/api/jobs/${jobId}/clips/${clipId}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  publishAllClips: (
+    jobId: string,
+    clipId: string,
+    data: {
+      platforms: string[]
+      destination?: string
+      dry_run?: boolean
+    }
+  ) =>
+    request<Publication[]>(`/api/jobs/${jobId}/clips/${clipId}/publish-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  retryPublication: (publicationId: string, dryRun: boolean = false) =>
+    request<Publication>(`/api/publications/${publicationId}/retry?dry_run=${dryRun}`, {
+      method: 'POST',
+    }),
 }
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */

@@ -1185,6 +1185,94 @@ class ClipApprovalTelemetryOut(BaseModel):
     publish_ready: int = 0
 
 
+# ---------------------------------------------------------------------------
+# Step 25: Remote Publication Schemas
+# ---------------------------------------------------------------------------
+
+
+class PublicationOut(BaseModel):
+    id: str
+    job_id: str
+    clip_id: str
+    platform: str
+    destination_id: str = ""
+    account_id: str = ""
+    status: str
+    attempt_number: int = 1
+    idempotency_key: str
+    final_render_id: str | None = None
+    remote_media_id: str | None = None
+    remote_post_id: str | None = None
+    permalink: str | None = None
+    upload_started_at: str | None = None
+    upload_completed_at: str | None = None
+    published_at: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    response_metadata: dict[str, Any] = Field(default_factory=dict)
+    retry_count: int = 0
+    version: int = 1
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    is_published: bool = False
+    is_retryable: bool = False
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, record: models.PublicationRecord) -> "PublicationOut":
+        return cls(
+            id=record.id,
+            job_id=record.job_id,
+            clip_id=record.clip_id,
+            platform=record.platform,
+            destination_id=record.destination_id,
+            account_id=record.account_id,
+            status=record.status,
+            attempt_number=record.attempt_number,
+            idempotency_key=record.idempotency_key,
+            final_render_id=record.final_render_id,
+            remote_media_id=record.remote_media_id,
+            remote_post_id=record.remote_post_id,
+            permalink=record.permalink,
+            upload_started_at=record.upload_started_at,
+            upload_completed_at=record.upload_completed_at,
+            published_at=record.published_at,
+            error_code=record.error_code,
+            error_message=record.error_message,
+            response_metadata=record.response_metadata or {},
+            retry_count=record.retry_count,
+            version=record.version,
+            telemetry=record.telemetry or {},
+            is_published=record.is_published,
+            is_retryable=record.is_retryable,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+
+class PublishClipIn(BaseModel):
+    platforms: list[str] = Field(default_factory=lambda: ["youtube", "instagram", "telegram"])
+    destination: str = ""
+    dry_run: bool = False
+
+
+class PublishAllClipsIn(BaseModel):
+    platforms: list[str] = Field(default_factory=lambda: ["youtube", "instagram", "telegram"])
+    destination: str = ""
+    dry_run: bool = False
+
+
+class PublishingTelemetryOut(BaseModel):
+    total_destinations: int = 0
+    published: int = 0
+    failed: int = 0
+    retryable_failures: int = 0
+    permanent_failures: int = 0
+    skipped: int = 0
+    total_attempts: int = 0
+
+
+
 
 
 

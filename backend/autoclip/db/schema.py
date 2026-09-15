@@ -629,6 +629,56 @@ def _migration_v19(conn: sqlite3.Connection) -> None:
     conn.executescript(_V19)
 
 
+# ---------------------------------------------------------------------------
+# Step 25: Remote Publications (V20)
+# ---------------------------------------------------------------------------
+
+_V20 = """
+CREATE TABLE publications (
+    id                  TEXT PRIMARY KEY,
+    job_id              TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    clip_id             TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    final_render_id     TEXT REFERENCES final_renders(id) ON DELETE SET NULL,
+    platform            TEXT NOT NULL,
+    account_id          TEXT NOT NULL DEFAULT '',
+    destination_id      TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'PENDING'
+                        CHECK (status IN (
+                            'PENDING',
+                            'UPLOADING',
+                            'PUBLISHED',
+                            'FAILED_RETRYABLE',
+                            'FAILED_PERMANENT',
+                            'SKIPPED',
+                            'CANCELLED'
+                        )),
+    attempt_number      INTEGER NOT NULL DEFAULT 1,
+    idempotency_key     TEXT NOT NULL,
+    remote_media_id     TEXT,
+    remote_post_id      TEXT,
+    permalink           TEXT,
+    upload_started_at   TEXT,
+    upload_completed_at TEXT,
+    published_at        TEXT,
+    error_code          TEXT,
+    error_message       TEXT,
+    response_metadata   TEXT NOT NULL DEFAULT '{}',
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    version             INTEGER NOT NULL DEFAULT 1,
+    telemetry           TEXT NOT NULL DEFAULT '{}',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX idx_publications_job ON publications(job_id, status);
+CREATE INDEX idx_publications_clip ON publications(clip_id);
+CREATE UNIQUE INDEX idx_publications_idempotency ON publications(idempotency_key);
+"""
+
+
+def _migration_v20(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V20)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -651,6 +701,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v17,
     _migration_v18,
     _migration_v19,
+    _migration_v20,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

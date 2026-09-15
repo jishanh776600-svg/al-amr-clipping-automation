@@ -33,6 +33,7 @@ from .models import (
     Job,
     JobStatus,
     PublishingRecord,
+    PublicationRecord,
     Source,
     Transcript,
     utcnow,
@@ -2088,4 +2089,133 @@ def build_clip_approval_review_package(
     return pkg
 
 
+# --------------------------------------------------------------------------
+# Step 25: Remote Publications
+# --------------------------------------------------------------------------
 
+
+def create_publication(record: PublicationRecord) -> PublicationRecord:
+    """Insert a new remote publication attempt record (or replace by idempotency key)."""
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO publications (
+                id, job_id, clip_id, final_render_id, platform, account_id,
+                destination_id, status, attempt_number, idempotency_key,
+                remote_media_id, remote_post_id, permalink, upload_started_at,
+                upload_completed_at, published_at, error_code, error_message,
+                response_metadata, retry_count, version, telemetry,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.job_id,
+                record.clip_id,
+                record.final_render_id,
+                record.platform,
+                record.account_id,
+                record.destination_id,
+                record.status,
+                record.attempt_number,
+                record.idempotency_key,
+                record.remote_media_id,
+                record.remote_post_id,
+                record.permalink,
+                record.upload_started_at,
+                record.upload_completed_at,
+                record.published_at,
+                record.error_code,
+                record.error_message,
+                json.dumps(record.response_metadata),
+                record.retry_count,
+                record.version,
+                json.dumps(record.telemetry),
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return record
+
+
+def get_publication(publication_id: str) -> PublicationRecord | None:
+    """Retrieve a publication record by its primary key ID."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publications WHERE id = ?", (publication_id,)
+        ).fetchone()
+    return PublicationRecord.from_row(row) if row else None
+
+
+def get_publication_by_idempotency_key(idempotency_key: str) -> PublicationRecord | None:
+    """Retrieve publication record by its unique idempotency key."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM publications WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+    return PublicationRecord.from_row(row) if row else None
+
+
+def list_publications_for_job(job_id: str, limit: int = 100) -> list[PublicationRecord]:
+    """List publication records for a job, ordered newest first."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM publications WHERE job_id = ? ORDER BY created_at DESC LIMIT ?",
+            (job_id, limit),
+        ).fetchall()
+    return [PublicationRecord.from_row(r) for r in rows]
+
+
+def list_publications_for_clip(clip_id: str) -> list[PublicationRecord]:
+    """List publication records for a specific clip."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM publications WHERE clip_id = ? ORDER BY created_at DESC",
+            (clip_id,),
+        ).fetchall()
+    return [PublicationRecord.from_row(r) for r in rows]
+
+
+def update_publication(record: PublicationRecord) -> PublicationRecord:
+    """Update mutable fields of an existing publication record."""
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE publications
+            SET status              = ?,
+                attempt_number      = ?,
+                remote_media_id     = ?,
+                remote_post_id      = ?,
+                permalink           = ?,
+                upload_started_at   = ?,
+                upload_completed_at = ?,
+                published_at        = ?,
+                error_code          = ?,
+                error_message       = ?,
+                response_metadata   = ?,
+                retry_count         = ?,
+                version             = ?,
+                telemetry           = ?,
+                updated_at          = ?
+            WHERE id = ?
+            """,
+            (
+                record.status,
+                record.attempt_number,
+                record.remote_media_id,
+                record.remote_post_id,
+                record.permalink,
+                record.upload_started_at,
+                record.upload_completed_at,
+                record.published_at,
+                record.error_code,
+                record.error_message,
+                json.dumps(record.response_metadata),
+                record.retry_count,
+                record.version,
+                json.dumps(record.telemetry),
+                record.updated_at,
+                record.id,
+            ),
+        )
+    return record

@@ -18,6 +18,24 @@ YOUTUBE_UPLOAD_SCOPES = [
 ]
 
 
+def classify_youtube_error(exc: Exception) -> tuple[str, bool]:
+    """Classify YouTube API exception into (error_code, retryable)."""
+    msg = str(exc).lower()
+    if "quotaexceeded" in msg or "userratelimitexceeded" in msg or "429" in msg or "rate limit" in msg:
+        return "rate_limit", True
+    if "timeout" in msg or "timed out" in msg or "connection" in msg or "network" in msg or "socket" in msg:
+        return "network_error", True
+    if "invalid_grant" in msg or "unauthorized" in msg or "invalid_client" in msg or "token" in msg:
+        return "authentication_error", False
+    if "forbidden" in msg or "403" in msg:
+        return "permission_error", False
+    if "badrequest" in msg or "400" in msg:
+        return "invalid_metadata", False
+    if "500" in msg or "502" in msg or "503" in msg or "backenderror" in msg:
+        return "platform_error", True
+    return "unknown", False
+
+
 class YouTubePublisher(BasePublisher):
     platform_name = "youtube"
 
@@ -53,20 +71,28 @@ class YouTubePublisher(BasePublisher):
         drive_link: str | None = None,
         dry_run: bool = False,
     ) -> PublishingResult:
+        destination_id = metadata.destination or self.client_id or "default"
+
         if not self.is_configured():
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="skipped",
                 error="YOUTUBE_REFRESH_TOKEN not configured.",
+                error_code="authentication_error",
+                retryable=False,
             )
 
         if not media_path.exists():
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="failed",
                 error=f"Local media file not found: {media_path}",
+                error_code="invalid_media",
+                retryable=False,
             )
 
         # Ensure #Shorts is present in title or description for vertical video formatting
@@ -93,6 +119,7 @@ class YouTubePublisher(BasePublisher):
             log.info("YouTube Publisher: Dry run verified successfully for '%s'.", title)
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=True,
                 status="ready_for_upload",
                 details={
@@ -116,9 +143,12 @@ class YouTubePublisher(BasePublisher):
             log.warning("YouTube OAuth token refresh failed: %s", exc)
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="failed",
                 error=f"YouTube OAuth authentication failed: {exc}",
+                error_code="authentication_error",
+                retryable=False,
             )
 
         # Live Upload to YouTube Data API v3
@@ -161,19 +191,32 @@ class YouTubePublisher(BasePublisher):
             short_url = f"https://youtube.com/shorts/{video_id}"
             log.info("Successfully published YouTube Short: %s", short_url)
 
+            from datetime import datetime, timezone
+            now_iso = datetime.now(timezone.utc).isoformat()
+
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=True,
                 status="published",
                 external_id=video_id,
+                remote_media_id=video_id,
+                remote_post_id=video_id,
+                permalink=short_url,
                 url=short_url,
+                published_at=now_iso,
                 details=response,
             )
         except Exception as exc:
             log.exception("Exception during live YouTube upload: %s", exc)
+            code, retryable = classify_youtube_error(exc)
             return PublishingResult(
                 platform=self.platform_name,
+                destination_id=destination_id,
                 success=False,
                 status="failed",
                 error=str(exc),
+                error_code=code,
+                retryable=retryable,
             )
+

@@ -11,6 +11,7 @@ import {
   type ClipMetadata,
   type CropPath,
   type Job,
+  type Publication,
   type Word,
 } from '../api'
 import { CaptionEditor } from '../components/CaptionEditor'
@@ -48,6 +49,16 @@ export function Review() {
   const [approvalNote, setApprovalNote] = useState('')
   const [approvalLoading, setApprovalLoading] = useState(false)
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null)
+
+  // Step 25: Remote Publishing State
+  const [publications, setPublications] = useState<Publication[]>([])
+  const [publishingLoading, setPublishingLoading] = useState(false)
+  const [publishingNotice, setPublishingNotice] = useState<string | null>(null)
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([
+    'youtube',
+    'instagram',
+    'telegram',
+  ])
 
   useEffect(() => {
     if (!jobId) return
@@ -104,6 +115,15 @@ export function Review() {
           setApprovalNotice(null)
         })
         .catch(() => setApproval(null))
+
+      // Fetch Step 25 Remote Publications
+      api
+        .getJobPublications(jobId)
+        .then((pubs) => {
+          setPublications(pubs)
+          setPublishingNotice(null)
+        })
+        .catch(() => setPublications([]))
     }
   }, [selected?.id, jobId])
 
@@ -188,6 +208,51 @@ export function Review() {
     } finally {
       setApprovalLoading(false)
     }
+  }
+
+  // Step 25: Remote Publishing handlers
+  const handlePublishClip = async (dryRun: boolean = false) => {
+    if (!jobId || !selected) return
+    setPublishingLoading(true)
+    setPublishingNotice(null)
+    try {
+      const results = await api.publishClip(jobId, selected.id, {
+        platforms: selectedPlatforms,
+        dry_run: dryRun,
+      })
+      const allPubs = await api.getJobPublications(jobId)
+      setPublications(allPubs)
+      const successCount = results.filter((r) => r.status === 'PUBLISHED').length
+      setPublishingNotice(
+        `Publishing complete: ${successCount}/${results.length} published successfully.`
+      )
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setPublishingLoading(false)
+    }
+  }
+
+  const handleRetryPublication = async (pubId: string) => {
+    if (!jobId) return
+    setPublishingLoading(true)
+    setPublishingNotice(null)
+    try {
+      await api.retryPublication(pubId)
+      const allPubs = await api.getJobPublications(jobId)
+      setPublications(allPubs)
+      setPublishingNotice('Publication retry completed.')
+    } catch (err) {
+      setError(err as Error)
+    } finally {
+      setPublishingLoading(false)
+    }
+  }
+
+  const togglePlatform = (p: string) => {
+    setSelectedPlatforms((prev) =>
+      prev.includes(p) ? prev.filter((item) => item !== p) : [...prev, p]
+    )
   }
 
   const patchClip = useCallback((updated: Clip) => {
@@ -791,6 +856,179 @@ export function Review() {
                     </div>
                   </details>
                 )}
+              </div>
+            </section>
+          )}
+
+          {/* Step 25: Remote Publishing Section */}
+          {selected && (
+            <section className="border-t border-ink-800 pt-6">
+              <div className="flex items-center justify-between mb-3">
+                <p className="eyebrow text-sky-400">Remote Publishing (Step 25)</p>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold uppercase border ${
+                      approval?.current_status === 'APPROVED'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                    }`}
+                  >
+                    {approval?.current_status === 'APPROVED' ? 'Gate Passed' : 'Approval Gate Required'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded border border-ink-800 bg-ink-850 p-4 text-xs space-y-3.5">
+                {publishingNotice && (
+                  <div className="p-2 rounded bg-sky-500/10 border border-sky-500/20 text-sky-300 text-[11px]">
+                    {publishingNotice}
+                  </div>
+                )}
+
+                {/* Destination selectors */}
+                <div>
+                  <span className="text-[11px] text-ink-400 block mb-2 font-medium">
+                    Target Publishing Destinations:
+                  </span>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer text-ink-200 hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={selectedPlatforms.includes('youtube')}
+                        onChange={() => togglePlatform('youtube')}
+                        className="rounded border-ink-700 bg-ink-900 text-sky-500 focus:ring-0"
+                      />
+                      <span>YouTube Shorts</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-ink-200 hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={selectedPlatforms.includes('instagram')}
+                        onChange={() => togglePlatform('instagram')}
+                        className="rounded border-ink-700 bg-ink-900 text-sky-500 focus:ring-0"
+                      />
+                      <span>Instagram Reels</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-ink-200 hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={selectedPlatforms.includes('telegram')}
+                        onChange={() => togglePlatform('telegram')}
+                        className="rounded border-ink-700 bg-ink-900 text-sky-500 focus:ring-0"
+                      />
+                      <span>Telegram Channel</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Existing Publications List for this Clip */}
+                {(() => {
+                  const clipPubs = publications.filter((p) => p.clip_id === selected.id)
+                  if (clipPubs.length === 0) return null
+                  return (
+                    <div className="border-t border-ink-800/80 pt-3 space-y-2">
+                      <p className="text-[11px] font-semibold text-ink-300">Publication Status:</p>
+                      <div className="space-y-1.5">
+                        {clipPubs.map((pub) => (
+                          <div
+                            key={pub.id}
+                            className="flex items-center justify-between bg-ink-900/80 border border-ink-800 rounded p-2.5"
+                          >
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-ink-100 uppercase text-[10px] tracking-wide">
+                                  {pub.platform}
+                                </span>
+                                <span
+                                  className={`rounded px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase border ${
+                                    pub.status === 'PUBLISHED'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                      : pub.status === 'UPLOADING'
+                                      ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                                      : pub.status === 'FAILED_RETRYABLE'
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                      : pub.status === 'FAILED_PERMANENT'
+                                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                      : 'bg-ink-700 text-ink-300 border-ink-600'
+                                  }`}
+                                >
+                                  {pub.status.replace(/_/g, ' ')}
+                                </span>
+                                <span className="text-ink-500 text-[10px]">
+                                  Att: {pub.attempt_number}
+                                </span>
+                              </div>
+                              {pub.error_message && (
+                                <p className="text-[10px] text-rose-400 font-mono line-clamp-1" title={pub.error_message}>
+                                  {pub.error_message}
+                                </p>
+                              )}
+                              {pub.remote_post_id && (
+                                <p className="text-[10px] text-ink-500 font-mono">
+                                  Remote ID: {pub.remote_post_id}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {pub.permalink && (
+                                <a
+                                  href={pub.permalink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium"
+                                >
+                                  View Post ↗
+                                </a>
+                              )}
+                              {pub.is_retryable && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRetryPublication(pub.id)}
+                                  disabled={publishingLoading}
+                                  className="rounded border border-amber-600 bg-amber-950/60 px-2 py-0.5 text-[10px] text-amber-300 hover:bg-amber-900/60 disabled:opacity-40"
+                                >
+                                  Retry
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Publish actions */}
+                <div className="flex items-center justify-between pt-2 border-t border-ink-800">
+                  <div className="text-[11px] text-ink-500">
+                    {approval?.current_status !== 'APPROVED' ? (
+                      <span className="text-rose-400">
+                        ⚠ Clip must be APPROVED in Step 24 before publishing.
+                      </span>
+                    ) : (
+                      <span>✓ Quality and operator approval gates satisfied.</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePublishClip(true)}
+                      disabled={publishingLoading || approval?.current_status !== 'APPROVED' || selectedPlatforms.length === 0}
+                      className="rounded border border-ink-700 bg-ink-800 px-3 py-1 text-xs text-ink-300 hover:bg-ink-700 disabled:opacity-40"
+                    >
+                      Verify Dry-Run
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePublishClip(false)}
+                      disabled={publishingLoading || approval?.current_status !== 'APPROVED' || selectedPlatforms.length === 0}
+                      className="btn btn-primary text-xs py-1 px-3 disabled:opacity-40"
+                    >
+                      {publishingLoading ? 'Publishing…' : 'Publish Selected'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </section>
           )}
