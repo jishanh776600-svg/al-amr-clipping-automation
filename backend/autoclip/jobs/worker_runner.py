@@ -63,6 +63,8 @@ def send_callback(
     clips: list[dict[str, Any]] | None = None,
     evaluations: list[dict[str, Any]] | None = None,
     exports: list[dict[str, Any]] | None = None,
+    final_renders: list[dict[str, Any]] | None = None,
+    clip_metadata: list[dict[str, Any]] | None = None,
     publishing_records: list[dict[str, Any]] | None = None,
     acquisition_event: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
@@ -89,6 +91,10 @@ def send_callback(
         payload["evaluations"] = evaluations
     if exports is not None:
         payload["exports"] = exports
+    if final_renders is not None:
+        payload["final_renders"] = final_renders
+    if clip_metadata is not None:
+        payload["clip_metadata"] = clip_metadata
     if publishing_records is not None:
         payload["publishing_records"] = publishing_records
     if acquisition_event is not None:
@@ -404,6 +410,59 @@ async def async_main() -> None:
                 "drive_storage_key": drive_storage_key,
             })
 
+    # Collect Step 22 Final Renders
+    final_renders_payload = []
+    final_renders = store.list_final_renders(job.id)
+    for fr in final_renders:
+        final_renders_payload.append({
+            "id": fr.id,
+            "job_id": fr.job_id,
+            "clip_id": fr.clip_id,
+            "output_path": fr.output_path,
+            "package_dir": fr.package_dir,
+            "duration": fr.duration,
+            "width": fr.width,
+            "height": fr.height,
+            "fps": fr.fps,
+            "video_codec": fr.video_codec,
+            "audio_codec": fr.audio_codec,
+            "caption_style": fr.caption_style,
+            "bgm_asset_id": fr.bgm_asset_id,
+            "quality_score": fr.quality_score,
+            "quality_status": fr.quality_status,
+            "render_status": fr.render_status,
+            "render_attempt": fr.render_attempt,
+            "error_details": fr.error_details,
+            "telemetry": fr.telemetry,
+            "created_at": fr.created_at,
+            "updated_at": fr.updated_at,
+        })
+
+    # Collect Step 23 SEO Clip Metadata
+    clip_metadata_payload = []
+    for c in clips:
+        meta = store.get_clip_metadata(c.id)
+        if meta:
+            clip_metadata_payload.append({
+                "id": meta.id,
+                "job_id": meta.job_id,
+                "clip_id": meta.clip_id,
+                "final_title": meta.final_title,
+                "final_description": meta.final_description,
+                "final_hashtags": meta.final_hashtags,
+                "final_mentions": meta.final_mentions,
+                "final_cta": meta.final_cta,
+                "title_candidates": meta.title_candidates,
+                "keyword_tags": meta.keyword_tags,
+                "platform_overrides": meta.platform_overrides,
+                "seo_score": meta.seo_score,
+                "seo_status": meta.seo_status,
+                "seo_audit": meta.seo_audit,
+                "version": meta.version,
+                "created_at": meta.created_at,
+                "updated_at": meta.updated_at,
+            })
+
     # 7. Final completion callback
     report(
         status="done",
@@ -412,6 +471,8 @@ async def async_main() -> None:
         clips=clips_payload,
         evaluations=evaluations_payload,
         exports=exports_payload,
+        final_renders=final_renders_payload,
+        clip_metadata=clip_metadata_payload,
         publishing_records=publishing_payload,
     )
     log.info("AL AMR Worker completed job %s successfully with %d clips.", args.job_id, len(clips))

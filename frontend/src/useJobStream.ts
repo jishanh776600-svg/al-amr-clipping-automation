@@ -80,15 +80,17 @@ export function useJobStream(jobId: string | undefined) {
 
     source.addEventListener('progress', (event) => {
       const data = JSON.parse((event as MessageEvent).data)
+      const overallVal = typeof data.overall === 'number' ? data.overall : (typeof data.progress === 'number' ? data.progress : 0)
+      const stageProgVal = typeof data.stage_progress === 'number' ? data.stage_progress : (typeof data.progress === 'number' ? data.progress : 0)
       setProgress({
         stage: data.stage,
-        stageProgress: data.stage_progress,
-        overall: data.overall,
-        message: data.message,
+        stageProgress: stageProgVal,
+        overall: overallVal,
+        message: data.message || '',
       })
       setJob((current) =>
         current
-          ? { ...current, status: 'running', current_stage: data.stage, progress: data.overall }
+          ? { ...current, status: 'running', current_stage: data.stage, progress: overallVal }
           : current,
       )
     })

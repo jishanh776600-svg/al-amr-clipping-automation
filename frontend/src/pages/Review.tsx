@@ -486,13 +486,21 @@ export function Review() {
             {selected && jobId && (
               <>
                 <ClipPlayer
-                  src={api.mediaUrl(jobId)}
-                  startS={selected.start_s}
-                  endS={selected.end_s}
-                  words={words}
+                  src={
+                    selected.exports && selected.exports.length > 0
+                      ? api.streamExportUrl(selected.exports[0].id)
+                      : api.mediaUrl(jobId)
+                  }
+                  startS={selected.exports && selected.exports.length > 0 ? 0 : selected.start_s}
+                  endS={
+                    selected.exports && selected.exports.length > 0
+                      ? Math.max(1, selected.end_s - selected.start_s)
+                      : selected.end_s
+                  }
+                  words={selected.exports && selected.exports.length > 0 ? [] : words}
                   style={activeStyle}
                   ratio={selected.ratio}
-                  cropPath={cropPath}
+                  cropPath={selected.exports && selected.exports.length > 0 ? null : cropPath}
                 />
                 <TrimBar
                   words={words}

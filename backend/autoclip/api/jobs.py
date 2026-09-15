@@ -1220,6 +1220,71 @@ async def worker_callback(
             )
             await asyncio.to_thread(store.create_or_update_publishing_record, pub_row)
 
+    # Ingest final_renders if reported
+    if payload.final_renders:
+        for fr in payload.final_renders:
+            fr_record = models.FinalRenderRecord(
+                id=fr.get("id", new_id()),
+                job_id=job_id,
+                clip_id=fr["clip_id"],
+                output_path=fr.get("output_path", ""),
+                package_dir=fr.get("package_dir", ""),
+                duration=float(fr.get("duration", 0.0)),
+                width=int(fr.get("width", 1080)),
+                height=int(fr.get("height", 1920)),
+                fps=float(fr.get("fps", 30.0)),
+                video_codec=fr.get("video_codec", "h264"),
+                audio_codec=fr.get("audio_codec", "aac"),
+                caption_style=fr.get("caption_style", "bold_pop"),
+                bgm_asset_id=fr.get("bgm_asset_id"),
+                quality_score=float(fr.get("quality_score", 0.0)),
+                quality_status=fr.get("quality_status", "RENDER_PASS"),
+                render_status=fr.get("render_status", "completed"),
+                render_attempt=int(fr.get("render_attempt", 1)),
+                error_details=fr.get("error_details", []),
+                telemetry=fr.get("telemetry", {}),
+                created_at=fr.get("created_at", store.utcnow()),
+                updated_at=fr.get("updated_at", store.utcnow()),
+            )
+            await asyncio.to_thread(store.create_final_render, fr_record)
+
+    # Ingest clip_metadata if reported
+    if payload.clip_metadata:
+        for cm in payload.clip_metadata:
+            meta_record = models.ClipMetadataRecord(
+                id=cm.get("id", new_id()),
+                job_id=job_id,
+                clip_id=cm["clip_id"],
+                final_title=cm.get("final_title", ""),
+                final_description=cm.get("final_description", ""),
+                final_hashtags=cm.get("final_hashtags", []),
+                final_mentions=cm.get("final_mentions", []),
+                final_cta=cm.get("final_cta", ""),
+                title_candidates=cm.get("title_candidates", []),
+                keyword_tags=cm.get("keyword_tags", []),
+                platform_overrides=cm.get("platform_overrides", {}),
+                seo_score=float(cm.get("seo_score", 0.0)),
+                seo_status=cm.get("seo_status", "SEO_PASS"),
+                seo_audit=cm.get("seo_audit", {}),
+                version=int(cm.get("version", 1)),
+                created_at=cm.get("created_at", store.utcnow()),
+                updated_at=cm.get("updated_at", store.utcnow()),
+            )
+            await asyncio.to_thread(store.create_clip_metadata, meta_record)
+
+    # Trigger Telegram Human Review upon completion
+    if payload.status == "done":
+        from ..telegram.review_bot import is_telegram_configured, send_clip_review
+        if is_telegram_configured():
+            async def _send_reviews_task():
+                clips_to_review = await asyncio.to_thread(store.list_clips_for_job, job_id)
+                for clip_item in clips_to_review:
+                    try:
+                        await send_clip_review(job_id, clip_item.id)
+                    except Exception as exc:
+                        log.warning("Failed sending Telegram review for clip %s: %s", clip_item.id, exc)
+            asyncio.create_task(_send_reviews_task())
+
     # Broadcast real-time SSE event to all connected clients
     event_type = "progress"
     if payload.status == "done":
@@ -1227,9 +1292,12 @@ async def worker_callback(
     elif payload.status == "failed":
         event_type = "failed"
 
+    prog_val = payload.progress if payload.progress is not None else job.progress
     event_data = {
         "stage": payload.stage or job.current_stage,
-        "progress": payload.progress if payload.progress is not None else job.progress,
+        "progress": prog_val,
+        "overall": prog_val,
+        "stage_progress": prog_val,
     }
     if payload.message:
         event_data["message"] = payload.message
@@ -1527,6 +1595,28 @@ async def post_clip_approval_action(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     await asyncio.to_thread(store.update_clip_approval, record)
+
+    # Step 27: Auto-trigger Step 25 & 26 publishing upon approval
+    if new_status == "APPROVED":
+        from ..publishing.service import PublishingService
+        from ..publishing.orchestrator import PublishingOrchestrator
+
+        async def _auto_publish():
+            try:
+                svc = PublishingService()
+                orch = PublishingOrchestrator(service=svc)
+                dests = orch.ensure_default_destinations()
+                for d in dests:
+                    if d.enabled and d.platform in ("youtube", "instagram"):
+                        try:
+                            orch.enqueue_publication(job_id=job_id, clip_id=clip_id, destination_id=d.id)
+                        except Exception:
+                            pass
+                await svc.publish_clip_all_destinations(job_id, clip_id, ["youtube", "instagram"], dry_run=False)
+            except Exception as exc:
+                log.exception("Auto-publishing failed for approved clip %s: %s", clip_id, exc)
+
+        asyncio.create_task(_auto_publish())
 
     log.info(
         "Clip %s approval → %s (v%d) note=%r",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import bgm, campaigns, clips, internal_acquire, jobs, publishing, settings, sources
+from . import bgm, campaigns, clips, internal_acquire, jobs, publishing, settings, sources, telegram
 
 __all__ = ["api_router"]
 
@@ -17,5 +17,6 @@ api_router.include_router(publishing.router)
 api_router.include_router(settings.router)
 api_router.include_router(internal_acquire.router)
 api_router.include_router(bgm.router)
+api_router.include_router(telegram.router)
 
 

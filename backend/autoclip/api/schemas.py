@@ -584,8 +584,11 @@ class WorkerCallbackIn(BaseModel):
     clips: list[dict[str, Any]] | None = None
     evaluations: list[dict[str, Any]] | None = None
     exports: list[dict[str, Any]] | None = None
+    final_renders: list[dict[str, Any]] | None = None
+    clip_metadata: list[dict[str, Any]] | None = None
     publishing_records: list[dict[str, Any]] | None = None
     acquisition_event: dict[str, Any] | None = None
+
 
 
 class PublishingRecordOut(BaseModel):

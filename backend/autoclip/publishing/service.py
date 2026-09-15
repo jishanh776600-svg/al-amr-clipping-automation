@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from ..db import models, store
+from ..storage.drive import GoogleDriveStorage
 from .base import BasePublisher, ErrorCode, PublicationResult, PublishingMetadata, PublishingResult, is_error_retryable
 from .instagram import InstagramPublisher
 from .telegram import TelegramPublisher
@@ -50,8 +52,12 @@ class PublishingService:
 
         # 1. Step 22: Final Render Gate
         final_render = store.get_final_render(clip_id)
+        exports = store.list_exports(clip_id)
+        has_drive_backup = any(bool(exp.drive_file_id) for exp in exports)
+
         if final_render is None:
-            reasons.append("Final render record not found (Step 22 not completed).")
+            if not has_drive_backup:
+                reasons.append("Final render record not found (Step 22 not completed).")
         else:
             if final_render.quality_status not in ("RENDER_PASS", "RENDER_WARN"):
                 reasons.append(
@@ -60,8 +66,8 @@ class PublishingService:
                 )
             if final_render.output_path:
                 render_file = Path(final_render.output_path)
-                if not render_file.exists():
-                    reasons.append(f"Render output file not found on disk: {final_render.output_path}")
+                if not render_file.exists() and not has_drive_backup:
+                    reasons.append(f"Render output file not found on disk: {final_render.output_path} and no Google Drive backup found.")
 
         # 2. Step 23: SEO & Metadata Gate
         clip_meta = store.get_clip_metadata(clip_id)
@@ -176,6 +182,29 @@ class PublishingService:
         )
 
         media_path = Path(final_render.output_path) if final_render else Path("")
+        temp_file_to_clean: Path | None = None
+        drive_link: str | None = None
+
+        if not media_path.exists():
+            exports = store.list_exports(clip_id)
+            drive_file_id = None
+            for exp in exports:
+                if exp.drive_file_id:
+                    drive_file_id = exp.drive_file_id
+                    drive_link = exp.drive_web_view_link
+                    pub_metadata.extra["export_id"] = exp.id
+                    break
+            if drive_file_id:
+                try:
+                    drive_storage = GoogleDriveStorage()
+                    if drive_storage.is_configured:
+                        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                            temp_file_to_clean = Path(tf.name)
+                        log.info("Downloading clip %s media from Google Drive %s...", clip_id, drive_file_id)
+                        drive_storage.download_file(drive_file_id, temp_file_to_clean)
+                        media_path = temp_file_to_clean
+                except Exception as exc:
+                    log.warning("Failed downloading from Google Drive for clip %s: %s", clip_id, exc)
 
         # Create or update publication record in UPLOADING status
         now_start = models.utcnow()
@@ -205,6 +234,7 @@ class PublishingService:
             result = await adapter.publish(
                 media_path=media_path,
                 metadata=pub_metadata,
+                drive_link=drive_link,
                 dry_run=dry_run,
             )
 
@@ -241,6 +271,12 @@ class PublishingService:
             store.update_publication(pub_record)
             self._update_job_telemetry(job_id)
             return pub_record
+        finally:
+            if temp_file_to_clean and temp_file_to_clean.exists():
+                try:
+                    temp_file_to_clean.unlink()
+                except Exception:
+                    pass
 
     async def publish_clip_all_destinations(
         self,
@@ -373,9 +409,24 @@ class PublishingService:
         )
         store.create_or_update_publishing_record(record)
 
+        media_path = Path(export.path)
+        temp_file_to_clean: Path | None = None
+
+        if not media_path.exists() and export.drive_file_id:
+            try:
+                drive_storage = GoogleDriveStorage()
+                if drive_storage.is_configured:
+                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                        temp_file_to_clean = Path(tf.name)
+                    log.info("Downloading export %s media from Google Drive %s...", export.id, export.drive_file_id)
+                    drive_storage.download_file(export.drive_file_id, temp_file_to_clean)
+                    media_path = temp_file_to_clean
+            except Exception as exc:
+                log.warning("Failed downloading from Google Drive for export %s: %s", export.id, exc)
+
         try:
             result = await adapter.publish(
-                media_path=Path(export.path),
+                media_path=media_path,
                 metadata=metadata,
                 drive_link=export.drive_web_view_link,
                 dry_run=dry_run,
@@ -406,6 +457,12 @@ class PublishingService:
                 error=str(exc),
             )
             return updated or record
+        finally:
+            if temp_file_to_clean and temp_file_to_clean.exists():
+                try:
+                    temp_file_to_clean.unlink()
+                except Exception:
+                    pass
 
     async def publish_all_for_job(
         self,

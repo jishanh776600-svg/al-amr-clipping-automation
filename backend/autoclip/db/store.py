@@ -596,6 +596,20 @@ def list_exports(clip_id: str) -> list[Export]:
     return [Export.from_row(r) for r in rows]
 
 
+def list_exports_for_job(job_id: str) -> list[Export]:
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.* FROM exports e
+            JOIN clips c ON e.clip_id = c.id
+            WHERE c.job_id = ?
+            ORDER BY e.created_at DESC
+            """,
+            (job_id,),
+        ).fetchall()
+    return [Export.from_row(r) for r in rows]
+
+
 def delete_export(export_id: str) -> None:
     with connection() as conn:
         conn.execute("DELETE FROM exports WHERE id = ?", (export_id,))
@@ -1724,6 +1738,64 @@ def replace_final_renders(
             ],
         )
     return records
+
+
+def create_final_render(record: FinalRenderRecord) -> FinalRenderRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO final_renders (
+                id, job_id, clip_id, output_path, package_dir, duration,
+                width, height, fps, video_codec, audio_codec, caption_style,
+                bgm_asset_id, quality_score, quality_status, render_status,
+                render_attempt, error_details, telemetry, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                job_id = excluded.job_id,
+                clip_id = excluded.clip_id,
+                output_path = excluded.output_path,
+                package_dir = excluded.package_dir,
+                duration = excluded.duration,
+                width = excluded.width,
+                height = excluded.height,
+                fps = excluded.fps,
+                video_codec = excluded.video_codec,
+                audio_codec = excluded.audio_codec,
+                caption_style = excluded.caption_style,
+                bgm_asset_id = excluded.bgm_asset_id,
+                quality_score = excluded.quality_score,
+                quality_status = excluded.quality_status,
+                render_status = excluded.render_status,
+                render_attempt = excluded.render_attempt,
+                error_details = excluded.error_details,
+                telemetry = excluded.telemetry,
+                updated_at = excluded.updated_at
+            """,
+            (
+                record.id,
+                record.job_id,
+                record.clip_id,
+                record.output_path,
+                record.package_dir,
+                record.duration,
+                record.width,
+                record.height,
+                record.fps,
+                record.video_codec,
+                record.audio_codec,
+                record.caption_style,
+                record.bgm_asset_id,
+                record.quality_score,
+                record.quality_status,
+                record.render_status,
+                record.render_attempt,
+                json.dumps(record.error_details) if isinstance(record.error_details, (dict, list)) else record.error_details,
+                json.dumps(record.telemetry) if isinstance(record.telemetry, (dict, list)) else record.telemetry,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+    return record
 
 
 def list_final_renders(

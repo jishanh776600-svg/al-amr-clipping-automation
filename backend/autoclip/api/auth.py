@@ -30,6 +30,7 @@ PUBLIC_PREFIXES = (
     "/redoc",
     "/openapi.json",
     "/assets",
+    "/api/telegram/webhook",
 )
 
 
