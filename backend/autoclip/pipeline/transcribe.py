@@ -211,10 +211,18 @@ def transcribe(
 
         first_word = len(transcript.words)
         for word in getattr(segment, "words", None) or []:
-            text = (word.word or "").strip()
+            if isinstance(word, dict):
+                raw_text = word.get("word") or word.get("text") or ""
+                w_start = word.get("start", 0.0)
+                w_end = word.get("end", 0.0)
+            else:
+                raw_text = getattr(word, "word", None) or getattr(word, "text", None) or ""
+                w_start = getattr(word, "start", 0.0)
+                w_end = getattr(word, "end", 0.0)
+            text = str(raw_text).strip()
             if not text:
                 continue
-            transcript.words.append(Word(text=text, start=float(word.start), end=float(word.end)))
+            transcript.words.append(Word(text=text, start=float(w_start), end=float(w_end)))
 
         # A segment with no word timings still carries text worth keeping for
         # display, but it can't contribute to word-indexed clip boundaries.

@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 
 from .. import paths
@@ -1126,7 +1126,18 @@ class PipelineRunner:
             matching_render = next((r for r in final_render_records if r.clip_id == clip.id and r.is_approved), None)
             if matching_render is not None:
                 clip_words = transcript.slice(clip.start_word, clip.end_word)
-                slice_text = " ".join(w.word for w in clip_words)
+                sample_word = clip_words[0] if clip_words else None
+                sample_fields = [f.name for f in fields(sample_word)] if sample_word and is_dataclass(sample_word) else []
+                log.info(
+                    "Stage EXPORT/SEO: Generating SEO metadata for clip %s (word_range=[%d, %d], word_count=%d, sample_word_type=%s, available_fields=%s)",
+                    clip.id,
+                    clip.start_word,
+                    clip.end_word,
+                    len(clip_words),
+                    type(sample_word).__name__ if sample_word else "None",
+                    sample_fields,
+                )
+                slice_text = transcript.text_between(clip.start_word, clip.end_word)
                 meta_rec = seo_engine.generate_for_clip(clip, transcript_text=slice_text)
                 seo_records.append(meta_rec)
 
