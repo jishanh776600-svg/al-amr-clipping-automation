@@ -317,7 +317,7 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section title="Keys" note="Stored in your OS keyring. Never sent anywhere but the provider.">
+      <Section title="Keys" note="Stored securely in your encrypted database vault & OS keyring. Never sent anywhere but the provider.">
         <div className="space-y-4">
           {Object.entries(SECRET_LABELS).map(([key, label]) => (
             <SecretField
@@ -325,6 +325,7 @@ export function Settings() {
               secretKey={key}
               label={label}
               present={settings.keys_present[key] ?? false}
+              status={settings.credentials_status?.[key]}
               onChanged={reload}
               onError={setError}
             />
@@ -612,21 +613,28 @@ function SecretField({
   secretKey,
   label,
   present,
+  status,
   onChanged,
   onError,
 }: {
   secretKey: string
   label: string
   present: boolean
+  status?: { configured: boolean; masked?: string; updated_at?: string }
   onChanged: () => void
   onError: (error: Error) => void
 }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [testResult, setTestResult] = useState<{ valid: boolean; message: string } | null>(null)
+
+  const isConfigured = present || (status?.configured ?? false)
 
   const save = async () => {
     if (!value.trim()) return
     setBusy(true)
+    setTestResult(null)
     try {
       await api.putSecret(secretKey, value.trim())
       setValue('')
@@ -640,8 +648,10 @@ function SecretField({
 
   const remove = async () => {
     setBusy(true)
+    setTestResult(null)
     try {
       await api.deleteSecret(secretKey)
+      setValue('')
       onChanged()
     } catch (err) {
       onError(err as Error)
@@ -650,30 +660,101 @@ function SecretField({
     }
   }
 
+  const handleValidate = async () => {
+    setValidating(true)
+    setTestResult(null)
+    try {
+      const res = await api.validateSecret(secretKey, value.trim() || undefined)
+      setTestResult(res)
+    } catch (err: any) {
+      setTestResult({
+        valid: false,
+        message: err.message || 'Validation request failed',
+      })
+    } finally {
+      setValidating(false)
+    }
+  }
+
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <label className="min-w-56 flex-1">
-        <span className="eyebrow">
-          {label}
-          {present && <span className="ml-2 text-signal-good">set</span>}
-        </span>
+    <div className="rounded-lg border border-ink-800 bg-ink-900/40 p-3.5 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="eyebrow text-ink-200">{label}</span>
+          {isConfigured ? (
+            <span className="rounded bg-signal-good/15 px-2 py-0.5 text-xs font-mono font-medium text-signal-good">
+              •••••••• Configured
+            </span>
+          ) : (
+            <span className="rounded bg-ink-800 px-2 py-0.5 text-xs font-mono text-ink-400">
+              Not configured
+            </span>
+          )}
+        </div>
+        {status?.updated_at && (
+          <span className="text-[11px] text-ink-500">
+            Updated: {new Date(status.updated_at).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2.5">
         <input
           type="password"
-          className="field mt-1 text-sm"
+          className="field text-sm flex-1 min-w-[240px]"
           value={value}
-          placeholder={present ? '••••••••••••' : 'paste to add'}
-          onChange={(e) => setValue(e.target.value)}
+          placeholder={
+            isConfigured
+              ? status?.masked || '•••••••• Configured (paste new token to replace)'
+              : 'Paste token to add…'
+          }
+          onChange={(e) => {
+            setValue(e.target.value)
+            if (testResult) setTestResult(null)
+          }}
           onKeyDown={(e) => e.key === 'Enter' && save()}
           autoComplete="off"
         />
-      </label>
-      <button onClick={save} disabled={!value.trim() || busy} className="btn btn-ghost">
-        Save
-      </button>
-      {present && (
-        <button onClick={remove} disabled={busy} className="btn btn-quiet">
-          Remove
+        <button
+          onClick={save}
+          disabled={!value.trim() || busy}
+          className="btn btn-ghost text-xs py-1.5 px-3"
+        >
+          {isConfigured ? 'Replace' : 'Save'}
         </button>
+        {(isConfigured || value.trim()) && (
+          <button
+            onClick={handleValidate}
+            disabled={validating || busy}
+            className="btn btn-quiet text-xs py-1.5 px-3"
+            title="Test token authentication against provider"
+          >
+            {validating ? 'Testing…' : 'Test / Validate'}
+          </button>
+        )}
+        {isConfigured && (
+          <button
+            onClick={remove}
+            disabled={busy || validating}
+            className="btn btn-quiet text-xs py-1.5 px-3 text-signal-danger hover:bg-signal-danger/10"
+            title="Remove stored token from AutoClip"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      {testResult && (
+        <div
+          className={`text-xs px-3 py-1.5 rounded flex items-center gap-2 ${
+            testResult.valid
+              ? 'bg-signal-good/10 text-signal-good border border-signal-good/20'
+              : 'bg-signal-danger/10 text-signal-danger border border-signal-danger/20'
+          }`}
+        >
+          <span>{testResult.valid ? '✓' : '✕'}</span>
+          <span>{testResult.message}</span>
+        </div>
       )}
     </div>
   )

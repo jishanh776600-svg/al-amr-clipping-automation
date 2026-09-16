@@ -118,11 +118,9 @@ def compute_backoff_delay(attempt: int, base_s: float = DEFAULT_RETRY_BASE_DELAY
 
 async def cancel_github_workflow_run(run_id: str) -> bool:
     """Request cancellation of an active GitHub Actions run."""
-    token = (
-        os.environ.get("GITHUB_PAT")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-    )
+    from .dispatcher import get_github_token
+
+    token = get_github_token()
     if not token or not run_id:
         return False
 
@@ -148,11 +146,9 @@ async def cancel_github_workflow_run(run_id: str) -> bool:
 
 def check_github_workflow_run(run_id: str) -> dict[str, Any] | None:
     """Synchronously query GitHub API for workflow run status (for stale sweeper)."""
-    token = (
-        os.environ.get("GITHUB_PAT")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-    )
+    from .dispatcher import get_github_token
+
+    token = get_github_token()
     if not token or not run_id:
         return None
 

@@ -785,6 +785,22 @@ def _migration_v22(conn: sqlite3.Connection) -> None:
     conn.executescript(_V22)
 
 
+_V23 = """
+CREATE TABLE app_credentials (
+    key          TEXT PRIMARY KEY,
+    ciphertext   TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_credentials_key ON app_credentials(key);
+"""
+
+
+def _migration_v23(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V23)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -810,6 +826,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v20,
     _migration_v21,
     _migration_v22,
+    _migration_v23,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

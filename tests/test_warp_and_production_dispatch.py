@@ -105,7 +105,7 @@ def test_cloud_youtube_guard_rejects_unproxied_cloud_job(monkeypatch, autoclip_h
             headers={"Authorization": "Bearer alamr-op-2024-secure"},
         )
         assert resp.status_code == 400
-        assert "Cloud YouTube acquisition requires either GitHub Actions worker dispatch" in resp.json()["detail"]
+        assert "GitHub Actions worker dispatch is required for cloud execution on Render" in resp.json()["detail"]
 
         # 2. When GITHUB_PAT secret is set, it passes and dispatches
         set_secret(GITHUB_PAT_KEY, "ghp_valid_test_token_456")

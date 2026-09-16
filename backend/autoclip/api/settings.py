@@ -10,7 +10,15 @@ from fastapi import APIRouter, HTTPException
 from .. import config, models, system
 from ..providers import PROVIDERS, build_provider
 from ..providers.base import ProviderStatus
-from .schemas import ProviderStatusOut, SecretIn, SettingsIn, SettingsOut, SystemOut
+from .schemas import (
+    CredentialStatusOut,
+    ProviderStatusOut,
+    SecretIn,
+    SettingsIn,
+    SettingsOut,
+    SystemOut,
+    ValidateSecretOut,
+)
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +27,18 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 def _settings_out(settings: config.Settings) -> SettingsOut:
     payload = settings.model_dump(mode="json")
+    all_keys = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
+    
+    from ..security.vault import get_vault
+    vault = get_vault()
+    cred_status: dict[str, CredentialStatusOut] = {}
+    for k in all_keys:
+        st = vault.get_secret_status(k)
+        has_secret = config.get_secret(k, settings) is not None
+        if not st["configured"] and has_secret:
+            st = {"configured": True, "masked": "•••••••• Configured", "updated_at": ""}
+        cred_status[k] = CredentialStatusOut(**st)
+
     return SettingsOut(
         active_provider=payload["active_provider"],
         providers=payload["providers"],
@@ -34,6 +54,7 @@ def _settings_out(settings: config.Settings) -> SettingsOut:
             config.HF_TOKEN_KEY: config.get_secret(config.HF_TOKEN_KEY, settings) is not None,
             config.GITHUB_PAT_KEY: config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
         },
+        credentials_status=cred_status,
     )
 
 
@@ -103,6 +124,63 @@ async def put_secret(payload: SecretIn) -> None:
 @router.delete("/settings/secrets/{key}", status_code=204)
 async def delete_secret(key: str) -> None:
     config.delete_secret(key)
+
+
+@router.post("/settings/secrets/{key}/validate", response_model=ValidateSecretOut)
+async def validate_secret(key: str, payload: SecretIn | None = None) -> ValidateSecretOut:
+    """Validate a secret against its upstream provider.
+
+    Does NOT expose the secret. Tests connectivity and permissions.
+    """
+    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
+    if key not in valid:
+        raise HTTPException(status_code=400, detail=f"Unknown secret '{key}'.")
+
+    # If payload provided, test provided value; otherwise test stored value
+    token = payload.value.strip() if (payload and payload.value and payload.value.strip()) else config.get_secret(key)
+    if not token:
+        return ValidateSecretOut(valid=False, message="No token is currently configured.")
+
+    if key == config.GITHUB_PAT_KEY:
+        import httpx
+
+        url = "https://api.github.com/user"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "AL-AMR-AutoClip-PAT-Validator/1.0",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    username = data.get("login", "")
+                    scopes_header = resp.headers.get("x-oauth-scopes", "")
+                    scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+                    return ValidateSecretOut(
+                        valid=True,
+                        message=f"Connected successfully to GitHub as @{username}.",
+                        username=username,
+                        scopes=scopes,
+                    )
+                elif resp.status_code == 401:
+                    return ValidateSecretOut(
+                        valid=False,
+                        message="GitHub authentication failed (HTTP 401: Bad credentials). Check that the token has not expired or been revoked.",
+                    )
+                else:
+                    return ValidateSecretOut(
+                        valid=False,
+                        message=f"GitHub API returned unexpected status HTTP {resp.status_code}.",
+                    )
+        except Exception as exc:
+            return ValidateSecretOut(
+                valid=False,
+                message=f"Network error connecting to GitHub API: {exc}",
+            )
+
+    return ValidateSecretOut(valid=True, message=f"Secret '{key}' is present.")
 
 
 @router.get("/providers/status", response_model=list[ProviderStatusOut])

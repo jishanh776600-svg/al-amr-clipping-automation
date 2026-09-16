@@ -533,6 +533,19 @@ class ProviderStatusOut(BaseModel):
     has_key: bool = False
 
 
+class CredentialStatusOut(BaseModel):
+    configured: bool
+    masked: str = ""
+    updated_at: str = ""
+
+
+class ValidateSecretOut(BaseModel):
+    valid: bool
+    message: str
+    username: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+
+
 class SettingsOut(BaseModel):
     active_provider: str
     providers: dict[str, dict[str, Any]]
@@ -542,8 +555,9 @@ class SettingsOut(BaseModel):
     export: dict[str, Any]
     insecure_secret_storage: bool
     #: Which providers have a key stored. The keys themselves never leave the
-    #: keyring, so the UI shows presence, not value.
+    #: keyring or vault, so the UI shows presence, not value.
     keys_present: dict[str, bool] = Field(default_factory=dict)
+    credentials_status: dict[str, CredentialStatusOut] = Field(default_factory=dict)
 
 
 class SettingsIn(BaseModel):

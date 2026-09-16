@@ -8,10 +8,12 @@ wrap them in ``asyncio.to_thread``.
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from . import connection
 from .models import (
+    AppCredentialRecord,
     CampaignGuideline,
     CampaignSpecificationRecord,
     Clip,
@@ -2877,4 +2879,79 @@ def count_ready_reserve(job_id: str | None = None) -> int:
     with connection() as conn:
         row = conn.execute(query, params).fetchone()
     return int(row[0]) if row else 0
+
+
+# --------------------------------------------------------------------------
+# App Credentials (Encrypted Secret Vault)
+# --------------------------------------------------------------------------
+
+
+def save_credential(key: str, ciphertext: str, fingerprint: str = "") -> models.AppCredentialRecord:
+    now = utcnow()
+    try:
+        with connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_credentials (key, ciphertext, fingerprint, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    ciphertext = excluded.ciphertext,
+                    fingerprint = excluded.fingerprint,
+                    updated_at = excluded.updated_at
+                """,
+                (key, ciphertext, fingerprint, now, now),
+            )
+    except sqlite3.OperationalError:
+        from . import init
+        init()
+        with connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_credentials (key, ciphertext, fingerprint, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    ciphertext = excluded.ciphertext,
+                    fingerprint = excluded.fingerprint,
+                    updated_at = excluded.updated_at
+                """,
+                (key, ciphertext, fingerprint, now, now),
+            )
+    record = get_credential(key)
+    if record is None:
+        raise RuntimeError(f"Failed to retrieve credential {key} after write")
+    return record
+
+
+def get_credential(key: str) -> AppCredentialRecord | None:
+    try:
+        with connection() as conn:
+            row = conn.execute("SELECT * FROM app_credentials WHERE key = ?", (key,)).fetchone()
+    except sqlite3.OperationalError:
+        from . import init
+        init()
+        with connection() as conn:
+            row = conn.execute("SELECT * FROM app_credentials WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return None
+    return AppCredentialRecord.from_row(row)
+
+
+def delete_credential(key: str) -> bool:
+    try:
+        with connection() as conn:
+            cur = conn.execute("DELETE FROM app_credentials WHERE key = ?", (key,))
+        return cur.rowcount > 0
+    except sqlite3.OperationalError:
+        return False
+
+
+def list_credentials() -> list[AppCredentialRecord]:
+    try:
+        with connection() as conn:
+            rows = conn.execute("SELECT * FROM app_credentials ORDER BY key ASC").fetchall()
+        return [AppCredentialRecord.from_row(r) for r in rows]
+    except sqlite3.OperationalError:
+        return []
+
+
 

@@ -35,6 +35,7 @@ dependencies = [
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
   "keyring>=25.4",
+  "cryptography>=42.0",
   # Ingest
   "yt-dlp>=2026.1.1",
   "yt-dlp-ejs>=0.8.0",

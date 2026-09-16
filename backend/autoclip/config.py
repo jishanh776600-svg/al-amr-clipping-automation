@@ -222,49 +222,114 @@ def _keyring():
 def get_secret(key: str, settings: Settings | None = None) -> str | None:
     """Return a stored secret, or None if unset.
 
-    ``key`` is a provider name for API keys, or :data:`HF_TOKEN_KEY`.
+    Checks:
+    1. Environment variable overrides (AUTOCLIP_<KEY>_KEY, or GITHUB_PAT/GH_TOKEN for github_pat).
+    2. Durable encrypted SQLite vault (persists across Render restarts/redeployments).
+    3. OS keyring (with automatic migration to SQLite vault).
+    4. Plaintext fallback secrets (with automatic migration to SQLite vault).
     """
     env_override = os.environ.get(f"AUTOCLIP_{key.upper()}_KEY")
-    if env_override:
-        return env_override
+    if env_override and env_override.strip():
+        return env_override.strip()
 
+    if key == GITHUB_PAT_KEY:
+        token = (
+            os.environ.get("GITHUB_PAT")
+            or os.environ.get("GH_TOKEN")
+            or os.environ.get("GITHUB_TOKEN")
+        )
+        if token and token.strip():
+            return token.strip()
+
+    # 2. Durable encrypted SQLite vault
+    try:
+        from .security.vault import get_vault
+
+        vault_val = get_vault().retrieve_secret(key)
+        if vault_val:
+            return vault_val
+    except Exception as exc:
+        log.debug("Credential vault lookup for %s: %s", key, exc)
+
+    # 3. OS keyring (with migration path)
     kr = _keyring()
+    keyring_val: str | None = None
     if kr is not None:
         for service in (KEYRING_SERVICE, LEGACY_KEYRING_SERVICE):
             try:
                 value = kr.get_password(service, key)
-                if value:
-                    return value
+                if value and value.strip():
+                    keyring_val = value.strip()
+                    break
             except Exception as exc:  # pragma: no cover - backend dependent
-                log.warning("Keyring read failed for %s: %s", key, exc)
+                log.debug("Keyring read failed for %s: %s", key, exc)
 
+    if keyring_val:
+        try:
+            from .security.vault import get_vault
+
+            get_vault().migrate_from_keyring(key, keyring_val)
+        except Exception as exc:
+            log.warning("Failed to migrate %s from keyring to durable vault: %s", key, exc)
+        return keyring_val
+
+    # 4. Fallback secrets migration path
     settings = settings if settings is not None else load()
-    return settings._fallback_secrets.get(key) or None
+    fallback_val = settings._fallback_secrets.get(key)
+    if fallback_val and fallback_val.strip():
+        clean_fb = fallback_val.strip()
+        try:
+            from .security.vault import get_vault
+
+            get_vault().store_secret(key, clean_fb)
+            settings._fallback_secrets.pop(key, None)
+            settings.insecure_secret_storage = bool(settings._fallback_secrets)
+            save(settings)
+        except Exception as exc:
+            log.warning("Failed to migrate %s from fallback secrets to durable vault: %s", key, exc)
+        return clean_fb
+
+    return None
 
 
 def set_secret(key: str, value: str, settings: Settings | None = None) -> bool:
-    """Store a secret. Returns True if it went to the keyring, False if to disk.
+    """Store a secret encrypted in the durable database vault and synced with keyring.
 
-    A False return is not an error — it means the caller should surface the
-    insecure-storage warning to the user.
+    Returns True if stored in durable encrypted storage or keyring.
     """
+    token = value.strip()
+    if not token:
+        raise ValueError(f"Cannot set empty secret for {key}")
+
+    from .security.vault import get_vault
+
+    vault = get_vault()
+    vault.store_secret(key, token)
+
+    # Secondary sync to OS keyring for local desktop convenience if available
     kr = _keyring()
     if kr is not None:
         try:
-            kr.set_password(KEYRING_SERVICE, key, value)
-            return True
+            kr.set_password(KEYRING_SERVICE, key, token)
         except Exception as exc:  # pragma: no cover - backend dependent
-            log.warning("Keyring write failed for %s: %s", key, exc)
+            log.debug("Keyring write failed for %s (durable vault is active): %s", key, exc)
 
+    # If it was previously stored in plaintext fallback secrets, purge it
     settings = settings if settings is not None else load()
-    settings._fallback_secrets[key] = value
-    settings.insecure_secret_storage = True
-    save(settings)
-    return False
+    if settings._fallback_secrets.pop(key, None) is not None:
+        settings.insecure_secret_storage = bool(settings._fallback_secrets)
+        save(settings)
+
+    return True
 
 
 def delete_secret(key: str, settings: Settings | None = None) -> None:
-    """Remove a secret from both the keyring and the plaintext fallback."""
+    """Remove a secret from durable database vault, keyring, and fallback storage."""
+    from .security.vault import get_vault
+
+    with contextlib.suppress(Exception):
+        get_vault().delete_secret(key)
+
     kr = _keyring()
     if kr is not None:
         # Backends raise when the entry is absent; deleting a missing secret is
@@ -278,3 +343,4 @@ def delete_secret(key: str, settings: Settings | None = None) -> None:
     if settings._fallback_secrets.pop(key, None) is not None:
         settings.insecure_secret_storage = bool(settings._fallback_secrets)
         save(settings)
+

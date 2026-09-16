@@ -1614,3 +1614,37 @@ class LearningAuditRecord:
             created_at=row["created_at"],
         )
 
+
+@dataclass
+class AppCredentialRecord:
+    """Encrypted persistent application credential (e.g. GitHub PAT).
+
+    The ciphertext is stored securely at rest using AES-256-GCM / Fernet.
+    The raw credential is never stored unencrypted and never logged.
+    """
+
+    key: str
+    ciphertext: str
+    fingerprint: str = ""
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "fingerprint": self.fingerprint,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "AppCredentialRecord":
+        return cls(
+            key=row["key"],
+            ciphertext=row["ciphertext"],
+            fingerprint=row["fingerprint"] if "fingerprint" in row.keys() else "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+

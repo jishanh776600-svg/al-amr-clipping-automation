@@ -808,6 +808,20 @@ export interface Settings {
   }
   insecure_secret_storage: boolean
   keys_present: Record<string, boolean>
+  credentials_status?: Record<string, CredentialStatus>
+}
+
+export interface CredentialStatus {
+  configured: boolean
+  masked?: string
+  updated_at?: string
+}
+
+export interface ValidateSecretResult {
+  valid: boolean
+  message: string
+  username?: string | null
+  scopes?: string[]
 }
 
 export interface SystemStatus {
@@ -1084,6 +1098,12 @@ export const api = {
 
   deleteSecret: (key: string) =>
     request<void>(`/api/settings/secrets/${key}`, { method: 'DELETE' }),
+
+  validateSecret: (key: string, value?: string) =>
+    request<ValidateSecretResult>(`/api/settings/secrets/${key}/validate`, {
+      method: 'POST',
+      body: JSON.stringify(value ? { key, value } : null),
+    }),
 
   mediaUrl: (jobId: string) => `/api/jobs/${jobId}/media`,
 
