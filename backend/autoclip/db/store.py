@@ -2703,3 +2703,178 @@ def cancel_queue_item(
             return None
     return get_queue_item(queue_id)
 
+
+# --------------------------------------------------------------------------
+# Step 28: Analytics, Learning & Production Reserve
+# --------------------------------------------------------------------------
+
+
+def create_or_update_publication_metric(
+    metric: models.PublicationMetricRecord,
+) -> models.PublicationMetricRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO publication_metrics (
+                id, publication_id, clip_id, job_id, platform, destination_id,
+                views, likes, comments, shares, watch_time_s, avg_view_duration_s,
+                completion_rate, raw_payload, published_at, collected_at, is_mature,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                views = excluded.views,
+                likes = excluded.likes,
+                comments = excluded.comments,
+                shares = excluded.shares,
+                watch_time_s = excluded.watch_time_s,
+                avg_view_duration_s = excluded.avg_view_duration_s,
+                completion_rate = excluded.completion_rate,
+                raw_payload = excluded.raw_payload,
+                collected_at = excluded.collected_at,
+                is_mature = excluded.is_mature,
+                updated_at = excluded.updated_at
+            """,
+            (
+                metric.id,
+                metric.publication_id,
+                metric.clip_id,
+                metric.job_id,
+                metric.platform,
+                metric.destination_id,
+                metric.views,
+                metric.likes,
+                metric.comments,
+                metric.shares,
+                metric.watch_time_s,
+                metric.avg_view_duration_s,
+                metric.completion_rate,
+                json.dumps(metric.raw_payload) if isinstance(metric.raw_payload, (dict, list)) else metric.raw_payload,
+                metric.published_at,
+                metric.collected_at,
+                1 if metric.is_mature else 0,
+                metric.created_at,
+                metric.updated_at,
+            ),
+        )
+    return metric
+
+
+def list_publication_metrics(
+    clip_id: str | None = None,
+    job_id: str | None = None,
+    platform: str | None = None,
+    mature_only: bool = False,
+    limit: int = 100,
+) -> list[models.PublicationMetricRecord]:
+    query = "SELECT * FROM publication_metrics WHERE 1=1"
+    params: list[Any] = []
+    if clip_id:
+        query += " AND clip_id = ?"
+        params.append(clip_id)
+    if job_id:
+        query += " AND job_id = ?"
+        params.append(job_id)
+    if platform:
+        query += " AND platform = ?"
+        params.append(platform)
+    if mature_only:
+        query += " AND is_mature = 1"
+    query += " ORDER BY collected_at DESC LIMIT ?"
+    params.append(limit)
+    with connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [models.PublicationMetricRecord.from_row(r) for r in rows]
+
+
+def get_mature_metrics(min_age_hours: int = 24) -> list[models.PublicationMetricRecord]:
+    """Retrieve metrics strictly satisfying the 24-hour maturation rule."""
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE publication_metrics
+            SET is_mature = 1
+            WHERE is_mature = 0 AND published_at <= ?
+            """,
+            (cutoff,),
+        )
+        rows = conn.execute(
+            """
+            SELECT * FROM publication_metrics
+            WHERE published_at <= ?
+            ORDER BY views DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+    return [models.PublicationMetricRecord.from_row(r) for r in rows]
+
+
+def record_learning_audit(audit: models.LearningAuditRecord) -> models.LearningAuditRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO learning_audits (
+                id, category, metric_observed, evidence_sample_size,
+                recommendation, action_taken, rationale,
+                parameters_before, parameters_after, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                audit.id,
+                audit.category,
+                audit.metric_observed,
+                audit.evidence_sample_size,
+                audit.recommendation,
+                audit.action_taken,
+                audit.rationale,
+                json.dumps(audit.parameters_before) if isinstance(audit.parameters_before, (dict, list)) else audit.parameters_before,
+                json.dumps(audit.parameters_after) if isinstance(audit.parameters_after, (dict, list)) else audit.parameters_after,
+                audit.created_at,
+            ),
+        )
+    return audit
+
+
+def list_learning_audits(category: str | None = None, limit: int = 100) -> list[models.LearningAuditRecord]:
+    query = "SELECT * FROM learning_audits WHERE 1=1"
+    params: list[Any] = []
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [models.LearningAuditRecord.from_row(r) for r in rows]
+
+
+def count_ready_reserve(job_id: str | None = None) -> int:
+    """Count finished clips that are ready for publishing (reserve pool).
+
+    A clip belongs to the ready reserve if:
+    1. Step 22 Final Render is passed (RENDER_PASS or RENDER_WARN)
+    2. Step 24 Operator Approval is APPROVED (or PENDING_REVIEW awaiting action)
+    3. It has NOT yet been published
+    """
+    query = """
+        SELECT COUNT(DISTINCT c.id)
+        FROM clips c
+        JOIN final_renders fr ON fr.clip_id = c.id
+        LEFT JOIN clip_approvals ca ON ca.clip_id = c.id
+        WHERE fr.render_status = 'completed'
+          AND fr.quality_status IN ('RENDER_PASS', 'RENDER_WARN')
+          AND (ca.current_status IS NULL OR ca.current_status IN ('APPROVED', 'PENDING_REVIEW'))
+          AND c.id NOT IN (
+              SELECT DISTINCT clip_id FROM publications WHERE status = 'PUBLISHED'
+          )
+    """
+    params: list[Any] = []
+    if job_id:
+        query += " AND c.job_id = ?"
+        params.append(job_id)
+    with connection() as conn:
+        row = conn.execute(query, params).fetchone()
+    return int(row[0]) if row else 0
+

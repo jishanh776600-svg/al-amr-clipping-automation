@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -28,8 +29,55 @@ class PublishingService:
             "instagram": InstagramPublisher(),
         }
 
-    def get_adapter(self, platform: str) -> BasePublisher | None:
-        return self.adapters.get(platform.strip().lower())
+    def get_adapter(
+        self, platform: str, destination: models.DestinationRecord | str | None = None
+    ) -> BasePublisher | None:
+        """Resolve platform adapter, supporting dynamic multi-account credentials per destination."""
+        norm_platform = platform.strip().lower()
+        if destination is None:
+            return self.adapters.get(norm_platform)
+
+        dest: models.DestinationRecord | None = None
+        if isinstance(destination, models.DestinationRecord):
+            dest = destination
+        elif isinstance(destination, str) and destination.strip() and destination != "default":
+            dest = store.get_destination(destination.strip())
+
+        if not dest:
+            return self.adapters.get(norm_platform)
+
+        cfg = dest.config_metadata or {}
+        clean_id = dest.id.upper().replace("-", "_")
+
+        # Multi-Account Resolution: YouTube
+        if norm_platform == "youtube":
+            ref_env = cfg.get("refresh_token_env")
+            refresh_token = (os.getenv(ref_env) if ref_env else None) or os.getenv(f"YOUTUBE_REFRESH_TOKEN_{clean_id}") or os.getenv("YOUTUBE_REFRESH_TOKEN")
+            cid_env = cfg.get("client_id_env")
+            client_id = (os.getenv(cid_env) if cid_env else None) or os.getenv(f"YOUTUBE_CLIENT_ID_{clean_id}") or os.getenv("YOUTUBE_CLIENT_ID")
+            sec_env = cfg.get("client_secret_env")
+            client_secret = (os.getenv(sec_env) if sec_env else None) or os.getenv(f"YOUTUBE_CLIENT_SECRET_{clean_id}") or os.getenv("YOUTUBE_CLIENT_SECRET")
+            if refresh_token:
+                return YouTubePublisher(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
+
+        # Multi-Account Resolution: Instagram
+        elif norm_platform == "instagram":
+            tok_env = cfg.get("access_token_env")
+            access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"META_ACCESS_TOKEN_{clean_id}") or os.getenv("META_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+            acc_env = cfg.get("account_id_env")
+            account_id = (os.getenv(acc_env) if acc_env else None) or cfg.get("account_id") or os.getenv(f"INSTAGRAM_ACCOUNT_ID_{clean_id}") or dest.account_identifier or os.getenv("INSTAGRAM_ACCOUNT_ID")
+            if access_token and account_id:
+                return InstagramPublisher(access_token=access_token, account_id=account_id)
+
+        # Multi-Account Resolution: Telegram
+        elif norm_platform == "telegram":
+            tok_env = cfg.get("bot_token_env")
+            bot_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"TELEGRAM_BOT_TOKEN_{clean_id}") or os.getenv("TELEGRAM_BOT_TOKEN")
+            chat_id = cfg.get("chat_id") or dest.account_identifier or os.getenv("TELEGRAM_CHAT_ID")
+            if bot_token and chat_id:
+                return TelegramPublisher(bot_token=bot_token, chat_id=chat_id)
+
+        return self.adapters.get(norm_platform)
 
     # ----------------------------------------------------------------------
     # Step 25: Publishing Eligibility Gate
@@ -111,17 +159,16 @@ class PublishingService:
         dry_run: bool = False,
     ) -> models.PublicationRecord:
         """Publish an approved clip to a single platform with idempotency protection."""
-        norm_platform = platform.strip().lower()
-        adapter = self.get_adapter(norm_platform)
-        if not adapter:
-            raise ValueError(f"Unsupported publishing platform: '{platform}'")
-
         clip = store.get_clip(clip_id)
         if not clip or clip.job_id != job_id:
             raise ValueError(f"Clip '{clip_id}' not found in job '{job_id}'.")
 
         dest = destination.strip() or "default"
         idempotency_key = f"{job_id}:{clip_id}:{norm_platform}:{dest}"
+
+        adapter = self.get_adapter(norm_platform, destination=dest)
+        if not adapter:
+            raise ValueError(f"Unsupported publishing platform: '{platform}'")
 
         # Check existing publication record for idempotency
         existing = store.get_publication_by_idempotency_key(idempotency_key)
@@ -370,10 +417,6 @@ class PublishingService:
         dry_run: bool = False,
     ) -> models.PublishingRecord:
         norm_platform = platform.strip().lower()
-        adapter = self.get_adapter(norm_platform)
-        if not adapter:
-            raise ValueError(f"Unsupported publishing platform: {platform}")
-
         export = store.get_export(export_id)
         if not export:
             raise ValueError(f"Export record not found: {export_id}")
@@ -383,6 +426,10 @@ class PublishingService:
             raise ValueError(f"Clip record not found for export: {export.clip_id}")
 
         dest = destination or (metadata.destination if metadata else "") or ""
+
+        adapter = self.get_adapter(norm_platform, destination=dest)
+        if not adapter:
+            raise ValueError(f"Unsupported publishing platform: {platform}")
 
         existing = store.get_publishing_record_by_target(export.id, norm_platform, dest)
         if existing and existing.status == "published":

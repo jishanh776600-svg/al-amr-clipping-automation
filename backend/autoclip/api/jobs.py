@@ -1618,6 +1618,18 @@ async def post_clip_approval_action(
 
         asyncio.create_task(_auto_publish())
 
+    elif new_status in ("REJECTED", "CHANGES_REQUESTED"):
+        from ..publishing.orchestrator import PublishingOrchestrator
+
+        try:
+            await asyncio.to_thread(
+                PublishingOrchestrator().cancel_items_for_clip,
+                clip_id,
+                f"Approval status changed to {new_status} by operator: {payload.operator_note.strip()}",
+            )
+        except Exception as cancel_exc:
+            log.warning("Could not cancel publishing queue items for clip %s: %s", clip_id, cancel_exc)
+
     log.info(
         "Clip %s approval → %s (v%d) note=%r",
         clip_id,

@@ -146,6 +146,37 @@ async def cancel_github_workflow_run(run_id: str) -> bool:
         return False
 
 
+def check_github_workflow_run(run_id: str) -> dict[str, Any] | None:
+    """Synchronously query GitHub API for workflow run status (for stale sweeper)."""
+    token = (
+        os.environ.get("GITHUB_PAT")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if not token or not run_id:
+        return None
+
+    repo = os.environ.get("GITHUB_REPOSITORY", "jishanh776600-svg/al-amr-clipping-automation")
+    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "AL-AMR-AutoClip-Orchestrator/1.0",
+    }
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "status": data.get("status"),
+                    "conclusion": data.get("conclusion"),
+                }
+    except Exception as exc:
+        log.warning("Failed to query GitHub run status for %s: %s", run_id, exc)
+    return None
+
+
 # --------------------------------------------------------------------------
 # Job Cancellation Manager
 # --------------------------------------------------------------------------
@@ -207,6 +238,31 @@ def sweep_stale_jobs(heartbeat_timeout_s: float = DEFAULT_HEARTBEAT_TIMEOUT_S) -
         # Avoid overriding cancel requests or terminal states
         if job.status in ("done", "failed", "cancelled", "cancel_requested"):
             continue
+
+        # If job is running on GitHub Actions, check its actual status before declaring timeout
+        if job.github_run_id:
+            gh_info = check_github_workflow_run(job.github_run_id)
+            if gh_info:
+                gh_status = gh_info.get("status")
+                gh_conclusion = gh_info.get("conclusion")
+                if gh_status in ("queued", "in_progress"):
+                    log.info("Job %s GitHub run %s is still %s; extending heartbeat.", job.id, job.github_run_id, gh_status)
+                    store.update_job(job.id, last_heartbeat_at=utcnow())
+                    continue
+                elif gh_status == "completed" and gh_conclusion == "failure":
+                    now = utcnow()
+                    store.update_job(
+                        job.id,
+                        status="failed",
+                        failed_at=now,
+                        finished_at=now,
+                        error=f"Remote GitHub Actions run {job.github_run_id} failed with conclusion: failure",
+                    )
+                    broker.publish(Event(type="failed", job_id=job.id, data={"error": "GitHub run failed"}))
+                    updated = store.get_job(job.id)
+                    if updated:
+                        stale_jobs.append(updated)
+                    continue
 
         now = utcnow()
         err_msg = f"Worker heartbeat timed out after {int(heartbeat_timeout_s)}s without progress."

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -593,5 +593,45 @@ async def process_queue_item_endpoint(
         return QueueItemOut.of(item, destination_name=dest.display_name if dest else "")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/publishing/orchestration-telemetry")
+async def get_orchestration_telemetry() -> dict[str, Any]:
+    """Comprehensive autonomous orchestration, queue health, reserve status, and learning telemetry."""
+    from ..analytics.engine import LearningEngine
+
+    engine = LearningEngine()
+
+    destinations = await asyncio.to_thread(_orchestrator.ensure_default_destinations)
+    dest_telemetry = []
+    for d in destinations:
+        dest_telemetry.append({
+            "id": d.id,
+            "platform": d.platform,
+            "display_name": d.display_name,
+            "enabled": d.enabled,
+            "daily_limit": d.daily_limit,
+            "published_today": d.published_today,
+            "rate_limit_remaining": max(0, d.daily_limit - d.published_today),
+            "min_spacing_minutes": d.min_spacing_minutes,
+            "account_identifier": d.account_identifier,
+        })
+
+    queue_stats = await asyncio.to_thread(_orchestrator.get_queue_stats)
+    reserve_status = await asyncio.to_thread(engine.get_reserve_status)
+    learning_eval = await asyncio.to_thread(engine.evaluate_learning)
+    recent_audits = await asyncio.to_thread(store.list_learning_audits, limit=10)
+
+    return {
+        "status": "operational",
+        "queue": queue_stats,
+        "destinations": dest_telemetry,
+        "reserve": reserve_status,
+        "learning": {
+            "evaluation": learning_eval,
+            "recent_audits": [a.to_dict() for a in recent_audits],
+        },
+    }
+
 
 

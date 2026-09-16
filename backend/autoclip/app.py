@@ -70,6 +70,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     sweeper_task = asyncio.create_task(_stale_sweeper(), name="alamr-stale-sweeper")
 
+    # Autonomous Step 26 Publishing Queue Ticker
+    from .publishing.orchestrator import PublishingOrchestrator
+    pub_orchestrator = PublishingOrchestrator()
+
+    async def _publishing_queue_ticker():
+        while True:
+            try:
+                await asyncio.sleep(30.0)
+                await asyncio.to_thread(pub_orchestrator.process_due_queue, batch_size=5)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.warning("Background publishing queue ticker error: %s", exc)
+
+    pub_ticker_task = asyncio.create_task(_publishing_queue_ticker(), name="alamr-publishing-ticker")
+
     # Serving the API without a worker is useful for debugging a stuck queue and
     # makes API tests deterministic — jobs stay queued instead of racing off.
     worker_enabled = os.environ.get(ENV_NO_WORKER) != "1"
@@ -84,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         sweeper_task.cancel()
+        pub_ticker_task.cancel()
         if worker_enabled:
             await queue.stop()
 

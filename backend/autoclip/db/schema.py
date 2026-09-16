@@ -739,6 +739,52 @@ def _migration_v21(conn: sqlite3.Connection) -> None:
     conn.executescript(_V21)
 
 
+_V22 = """
+CREATE TABLE publication_metrics (
+    id                    TEXT PRIMARY KEY,
+    publication_id        TEXT NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+    clip_id               TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    job_id                TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    platform              TEXT NOT NULL,
+    destination_id        TEXT NOT NULL DEFAULT '',
+    views                 INTEGER NOT NULL DEFAULT 0,
+    likes                 INTEGER NOT NULL DEFAULT 0,
+    comments              INTEGER NOT NULL DEFAULT 0,
+    shares                INTEGER NOT NULL DEFAULT 0,
+    watch_time_s          REAL NOT NULL DEFAULT 0.0,
+    avg_view_duration_s   REAL NOT NULL DEFAULT 0.0,
+    completion_rate       REAL NOT NULL DEFAULT 0.0,
+    raw_payload           TEXT NOT NULL DEFAULT '{}',
+    published_at          TEXT NOT NULL,
+    collected_at          TEXT NOT NULL,
+    is_mature             INTEGER NOT NULL DEFAULT 0,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+CREATE INDEX idx_metrics_publication ON publication_metrics(publication_id);
+CREATE INDEX idx_metrics_clip ON publication_metrics(clip_id);
+CREATE INDEX idx_metrics_mature ON publication_metrics(is_mature, platform);
+
+CREATE TABLE learning_audits (
+    id                    TEXT PRIMARY KEY,
+    category              TEXT NOT NULL,
+    metric_observed       TEXT NOT NULL,
+    evidence_sample_size  INTEGER NOT NULL DEFAULT 0,
+    recommendation        TEXT NOT NULL,
+    action_taken          TEXT NOT NULL,
+    rationale             TEXT NOT NULL,
+    parameters_before     TEXT NOT NULL DEFAULT '{}',
+    parameters_after      TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL
+);
+CREATE INDEX idx_learning_category ON learning_audits(category, created_at);
+"""
+
+
+def _migration_v22(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V22)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -763,6 +809,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v19,
     _migration_v20,
     _migration_v21,
+    _migration_v22,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

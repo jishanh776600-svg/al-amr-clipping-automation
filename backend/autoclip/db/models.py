@@ -1490,3 +1490,127 @@ class PublishingQueueRecord:
             updated_at=row["updated_at"],
         )
 
+
+# ---------------------------------------------------------------------------
+# Step 28: Analytics & Learning Models
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PublicationMetricRecord:
+    """Performance telemetry for a published short, supporting the 24h maturation rule."""
+
+    id: str
+    publication_id: str
+    clip_id: str
+    job_id: str
+    platform: str
+    destination_id: str = ""
+    views: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+    watch_time_s: float = 0.0
+    avg_view_duration_s: float = 0.0
+    completion_rate: float = 0.0
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    published_at: str = field(default_factory=utcnow)
+    collected_at: str = field(default_factory=utcnow)
+    is_mature: bool = False
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "publication_id": self.publication_id,
+            "clip_id": self.clip_id,
+            "job_id": self.job_id,
+            "platform": self.platform,
+            "destination_id": self.destination_id,
+            "views": self.views,
+            "likes": self.likes,
+            "comments": self.comments,
+            "shares": self.shares,
+            "watch_time_s": self.watch_time_s,
+            "avg_view_duration_s": self.avg_view_duration_s,
+            "completion_rate": self.completion_rate,
+            "raw_payload": self.raw_payload,
+            "published_at": self.published_at,
+            "collected_at": self.collected_at,
+            "is_mature": self.is_mature,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "PublicationMetricRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            publication_id=row["publication_id"],
+            clip_id=row["clip_id"],
+            job_id=row["job_id"],
+            platform=row["platform"],
+            destination_id=row["destination_id"] if "destination_id" in keys else "",
+            views=int(row["views"] or 0) if "views" in keys else 0,
+            likes=int(row["likes"] or 0) if "likes" in keys else 0,
+            comments=int(row["comments"] or 0) if "comments" in keys else 0,
+            shares=int(row["shares"] or 0) if "shares" in keys else 0,
+            watch_time_s=float(row["watch_time_s"] or 0.0) if "watch_time_s" in keys else 0.0,
+            avg_view_duration_s=float(row["avg_view_duration_s"] or 0.0) if "avg_view_duration_s" in keys else 0.0,
+            completion_rate=float(row["completion_rate"] or 0.0) if "completion_rate" in keys else 0.0,
+            raw_payload=json.loads(row["raw_payload"] or "{}") if "raw_payload" in keys else {},
+            published_at=row["published_at"],
+            collected_at=row["collected_at"],
+            is_mature=bool(row["is_mature"]) if "is_mature" in keys else False,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+@dataclass
+class LearningAuditRecord:
+    """Immutable audit trail of evidence-based production feedback adjustments."""
+
+    id: str
+    category: str  # "hook", "duration", "caption_style", "scheduling", "destination"
+    metric_observed: str
+    evidence_sample_size: int
+    recommendation: str
+    action_taken: str
+    rationale: str
+    parameters_before: dict[str, Any] = field(default_factory=dict)
+    parameters_after: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "category": self.category,
+            "metric_observed": self.metric_observed,
+            "evidence_sample_size": self.evidence_sample_size,
+            "recommendation": self.recommendation,
+            "action_taken": self.action_taken,
+            "rationale": self.rationale,
+            "parameters_before": self.parameters_before,
+            "parameters_after": self.parameters_after,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "LearningAuditRecord":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            category=row["category"],
+            metric_observed=row["metric_observed"],
+            evidence_sample_size=int(row["evidence_sample_size"] or 0) if "evidence_sample_size" in keys else 0,
+            recommendation=row["recommendation"],
+            action_taken=row["action_taken"],
+            rationale=row["rationale"],
+            parameters_before=json.loads(row["parameters_before"] or "{}") if "parameters_before" in keys else {},
+            parameters_after=json.loads(row["parameters_after"] or "{}") if "parameters_after" in keys else {},
+            created_at=row["created_at"],
+        )
+

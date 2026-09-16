@@ -196,6 +196,28 @@ class PublishingOrchestrator:
 
         return await self.process_queue_item(claimed.id, dry_run=dry_run)
 
+    async def process_due_queue(
+        self, worker_id: str = "worker-autonomous", batch_size: int = 10, dry_run: bool = False
+    ) -> list[models.PublishingQueueRecord]:
+        """Claim and process all currently due items up to batch_size."""
+        processed: list[models.PublishingQueueRecord] = []
+        for _ in range(batch_size):
+            item = await self.claim_and_process_next(worker_id=worker_id, dry_run=dry_run)
+            if not item:
+                break
+            processed.append(item)
+        return processed
+
+    def cancel_items_for_clip(self, clip_id: str, reason: str = "Operator revoked approval") -> int:
+        """Cancel all pending or scheduled queue items for a clip."""
+        items = store.list_queue_items(clip_id=clip_id)
+        cancelled_count = 0
+        for i in items:
+            if i.status in ("QUEUED", "SCHEDULED"):
+                self.cancel_item(i.id, reason=reason)
+                cancelled_count += 1
+        return cancelled_count
+
     async def process_queue_item(
         self, queue_id: str, dry_run: bool = False
     ) -> models.PublishingQueueRecord:
@@ -220,14 +242,14 @@ class PublishingOrchestrator:
         store.update_queue_item_status(queue_id, "PUBLISHING")
 
         dest = store.get_destination(item.destination_id)
-        dest_name = dest.account_identifier if dest else "default"
+        dest_ref = item.destination_id if dest else (item.destination_id or "default")
 
         try:
             pub_record = await self.service.publish_clip(
                 job_id=item.job_id,
                 clip_id=item.clip_id,
                 platform=item.platform,
-                destination=dest_name,
+                destination=dest_ref,
                 dry_run=dry_run,
             )
 
