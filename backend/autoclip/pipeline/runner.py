@@ -536,6 +536,13 @@ class PipelineRunner:
             if approved_specs:
                 clips = specifications_to_clips(approved_specs, selected_candidates)
                 store.replace_clips(self.job.id, clips)
+                log.info(
+                    "CANDIDATE_PIPELINE_METRICS: configured_max_clips=%d raw_candidate_count=%d post_quality_candidate_count=%d selected_clip_count=%d exported_clip_count=0 (stage_candidates)",
+                    discovery_engine.target_clip_count,
+                    len(all_candidates),
+                    len(approved_specs),
+                    len(clips),
+                )
 
                 # Persist evaluations for UI/database backward compatibility
                 if campaign is not None:
@@ -1173,6 +1180,22 @@ class PipelineRunner:
                 "avg_compliance_score": round(sum(m.compliance_score for m in seo_records) / len(seo_records), 1),
             }
             store.update_job(self.job.id, settings=self.job.settings)
+
+        # Log complete pipeline candidate and export metrics
+        from ..campaign.duration import resolve_max_clips
+        cfg_max_clips = resolve_max_clips(self.job.settings, default_max_clips=5)
+        raw_cands = store.list_clip_candidates(self.job.id) if hasattr(store, "list_clip_candidates") else []
+        all_specs = store.list_clip_specifications(self.job.id) if hasattr(store, "list_clip_specifications") else []
+        approved_specs = [s for s in all_specs if s.is_approved]
+        all_exports = [e for c in clips for e in store.list_exports(c.id)]
+        log.info(
+            "CANDIDATE_PIPELINE_METRICS: configured_max_clips=%d raw_candidate_count=%d post_quality_candidate_count=%d selected_clip_count=%d exported_clip_count=%d (stage_export)",
+            cfg_max_clips,
+            len(raw_cands) if raw_cands else len(clips),
+            len(approved_specs) if approved_specs else len(clips),
+            len(clips),
+            len(all_exports),
+        )
 
         self._finish_stage(stage)
 

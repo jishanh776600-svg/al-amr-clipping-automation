@@ -164,6 +164,7 @@ class PublishingService:
             raise ValueError(f"Clip '{clip_id}' not found in job '{job_id}'.")
 
         dest = destination.strip() or "default"
+        norm_platform = platform.strip().lower()
         idempotency_key = f"{job_id}:{clip_id}:{norm_platform}:{dest}"
 
         adapter = self.get_adapter(norm_platform, destination=dest)

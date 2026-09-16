@@ -24,19 +24,35 @@ log = logging.getLogger(__name__)
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
-def get_telegram_config() -> tuple[str, str, list[str]]:
+def _escape_md(text: str) -> str:
+    """Escape special characters for Telegram legacy Markdown."""
+    if not text:
+        return ""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str, str, list[str]]:
     """Return (bot_token, chat_id, allowed_user_ids)."""
     bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     chat_id = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
     allowed_str = (os.getenv("TELEGRAM_ALLOWED_USER_IDS") or "").strip()
     allowed_ids = [uid.strip() for uid in allowed_str.split(",") if uid.strip()]
+
+    if job_settings:
+        if not bot_token:
+            bot_token = str(job_settings.get("telegram_bot_token") or (job_settings.get("telegram") or {}).get("bot_token") or "").strip()
+        if not chat_id:
+            chat_id = str(job_settings.get("telegram_chat_id") or (job_settings.get("telegram") or {}).get("chat_id") or "").strip()
+
     if chat_id and chat_id not in allowed_ids:
         allowed_ids.append(chat_id)
     return bot_token, chat_id, allowed_ids
 
 
-def is_telegram_configured() -> bool:
-    token, chat_id, _ = get_telegram_config()
+def is_telegram_configured(job_settings: dict[str, Any] | None = None) -> bool:
+    token, chat_id, _ = get_telegram_config(job_settings)
     return bool(token and chat_id)
 
 
@@ -48,9 +64,9 @@ def is_user_authorized(from_id: str | int, allowed_ids: list[str]) -> bool:
     return str(from_id) in allowed_ids
 
 
-async def send_clip_review(job_id: str, clip_id: str, force: bool = False) -> dict[str, Any] | None:
+async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_settings: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Send an interactive review card with video preview and inline buttons to operator."""
-    bot_token, chat_id, _ = get_telegram_config()
+    bot_token, chat_id, _ = get_telegram_config(job_settings)
     if not bot_token or not chat_id:
         log.info("Telegram review skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured.")
         return None
@@ -85,23 +101,25 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False) -> di
     quality_status = final_render.quality_status if final_render else "PENDING"
     seo_score = f"{clip_meta.compliance_score:.1f}" if clip_meta else "N/A"
     seo_status = clip_meta.compliance_status if clip_meta else "PENDING"
-    title = clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight")
-    desc = clip_meta.final_description if clip_meta else (clip.hook or "")
+    raw_title = clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight")
+    raw_desc = clip_meta.final_description if clip_meta else (clip.hook or "")
+    safe_title = _escape_md(raw_title)
+    safe_hook = _escape_md(clip.hook or "N/A")
 
     caption_lines = [
         "🎬 *AL AMR Clip Review Required*",
         "",
         f"📌 *Clip ID:* `{clip.id}`",
         f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
-        f"🎯 *Hook:* {clip.hook or 'N/A'}",
+        f"🎯 *Hook:* {safe_hook}",
         f"✨ *Quality:* {quality_score} ({quality_status})",
         f"📈 *SEO Score:* {seo_score} ({seo_status})",
         "",
-        f"🏷 *Proposed Title:* {title}",
+        f"🏷 *Proposed Title:* {safe_title}",
     ]
-    if desc:
-        short_desc = desc[:200] + ("..." if len(desc) > 200 else "")
-        caption_lines.append(f"📝 *Description:* {short_desc}")
+    if raw_desc:
+        short_desc = raw_desc[:200] + ("..." if len(raw_desc) > 200 else "")
+        caption_lines.append(f"📝 *Description:* {_escape_md(short_desc)}")
     if drive_link:
         caption_lines.append(f"🔗 [Watch / Download Clip on Drive]({drive_link})")
 
@@ -143,8 +161,18 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False) -> di
                             log.info("Telegram review video delivered successfully for clip %s", clip_id)
                             _record_review_sent(job_id, clip_id, chat_id)
                             return resp.json()
-                        else:
-                            log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
+                        elif resp.status_code == 400:
+                            # Retry video without markdown parse_mode
+                            data_plain = dict(data)
+                            data_plain.pop("parse_mode", None)
+                            vf.seek(0)
+                            files_plain = {"video": (media_path.name, vf, "video/mp4")}
+                            resp_plain = await client.post(send_video_url, data=data_plain, files=files_plain)
+                            if resp_plain.status_code == 200:
+                                log.info("Telegram review video (plain) delivered for clip %s", clip_id)
+                                _record_review_sent(job_id, clip_id, chat_id)
+                                return resp_plain.json()
+                        log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
             except Exception as exc:
                 log.warning("Failed sending video directly via Telegram API: %s", exc)
 
@@ -164,6 +192,18 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False) -> di
                 log.info("Telegram review message delivered successfully for clip %s", clip_id)
                 _record_review_sent(job_id, clip_id, chat_id)
                 return resp.json()
+            elif resp.status_code == 400:
+                # Retry message as plain text
+                data_plain = dict(data)
+                data_plain.pop("parse_mode", None)
+                resp2 = await client.post(send_msg_url, json=data_plain)
+                if resp2.status_code == 200:
+                    log.info("Telegram review message (plain fallback) delivered for clip %s", clip_id)
+                    _record_review_sent(job_id, clip_id, chat_id)
+                    return resp2.json()
+                else:
+                    log.error("Telegram sendMessage plain fallback failed (HTTP %s): %s", resp2.status_code, resp2.text)
+                    return None
             else:
                 log.error("Telegram sendMessage failed (HTTP %s): %s", resp.status_code, resp.text)
                 return None
@@ -178,6 +218,7 @@ def _record_review_sent(job_id: str, clip_id: str, chat_id: str | int) -> None:
         approval = store.get_clip_approval(clip_id)
         if not approval:
             approval = models.ClipApprovalRecord(
+                id=models.new_id(),
                 clip_id=clip_id,
                 job_id=job_id,
                 current_status="PENDING_REVIEW",
@@ -254,6 +295,7 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
     approval = store.get_clip_approval(clip_id)
     if not approval:
         approval = models.ClipApprovalRecord(
+            id=models.new_id(),
             clip_id=clip_id,
             job_id=job_id,
             current_status="PENDING_REVIEW",

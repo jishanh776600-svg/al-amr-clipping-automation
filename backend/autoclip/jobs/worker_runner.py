@@ -200,7 +200,7 @@ async def async_main() -> None:
         except Exception:
             incoming_settings = {}
 
-    from autoclip.campaign.duration import resolve_duration_limits
+    from autoclip.campaign.duration import resolve_duration_limits, resolve_max_clips
 
     eff_min_dur, eff_max_dur = resolve_duration_limits(
         job_settings=incoming_settings,
@@ -217,12 +217,23 @@ async def async_main() -> None:
     if eff_min_dur >= eff_max_dur:
         eff_max_dur = eff_min_dur + 10.0
 
+    eff_max_clips = resolve_max_clips(
+        job_settings=incoming_settings,
+        campaign_brief=brief_data if brief_data else None,
+        default_max_clips=5,
+    )
+    if args.max_clips is not None and args.max_clips > 0:
+        eff_max_clips = int(args.max_clips)
+
     settings.clips.min_duration_s = eff_min_dur
     settings.clips.max_duration_s = eff_max_dur
+    settings.clips.max_clips = eff_max_clips
+    incoming_settings["max_clips"] = eff_max_clips
     log.info(
-        "AL AMR Worker configured duration constraints: min=%.1fs, max=%.1fs",
+        "AL AMR Worker configured duration constraints: min=%.1fs, max=%.1fs, max_clips=%d",
         settings.clips.min_duration_s,
         settings.clips.max_duration_s,
+        settings.clips.max_clips,
     )
 
     source: Source
@@ -289,10 +300,12 @@ async def async_main() -> None:
         job_settings.update(incoming_settings)
     job_settings["min_duration_s"] = eff_min_dur
     job_settings["max_duration_s"] = eff_max_dur
+    job_settings["max_clips"] = eff_max_clips
     if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
         job_settings["clips"] = {}
     job_settings["clips"]["min_duration_s"] = eff_min_dur
     job_settings["clips"]["max_duration_s"] = eff_max_dur
+    job_settings["clips"]["max_clips"] = eff_max_clips
     if brief_data:
         job_settings["campaign"] = brief_data
     if publish_targets:
@@ -541,6 +554,19 @@ async def async_main() -> None:
         publishing_records=publishing_payload,
     )
     log.info("AL AMR Worker completed job %s successfully with %d clips.", args.job_id, len(clips))
+
+    # 8. Trigger Telegram Review delivery from worker if configured
+    try:
+        from ..telegram.review_bot import is_telegram_configured, send_clip_review
+        if is_telegram_configured(job_settings):
+            log.info("Telegram configured: worker delivering review cards for %d clips...", len(clips))
+            for c in clips:
+                try:
+                    await send_clip_review(args.job_id, c.id, job_settings=job_settings)
+                except Exception as exc:
+                    log.warning("Worker Telegram review delivery failed for clip %s: %s", c.id, exc)
+    except Exception as exc:
+        log.warning("Could not initialize Telegram review delivery on worker: %s", exc)
 
 
 def main() -> None:

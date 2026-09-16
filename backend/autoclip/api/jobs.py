@@ -487,15 +487,18 @@ async def create_autonomous_job(
             except Exception:
                 pass
 
-    # Ensure canonical duration constraints are explicitly set at root and clips level
+    # Ensure canonical duration constraints and max_clips are explicitly set at root and clips level
     min_dur = job_settings.get("min_duration_s") or (job_settings.get("clips") or {}).get("min_duration_s") or base_settings.clips.min_duration_s
     max_dur = job_settings.get("max_duration_s") or (job_settings.get("clips") or {}).get("max_duration_s") or base_settings.clips.max_duration_s
+    max_c = job_settings.get("max_clips") or (job_settings.get("clips") or {}).get("max_clips") or base_settings.clips.max_clips
     job_settings["min_duration_s"] = float(min_dur)
     job_settings["max_duration_s"] = float(max_dur)
+    job_settings["max_clips"] = int(max_c)
     if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
         job_settings["clips"] = {}
     job_settings["clips"]["min_duration_s"] = float(min_dur)
     job_settings["clips"]["max_duration_s"] = float(max_dur)
+    job_settings["clips"]["max_clips"] = int(max_c)
 
     if destinations:
         dest_list: list[str] = []
@@ -668,10 +671,12 @@ async def create_job(
     job_settings = settings.model_dump(mode="json")
     job_settings["min_duration_s"] = float(settings.clips.min_duration_s)
     job_settings["max_duration_s"] = float(settings.clips.max_duration_s)
+    job_settings["max_clips"] = int(settings.clips.max_clips)
     if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
         job_settings["clips"] = {}
     job_settings["clips"]["min_duration_s"] = float(settings.clips.min_duration_s)
     job_settings["clips"]["max_duration_s"] = float(settings.clips.max_duration_s)
+    job_settings["clips"]["max_clips"] = int(settings.clips.max_clips)
     if overrides.caption_style:
         job_settings["caption_style"] = overrides.caption_style
 
@@ -1437,11 +1442,14 @@ def _check_publish_readiness(clip_id: str) -> tuple[bool, list[str]]:
             f"Errors: {'; '.join(clip_meta.validation_errors) or 'none'}"
         )
 
+    exports = store.list_exports(clip_id)
+    has_drive_backup = any(bool(exp.drive_file_id) for exp in exports)
+
     if final_render and final_render.output_path:
         from pathlib import Path
-        if not Path(final_render.output_path).exists():
+        if not Path(final_render.output_path).exists() and not has_drive_backup:
             blocking.append(
-                f"Final render output file not accessible: {final_render.output_path}"
+                f"Final render output file not accessible: {final_render.output_path} and no Google Drive backup found"
             )
 
     return (len(blocking) == 0), blocking

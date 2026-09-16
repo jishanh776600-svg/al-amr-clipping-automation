@@ -168,8 +168,8 @@ class CandidateDiscoveryEngine:
         self.brief = campaign_brief
         self.settings = job_settings or {}
 
-        # Resolve duration limits with explicit priority
-        from .duration import resolve_duration_limits
+        # Resolve duration limits and target clip count with explicit priority
+        from .duration import resolve_duration_limits, resolve_max_clips
 
         self.min_duration_s, self.max_duration_s = resolve_duration_limits(
             job_settings=self.settings,
@@ -180,7 +180,12 @@ class CandidateDiscoveryEngine:
         )
         self.preferred_duration_s: float | None = None
         self.max_silence_s = 2.0
-        self.target_clip_count = 3
+        self.target_clip_count = resolve_max_clips(
+            job_settings=self.settings,
+            campaign_spec=self.spec,
+            campaign_brief=self.brief,
+            default_max_clips=5,
+        )
 
         self._configure_limits()
 
@@ -190,21 +195,13 @@ class CandidateDiscoveryEngine:
             if dur_pref and getattr(dur_pref, "value", None):
                 self.preferred_duration_s = float(dur_pref.value)
 
-            out_count = getattr(self.spec, "output_count", None)
-            if out_count and getattr(out_count, "value", None):
-                self.target_clip_count = int(out_count.value)
-
             sil_lim = getattr(self.spec, "max_silence_s", None) or getattr(self.spec, "max_silence_gap_seconds", None)
             if sil_lim and getattr(sil_lim, "value", None):
                 self.max_silence_s = float(sil_lim.value)
 
         elif self.brief:
             self.preferred_duration_s = self.brief.preferred_duration
-            self.target_clip_count = min(self.brief.output_count, self.brief.maximum_candidates)
             self.max_silence_s = self.brief.maximum_silence_seconds
-
-        if "max_clips" in self.settings:
-            self.target_clip_count = int(self.settings["max_clips"])
 
     # ----------------------------------------------------------------------
     # 1. MULTI-CANDIDATE WINDOW DISCOVERY

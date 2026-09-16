@@ -1119,9 +1119,9 @@ class ClipApprovalRecord:
     is rejected deterministically.
     """
 
-    id: str
-    job_id: str
-    clip_id: str
+    id: str = field(default_factory=new_id)
+    job_id: str = ""
+    clip_id: str = ""
     current_status: ApprovalStatus = "PENDING_REVIEW"
     operator_action: str | None = None
     operator_note: str = ""
