@@ -443,25 +443,7 @@ async def async_main() -> None:
     for c in clips:
         meta = store.get_clip_metadata(c.id)
         if meta:
-            clip_metadata_payload.append({
-                "id": meta.id,
-                "job_id": meta.job_id,
-                "clip_id": meta.clip_id,
-                "final_title": meta.final_title,
-                "final_description": meta.final_description,
-                "final_hashtags": meta.final_hashtags,
-                "final_mentions": meta.final_mentions,
-                "final_cta": meta.final_cta,
-                "title_candidates": meta.title_candidates,
-                "keyword_tags": meta.keyword_tags,
-                "platform_overrides": meta.platform_overrides,
-                "seo_score": meta.seo_score,
-                "seo_status": meta.seo_status,
-                "seo_audit": meta.seo_audit,
-                "version": meta.version,
-                "created_at": meta.created_at,
-                "updated_at": meta.updated_at,
-            })
+            clip_metadata_payload.append(meta.to_dict())
 
     # 7. Final completion callback
     report(
