@@ -34,6 +34,18 @@ from ..storage.drive import GoogleDriveStorage
 log = logging.getLogger("alamr.worker_runner")
 
 
+def _float_or_none(val: Any) -> float | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AL AMR On-Demand Worker Runner")
     parser.add_argument("--job-id", required=True, help="Job ID to process")
@@ -44,8 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--publish-targets", default="[]", help="Publish destinations JSON array")
     parser.add_argument("--whisper-model", default="base", help="Faster-Whisper model")
     parser.add_argument("--max-clips", type=int, default=3, help="Maximum clips to generate")
-    parser.add_argument("--min-duration", type=float, default=None, help="Minimum clip duration in seconds")
-    parser.add_argument("--max-duration", type=float, default=None, help="Maximum clip duration in seconds")
+    parser.add_argument("--min-duration", type=_float_or_none, default=None, help="Minimum clip duration in seconds")
+    parser.add_argument("--max-duration", type=_float_or_none, default=None, help="Maximum clip duration in seconds")
     parser.add_argument("--job-settings", default="{}", help="Job settings JSON string")
     return parser.parse_args()
 
@@ -181,9 +193,10 @@ async def async_main() -> None:
 
     # Parse and layer incoming job settings and duration arguments
     incoming_settings: dict[str, Any] = {}
-    if args.job_settings:
+    raw_job_settings = args.job_settings if (args.job_settings and str(args.job_settings).strip() != "{}") else (os.environ.get("WORKER_JOB_SETTINGS") or os.environ.get("AUTOCLIP_JOB_SETTINGS") or "{}")
+    if raw_job_settings:
         try:
-            incoming_settings = json.loads(args.job_settings) if isinstance(args.job_settings, str) else dict(args.job_settings)
+            incoming_settings = json.loads(raw_job_settings) if isinstance(raw_job_settings, str) else dict(raw_job_settings)
         except Exception:
             incoming_settings = {}
 

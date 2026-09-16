@@ -292,6 +292,44 @@ def test_10_validate_media_output_with_duration_bounds():
         assert any("strictly below configured minimum 20.00s" in err for err in val.errors)
 
 
+def test_11_worker_runner_argparse_handles_empty_and_valid_values():
+    """Verify worker_runner parses float or empty string duration arguments and job_settings safely."""
+    import sys
+    from autoclip.jobs.worker_runner import parse_args
+
+    orig_argv = sys.argv
+    try:
+        # Case 1: valid numbers and json
+        sys.argv = [
+            "worker_runner.py",
+            "--job-id", "job-123",
+            "--source-url", "https://example.com/video.mp4",
+            "--min-duration", "20",
+            "--max-duration", "30",
+            "--job-settings", '{"clips": {"min_duration_s": 20.0}}',
+        ]
+        args1 = parse_args()
+        assert args1.min_duration == 20.0
+        assert args1.max_duration == 30.0
+        assert 'min_duration_s' in args1.job_settings
+
+        # Case 2: empty strings (e.g. from empty env or input)
+        sys.argv = [
+            "worker_runner.py",
+            "--job-id", "job-123",
+            "--source-url", "https://example.com/video.mp4",
+            "--min-duration", "",
+            "--max-duration", "",
+            "--job-settings", "",
+        ]
+        args2 = parse_args()
+        assert args2.min_duration is None
+        assert args2.max_duration is None
+        assert args2.job_settings == ""
+    finally:
+        sys.argv = orig_argv
+
+
 if __name__ == "__main__":
     print("Running test_1_and_8_duration_resolution_adhoc...")
     test_1_and_8_duration_resolution_adhoc()
@@ -305,4 +343,6 @@ if __name__ == "__main__":
     test_9_pacing_engine_preserves_min_duration()
     print("Running test_10_validate_media_output_with_duration_bounds...")
     test_10_validate_media_output_with_duration_bounds()
-    print("ALL 10 DURATION ENFORCEMENT TESTS PASSED SUCCESSFULLY!")
+    print("Running test_11_worker_runner_argparse_handles_empty_and_valid_values...")
+    test_11_worker_runner_argparse_handles_empty_and_valid_values()
+    print("ALL DURATION ENFORCEMENT & WORKER ARGPARSE TESTS PASSED SUCCESSFULLY!")

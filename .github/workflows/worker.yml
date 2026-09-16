@@ -164,6 +164,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           AUTOCLIP_PROXY: socks5h://127.0.0.1:1080
+          WORKER_MIN_DURATION_S: ${{ github.event.inputs.min_duration_s }}
+          WORKER_MAX_DURATION_S: ${{ github.event.inputs.max_duration_s }}
+          WORKER_JOB_SETTINGS: ${{ github.event.inputs.job_settings }}
         run: |
           python -m autoclip.jobs.worker_runner \
             --job-id "${{ github.event.inputs.job_id }}" \
@@ -174,9 +177,9 @@ jobs:
             --publish-targets '${{ github.event.inputs.publish_targets }}' \
             --whisper-model "${{ github.event.inputs.whisper_model }}" \
             --max-clips "${{ github.event.inputs.max_clips }}" \
-            --min-duration "${{ github.event.inputs.min_duration_s || '20' }}" \
-            --max-duration "${{ github.event.inputs.max_duration_s || '60' }}" \
-            --job-settings '${{ github.event.inputs.job_settings || "{}" }}'
+            --min-duration "${WORKER_MIN_DURATION_S:-20}" \
+            --max-duration "${WORKER_MAX_DURATION_S:-60}" \
+            --job-settings "${WORKER_JOB_SETTINGS:-{}}"
 
       - name: Container Logs (WARP & POT Provider)
         if: always()
