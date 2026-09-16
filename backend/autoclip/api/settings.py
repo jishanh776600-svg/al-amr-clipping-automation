@@ -103,6 +103,19 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
             status_code=400, detail="Minimum clip length must be below the maximum."
         )
 
+    if "github_pat" in updates:
+        pat_val = updates["github_pat"]
+        if pat_val is not None:
+            raw = str(pat_val).strip()
+            if raw == "__CLEAR__":
+                config.delete_secret(config.GITHUB_PAT_KEY)
+                log.info("GitHub PAT explicitly cleared via Settings PUT.")
+            elif raw and not config.is_masked_secret(raw):
+                config.set_secret(config.GITHUB_PAT_KEY, raw)
+                log.info("GitHub PAT explicitly updated via Settings PUT.")
+            else:
+                log.debug("GitHub PAT in Settings PUT is empty or masked; preserving existing stored PAT.")
+
     config.save(settings)
     return _settings_out(settings)
 
@@ -115,10 +128,20 @@ async def put_secret(payload: SecretIn) -> None:
         raise HTTPException(
             status_code=400, detail=f"Unknown secret. Expected one of: {', '.join(valid)}"
         )
-    if not payload.value.strip():
+    val = payload.value.strip()
+    if not val:
         raise HTTPException(status_code=400, detail="The value cannot be empty.")
 
-    config.set_secret(payload.key, payload.value.strip())
+    if config.is_masked_secret(val):
+        log.info("Ignoring update for secret '%s' because value is a masked placeholder.", payload.key)
+        return
+
+    if val == "__CLEAR__":
+        config.delete_secret(payload.key)
+        log.info("Secret '%s' explicitly deleted via put_secret __CLEAR__ marker.", payload.key)
+        return
+
+    config.set_secret(payload.key, val)
 
 
 @router.delete("/settings/secrets/{key}", status_code=204)

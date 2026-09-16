@@ -567,6 +567,7 @@ class SettingsIn(BaseModel):
     clips: dict[str, Any] | None = None
     ingest: dict[str, Any] | None = None
     export: dict[str, Any] | None = None
+    github_pat: str | None = None
 
 
 class SecretIn(BaseModel):

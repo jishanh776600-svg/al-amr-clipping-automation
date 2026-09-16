@@ -786,7 +786,7 @@ def _migration_v22(conn: sqlite3.Connection) -> None:
 
 
 _V23 = """
-CREATE TABLE app_credentials (
+CREATE TABLE IF NOT EXISTS app_credentials (
     key          TEXT PRIMARY KEY,
     ciphertext   TEXT NOT NULL,
     fingerprint  TEXT NOT NULL DEFAULT '',

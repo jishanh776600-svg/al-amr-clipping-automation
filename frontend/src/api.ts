@@ -809,6 +809,7 @@ export interface Settings {
   insecure_secret_storage: boolean
   keys_present: Record<string, boolean>
   credentials_status?: Record<string, CredentialStatus>
+  github_pat?: string | null
 }
 
 export interface CredentialStatus {

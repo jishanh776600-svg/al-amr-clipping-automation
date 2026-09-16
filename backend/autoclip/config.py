@@ -292,6 +292,20 @@ def get_secret(key: str, settings: Settings | None = None) -> str | None:
     return None
 
 
+def is_masked_secret(val: str | None) -> bool:
+    """True if string represents a masked fingerprint or placeholder rather than a real secret."""
+    if not val:
+        return False
+    s = val.strip()
+    return (
+        "••••" in s
+        or "Configured" in s
+        or s.startswith("***")
+        or s == "Not configured"
+        or (s.startswith("••••") and s.endswith(")"))
+    )
+
+
 def set_secret(key: str, value: str, settings: Settings | None = None) -> bool:
     """Store a secret encrypted in the durable database vault and synced with keyring.
 
@@ -300,6 +314,14 @@ def set_secret(key: str, value: str, settings: Settings | None = None) -> bool:
     token = value.strip()
     if not token:
         raise ValueError(f"Cannot set empty secret for {key}")
+
+    if is_masked_secret(token):
+        log.warning(
+            "Rejected attempt to overwrite secret '%s' with masked placeholder value (%s). Existing secret preserved.",
+            key,
+            token[:12],
+        )
+        return False
 
     from .security.vault import get_vault
 

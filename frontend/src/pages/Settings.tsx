@@ -628,16 +628,27 @@ function SecretField({
   const [busy, setBusy] = useState(false)
   const [validating, setValidating] = useState(false)
   const [testResult, setTestResult] = useState<{ valid: boolean; message: string } | null>(null)
+  const [savedNotice, setSavedNotice] = useState<string | null>(null)
+  const [showReplaceInput, setShowReplaceInput] = useState(false)
 
   const isConfigured = present || (status?.configured ?? false)
 
   const save = async () => {
-    if (!value.trim()) return
+    const trimmed = value.trim()
+    if (!trimmed) return
+    if (trimmed.includes('••••') || trimmed.includes('Configured')) {
+      setValue('')
+      return
+    }
     setBusy(true)
     setTestResult(null)
+    setSavedNotice(null)
     try {
-      await api.putSecret(secretKey, value.trim())
+      await api.putSecret(secretKey, trimmed)
       setValue('')
+      setShowReplaceInput(false)
+      setSavedNotice('✓ Token successfully encrypted and saved to database vault.')
+      setTimeout(() => setSavedNotice(null), 4000)
       onChanged()
     } catch (err) {
       onError(err as Error)
@@ -649,9 +660,13 @@ function SecretField({
   const remove = async () => {
     setBusy(true)
     setTestResult(null)
+    setSavedNotice(null)
     try {
       await api.deleteSecret(secretKey)
       setValue('')
+      setShowReplaceInput(false)
+      setSavedNotice('Token cleared from durable vault.')
+      setTimeout(() => setSavedNotice(null), 3000)
       onChanged()
     } catch (err) {
       onError(err as Error)
@@ -677,13 +692,14 @@ function SecretField({
   }
 
   return (
-    <div className="rounded-lg border border-ink-800 bg-ink-900/40 p-3.5 space-y-2.5">
+    <div className="rounded-lg border border-ink-800 bg-ink-900/40 p-4 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="eyebrow text-ink-200">{label}</span>
           {isConfigured ? (
-            <span className="rounded bg-signal-good/15 px-2 py-0.5 text-xs font-mono font-medium text-signal-good">
-              •••••••• Configured
+            <span className="inline-flex items-center gap-1.5 rounded bg-signal-good/15 px-2.5 py-0.5 text-xs font-mono font-medium text-signal-good">
+              <span className="w-1.5 h-1.5 rounded-full bg-signal-good" />
+              Connected & Stored
             </span>
           ) : (
             <span className="rounded bg-ink-800 px-2 py-0.5 text-xs font-mono text-ink-400">
@@ -693,56 +709,94 @@ function SecretField({
         </div>
         {status?.updated_at && (
           <span className="text-[11px] text-ink-500">
-            Updated: {new Date(status.updated_at).toLocaleDateString()}
+            Vault updated: {new Date(status.updated_at).toLocaleDateString()}
           </span>
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2.5">
-        <input
-          type="password"
-          className="field text-sm flex-1 min-w-[240px]"
-          value={value}
-          placeholder={
-            isConfigured
-              ? status?.masked || '•••••••• Configured (paste new token to replace)'
-              : 'Paste token to add…'
-          }
-          onChange={(e) => {
-            setValue(e.target.value)
-            if (testResult) setTestResult(null)
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
-          autoComplete="off"
-        />
-        <button
-          onClick={save}
-          disabled={!value.trim() || busy}
-          className="btn btn-ghost text-xs py-1.5 px-3"
-        >
-          {isConfigured ? 'Replace' : 'Save'}
-        </button>
-        {(isConfigured || value.trim()) && (
+      {isConfigured && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-ink-800 bg-ink-850/70 px-3.5 py-2.5 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-ink-400 font-mono text-[11px]">Encrypted Secret:</span>
+            <span className="font-mono text-ink-100 font-medium truncate">
+              {status?.masked || '•••••••• Configured'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowReplaceInput(!showReplaceInput)}
+              className="btn btn-quiet text-xs py-1 px-2.5"
+            >
+              {showReplaceInput ? 'Cancel' : 'Replace'}
+            </button>
+            <button
+              type="button"
+              onClick={handleValidate}
+              disabled={validating || busy}
+              className="btn btn-quiet text-xs py-1 px-2.5"
+              title="Test token authentication against provider"
+            >
+              {validating ? 'Testing…' : 'Test / Validate'}
+            </button>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy || validating}
+              className="btn btn-quiet text-xs py-1 px-2.5 text-signal-danger hover:bg-signal-danger/10"
+              title="Remove stored token from AutoClip"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(!isConfigured || showReplaceInput) && (
+        <div className="flex flex-wrap items-center gap-2.5 pt-1">
+          <input
+            type="password"
+            className="field text-sm flex-1 min-w-[240px]"
+            value={value}
+            placeholder={
+              isConfigured
+                ? 'Paste new token to replace existing secret…'
+                : 'Paste token to configure…'
+            }
+            onChange={(e) => {
+              setValue(e.target.value)
+              if (testResult) setTestResult(null)
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            autoComplete="off"
+          />
           <button
-            onClick={handleValidate}
-            disabled={validating || busy}
-            className="btn btn-quiet text-xs py-1.5 px-3"
-            title="Test token authentication against provider"
+            type="button"
+            onClick={save}
+            disabled={!value.trim() || busy}
+            className="btn btn-primary text-xs py-1.5 px-3"
           >
-            {validating ? 'Testing…' : 'Test / Validate'}
+            {isConfigured ? 'Save New Token' : 'Save & Encrypt'}
           </button>
-        )}
-        {isConfigured && (
-          <button
-            onClick={remove}
-            disabled={busy || validating}
-            className="btn btn-quiet text-xs py-1.5 px-3 text-signal-danger hover:bg-signal-danger/10"
-            title="Remove stored token from AutoClip"
-          >
-            Remove
-          </button>
-        )}
-      </div>
+          {!isConfigured && value.trim() && (
+            <button
+              type="button"
+              onClick={handleValidate}
+              disabled={validating || busy}
+              className="btn btn-quiet text-xs py-1.5 px-3"
+            >
+              {validating ? 'Testing…' : 'Test / Validate'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {savedNotice && (
+        <div className="text-xs px-3 py-1.5 rounded bg-signal-good/10 text-signal-good border border-signal-good/20 flex items-center gap-2">
+          <span>✓</span>
+          <span>{savedNotice}</span>
+        </div>
+      )}
 
       {testResult && (
         <div
