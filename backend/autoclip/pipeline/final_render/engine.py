@@ -42,6 +42,8 @@ class FinalRenderEngine:
         attempt: int = 1,
         on_progress: Callable[[float], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        min_duration_s: float | None = None,
+        max_duration_s: float | None = None,
     ) -> tuple[Path, FinalRenderRecord]:
         """Renders, evaluates, and packages one final clip.
 
@@ -69,6 +71,8 @@ class FinalRenderEngine:
                 expected_duration_s=duration_s,
                 expected_caption_style=caption_style_key,
                 expected_bgm_asset_id=bgm_asset_id,
+                min_duration_s=min_duration_s,
+                max_duration_s=max_duration_s,
             )
             if existing_gate.is_approved:
                 log.info("Clip %s output already exists and passes quality gate at %s; reusing.", clip.id, final_mp4_path)
@@ -197,6 +201,8 @@ class FinalRenderEngine:
             expected_duration_s=duration_s,
             expected_caption_style=caption_style_key,
             expected_bgm_asset_id=bgm_asset_id,
+            min_duration_s=min_duration_s,
+            max_duration_s=max_duration_s,
         )
 
         elapsed_s = round(time.time() - start_time, 3)

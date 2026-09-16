@@ -63,6 +63,8 @@ class DynamicPacingEngine:
         clip_start_s: float,
         clip_end_s: float,
         silences: list[Silence] | None = None,
+        min_duration_s: float = 20.0,
+        max_duration_s: float = 60.0,
     ) -> PacingResult:
         warnings: list[str] = []
         raw_duration = max(0.1, clip_end_s - clip_start_s)
@@ -98,6 +100,13 @@ class DynamicPacingEngine:
             tightened_end_s = clip_end_s
 
         tightened_duration = max(0.1, tightened_end_s - tightened_start_s)
+
+        # Ensure boundary tightening does not shorten clip below configured minimum
+        if tightened_duration < min_duration_s and raw_duration >= min_duration_s:
+            tightened_start_s = clip_start_s
+            tightened_end_s = clip_end_s
+            tightened_duration = raw_duration
+            warnings.append(f"pacing_compression_prevented_to_preserve_min_duration({min_duration_s:.1f}s)")
 
         # 2. Inter-word pause analysis
         pauses: list[PauseRegion] = []

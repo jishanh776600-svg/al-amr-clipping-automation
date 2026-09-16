@@ -111,6 +111,9 @@ async def dispatch_job_to_github(
     brief_data = campaign_brief if campaign_brief is not None else job.settings.get("campaign", {})
     publish_targets = job.settings.get("publish_targets", [])
 
+    min_dur = job.settings.get("min_duration_s") or (job.settings.get("clips") or {}).get("min_duration_s") or 20.0
+    max_dur = job.settings.get("max_duration_s") or (job.settings.get("clips") or {}).get("max_duration_s") or 60.0
+
     inputs = {
         "job_id": str(job.id),
         "source_url": str(source_url),
@@ -118,6 +121,9 @@ async def dispatch_job_to_github(
         "callback_url": str(callback_url),
         "callback_token": str(callback_token),
         "publish_targets": json.dumps(publish_targets),
+        "min_duration_s": str(min_dur),
+        "max_duration_s": str(max_dur),
+        "job_settings": json.dumps(job.settings),
     }
 
     dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"

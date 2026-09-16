@@ -185,7 +185,7 @@ async def detect(
                 if end_idx > start_idx:
                     seg_words = transcript.words[start_idx : end_idx + 1]
                     dur = seg_words[-1].end - seg_words[0].start
-                    if dur < config.min_duration_s * 0.7:
+                    if dur < config.min_duration_s:
                         continue
 
                     seg_text = " ".join(w.text for w in seg_words)

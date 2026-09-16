@@ -56,6 +56,8 @@ def validate_media_output(
     path: Path,
     *,
     expected_duration_s: float | None = None,
+    min_duration_s: float | None = None,
+    max_duration_s: float | None = None,
     expected_ratio: str | None = "9:16",
     require_audio: bool = True,
     decode_check: bool = True,
@@ -140,6 +142,14 @@ def validate_media_output(
             )
 
     # Duration check
+    if min_duration_s is not None and info.duration_s < min_duration_s:
+        errors.append(
+            f"Rendered media duration {info.duration_s:.2f}s is strictly below configured minimum {min_duration_s:.2f}s."
+        )
+    if max_duration_s is not None and info.duration_s > max_duration_s:
+        errors.append(
+            f"Rendered media duration {info.duration_s:.2f}s is strictly above configured maximum {max_duration_s:.2f}s."
+        )
     if expected_duration_s is not None and expected_duration_s > 0:
         if abs(info.duration_s - expected_duration_s) > 2.5:
             errors.append(

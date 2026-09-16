@@ -44,6 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--publish-targets", default="[]", help="Publish destinations JSON array")
     parser.add_argument("--whisper-model", default="base", help="Faster-Whisper model")
     parser.add_argument("--max-clips", type=int, default=3, help="Maximum clips to generate")
+    parser.add_argument("--min-duration", type=float, default=None, help="Minimum clip duration in seconds")
+    parser.add_argument("--max-duration", type=float, default=None, help="Maximum clip duration in seconds")
+    parser.add_argument("--job-settings", default="{}", help="Job settings JSON string")
     return parser.parse_args()
 
 
@@ -170,11 +173,44 @@ async def async_main() -> None:
             publish_targets = [p.strip() for p in cleaned.split(",") if p.strip()]
     log.info("Resolved publish targets: %s (raw: %r)", publish_targets, args.publish_targets)
 
-    # 3. Ingest source
+    # 3. Ingest source & configure settings
     report(stage="acquiring_source", progress=0.05)
     settings = load_settings()
     settings.whisper.model = args.whisper_model
     settings.clips.max_clips = args.max_clips
+
+    # Parse and layer incoming job settings and duration arguments
+    incoming_settings: dict[str, Any] = {}
+    if args.job_settings:
+        try:
+            incoming_settings = json.loads(args.job_settings) if isinstance(args.job_settings, str) else dict(args.job_settings)
+        except Exception:
+            incoming_settings = {}
+
+    from autoclip.campaign.duration import resolve_duration_limits
+
+    eff_min_dur, eff_max_dur = resolve_duration_limits(
+        job_settings=incoming_settings,
+        campaign_brief=brief_data if brief_data else None,
+        default_min=20.0,
+        default_max=60.0,
+    )
+
+    if args.min_duration is not None and args.min_duration > 0:
+        eff_min_dur = float(args.min_duration)
+    if args.max_duration is not None and args.max_duration > 0:
+        eff_max_dur = float(args.max_duration)
+
+    if eff_min_dur >= eff_max_dur:
+        eff_max_dur = eff_min_dur + 10.0
+
+    settings.clips.min_duration_s = eff_min_dur
+    settings.clips.max_duration_s = eff_max_dur
+    log.info(
+        "AL AMR Worker configured duration constraints: min=%.1fs, max=%.1fs",
+        settings.clips.min_duration_s,
+        settings.clips.max_duration_s,
+    )
 
     source: Source
     source_url = args.source_url.strip()
@@ -236,6 +272,14 @@ async def async_main() -> None:
 
     # 4. Create Job in local store
     job_settings = settings.model_dump(mode="json")
+    if incoming_settings:
+        job_settings.update(incoming_settings)
+    job_settings["min_duration_s"] = eff_min_dur
+    job_settings["max_duration_s"] = eff_max_dur
+    if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
+        job_settings["clips"] = {}
+    job_settings["clips"]["min_duration_s"] = eff_min_dur
+    job_settings["clips"]["max_duration_s"] = eff_max_dur
     if brief_data:
         job_settings["campaign"] = brief_data
     if publish_targets:
@@ -316,10 +360,36 @@ async def async_main() -> None:
             if not exp_path.exists():
                 continue
 
-            # Validate media
-            validation = validate_media_output(exp_path)
+            # Validate media output including strict duration bounds check
+            val_min_dur = float(job_settings["min_duration_s"])
+            val_max_dur = float(job_settings["max_duration_s"])
+            validation = validate_media_output(exp_path, min_duration_s=val_min_dur, max_duration_s=val_max_dur)
+            actual_mp4_dur = validation.duration_s
+            selected_clip_dur = clip.end_s - clip.start_s
+
             if not validation.is_valid:
-                log.warning("Export %s failed validation: %s", exp.id, validation.errors)
+                log.error(
+                    "CRITICAL: Export %s (clip %s) failed duration or media validation: %s. Rejecting upload and publish.",
+                    exp.id,
+                    clip.id,
+                    validation.errors,
+                )
+                log.info(
+                    "DURATION_VALIDATION: configured_min_duration=%.1f configured_max_duration=%.1f selected_clip_duration=%.2f final_mp4_duration=%.2f duration_validation = FAIL",
+                    val_min_dur,
+                    val_max_dur,
+                    selected_clip_dur,
+                    actual_mp4_dur,
+                )
+                continue
+
+            log.info(
+                "DURATION_VALIDATION: configured_min_duration=%.1f configured_max_duration=%.1f selected_clip_duration=%.2f final_mp4_duration=%.2f duration_validation = PASS",
+                val_min_dur,
+                val_max_dur,
+                selected_clip_dur,
+                actual_mp4_dur,
+            )
 
             drive_file_id = None
             drive_web_view_link = None

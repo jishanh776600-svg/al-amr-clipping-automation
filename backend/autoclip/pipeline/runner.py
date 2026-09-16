@@ -780,7 +780,10 @@ class PipelineRunner:
             except Exception as e:
                 log.warning("Failed parsing campaign_spec setting: %s", e)
 
-        engine = RetentionEditingEngine(campaign_spec=campaign_spec)
+        engine = RetentionEditingEngine(
+            campaign_spec=campaign_spec,
+            job_settings=self.job.settings,
+        )
 
         def on_retention_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
             self._emit(stage, frac, f"Optimizing retention ({substage})")
@@ -1026,6 +1029,13 @@ class PipelineRunner:
         exports_base.mkdir(parents=True, exist_ok=True)
 
         from .final_render import FinalRenderConfig, FinalRenderEngine
+        from autoclip.campaign.duration import resolve_duration_limits
+
+        min_dur, max_dur = resolve_duration_limits(
+            job_settings=self.job.settings,
+            default_min=20.0,
+            default_max=60.0,
+        )
 
         render_engine = FinalRenderEngine(config=FinalRenderConfig(ratio=ratio))
         final_render_records: list[FinalRenderRecord] = []
@@ -1053,8 +1063,20 @@ class PipelineRunner:
                 render_work_dir=self.workspace.captions_dir,
                 on_progress=clip_progress,
                 cancelled=self._is_cancelled,
+                min_duration_s=min_dur,
+                max_duration_s=max_dur,
             )
             final_render_records.append(render_rec)
+
+            validation_status = "PASS" if render_rec.is_approved else "FAIL"
+            log.info(
+                "DURATION_VALIDATION: configured_min_duration=%.1f configured_max_duration=%.1f selected_clip_duration=%.2f final_mp4_duration=%.2f duration_validation = %s",
+                min_dur,
+                max_dur,
+                clip.end_s - clip.start_s,
+                render_rec.duration,
+                validation_status,
+            )
 
             if render_rec.is_approved:
                 existing_exports = store.list_exports(clip.id)

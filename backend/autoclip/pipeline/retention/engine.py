@@ -31,12 +31,14 @@ class RetentionEditingEngine:
     def __init__(
         self,
         campaign_spec: CampaignSpecification | None = None,
+        job_settings: dict[str, Any] | None = None,
         pacing_engine: DynamicPacingEngine | None = None,
         analyzer: RetentionAnalyzer | None = None,
         visual_enhancer: VisualRetentionEnhancer | None = None,
         quality_gate: FinalPreRenderQualityGate | None = None,
     ) -> None:
         self.campaign_spec = campaign_spec
+        self.job_settings = job_settings or {}
         self.pacing_engine = pacing_engine or DynamicPacingEngine()
         self.analyzer = analyzer or RetentionAnalyzer()
         self.visual_enhancer = visual_enhancer or VisualRetentionEnhancer()
@@ -64,6 +66,15 @@ class RetentionEditingEngine:
         approved_clips: list[Clip] = []
         optimized_crop_paths: dict[str, CropPath] = {}
 
+        from autoclip.campaign.duration import resolve_duration_limits
+
+        min_dur, max_dur = resolve_duration_limits(
+            job_settings=self.job_settings,
+            campaign_spec=self.campaign_spec,
+            default_min=20.0,
+            default_max=60.0,
+        )
+
         for index, clip in enumerate(clips):
             clip_t0 = time.time()
             progress_frac = (index + 0.1) / max(1, total_clips)
@@ -84,6 +95,8 @@ class RetentionEditingEngine:
                 clip_start_s=clip.start_s,
                 clip_end_s=clip.end_s,
                 silences=silences,
+                min_duration_s=min_dur,
+                max_duration_s=max_dur,
             )
 
             # Update clip with tightened boundaries
@@ -125,6 +138,8 @@ class RetentionEditingEngine:
                 retention_score=retention_res.retention_score,
                 pacing_dead_air_pct=pacing_res.dead_air_percentage,
                 visual_quality_score=90.0,
+                min_duration_s=min_dur,
+                max_duration_s=max_dur,
             )
 
             # 5. Composite Score Calculation (Steps 15 + 16 + 17 + 18)

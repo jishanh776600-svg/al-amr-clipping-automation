@@ -169,8 +169,15 @@ class CandidateDiscoveryEngine:
         self.settings = job_settings or {}
 
         # Resolve duration limits with explicit priority
-        self.min_duration_s = 15.0
-        self.max_duration_s = 60.0
+        from .duration import resolve_duration_limits
+
+        self.min_duration_s, self.max_duration_s = resolve_duration_limits(
+            job_settings=self.settings,
+            campaign_spec=self.spec,
+            campaign_brief=self.brief,
+            default_min=20.0,
+            default_max=60.0,
+        )
         self.preferred_duration_s: float | None = None
         self.max_silence_s = 2.0
         self.target_clip_count = 3
@@ -179,18 +186,6 @@ class CandidateDiscoveryEngine:
 
     def _configure_limits(self) -> None:
         if self.spec:
-            dur_min = getattr(self.spec, "duration_min_s", None)
-            if dur_min and getattr(dur_min, "value", None):
-                self.min_duration_s = float(dur_min.value)
-            elif getattr(self.spec, "duration_range", None) and self.spec.duration_range.value:
-                self.min_duration_s = float(self.spec.duration_range.value[0])
-
-            dur_max = getattr(self.spec, "duration_max_s", None)
-            if dur_max and getattr(dur_max, "value", None):
-                self.max_duration_s = float(dur_max.value)
-            elif getattr(self.spec, "duration_range", None) and self.spec.duration_range.value:
-                self.max_duration_s = float(self.spec.duration_range.value[1])
-
             dur_pref = getattr(self.spec, "duration_preferred_s", None)
             if dur_pref and getattr(dur_pref, "value", None):
                 self.preferred_duration_s = float(dur_pref.value)
@@ -204,16 +199,10 @@ class CandidateDiscoveryEngine:
                 self.max_silence_s = float(sil_lim.value)
 
         elif self.brief:
-            self.min_duration_s = self.brief.minimum_duration
-            self.max_duration_s = self.brief.maximum_duration
             self.preferred_duration_s = self.brief.preferred_duration
             self.target_clip_count = min(self.brief.output_count, self.brief.maximum_candidates)
             self.max_silence_s = self.brief.maximum_silence_seconds
 
-        if "min_duration_s" in self.settings:
-            self.min_duration_s = float(self.settings["min_duration_s"])
-        if "max_duration_s" in self.settings:
-            self.max_duration_s = float(self.settings["max_duration_s"])
         if "max_clips" in self.settings:
             self.target_clip_count = int(self.settings["max_clips"])
 
@@ -236,10 +225,14 @@ class CandidateDiscoveryEngine:
         min_dur = self.min_duration_s
         max_dur = self.max_duration_s
 
-        # Fallback if video is shorter than configured min duration
+        # If source video is shorter than configured min duration, do not silently produce short clips
         if total_duration < min_dur:
-            min_dur = max(3.0, total_duration * 0.5)
-            max_dur = max(min_dur + 1.0, total_duration)
+            log.warning(
+                "Source duration (%.1fs) is less than configured minimum duration (%.1fs); no valid candidates possible.",
+                total_duration,
+                min_dur,
+            )
+            return []
 
         # Identify sentence/phrase boundary indices
         boundaries: list[int] = [0]
@@ -425,11 +418,11 @@ class CandidateDiscoveryEngine:
         full_text_lower = full_text.lower()
 
         # ------------------------------------------------------------------
-        # HARD FAILURE 1: Duration constraints
+        # HARD FAILURE 1: Duration constraints (strict hard bounds)
         # ------------------------------------------------------------------
-        if duration_s < (self.min_duration_s * 0.95) or duration_s > (self.max_duration_s * 1.05):
+        if duration_s < self.min_duration_s or duration_s > self.max_duration_s:
             score_res.rejection_reasons.append(
-                f"Duration {duration_s:.1f}s violates limits [{self.min_duration_s:.1f}s - {self.max_duration_s:.1f}s]"
+                f"Duration {duration_s:.2f}s violates limits [{self.min_duration_s:.1f}s - {self.max_duration_s:.1f}s]"
             )
             score_res.approved = False
 

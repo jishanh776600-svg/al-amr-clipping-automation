@@ -487,6 +487,16 @@ async def create_autonomous_job(
             except Exception:
                 pass
 
+    # Ensure canonical duration constraints are explicitly set at root and clips level
+    min_dur = job_settings.get("min_duration_s") or (job_settings.get("clips") or {}).get("min_duration_s") or base_settings.clips.min_duration_s
+    max_dur = job_settings.get("max_duration_s") or (job_settings.get("clips") or {}).get("max_duration_s") or base_settings.clips.max_duration_s
+    job_settings["min_duration_s"] = float(min_dur)
+    job_settings["max_duration_s"] = float(max_dur)
+    if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
+        job_settings["clips"] = {}
+    job_settings["clips"]["min_duration_s"] = float(min_dur)
+    job_settings["clips"]["max_duration_s"] = float(max_dur)
+
     if destinations:
         dest_list: list[str] = []
         if isinstance(destinations, list):
@@ -656,6 +666,12 @@ async def create_job(
         )
 
     job_settings = settings.model_dump(mode="json")
+    job_settings["min_duration_s"] = float(settings.clips.min_duration_s)
+    job_settings["max_duration_s"] = float(settings.clips.max_duration_s)
+    if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
+        job_settings["clips"] = {}
+    job_settings["clips"]["min_duration_s"] = float(settings.clips.min_duration_s)
+    job_settings["clips"]["max_duration_s"] = float(settings.clips.max_duration_s)
     if overrides.caption_style:
         job_settings["caption_style"] = overrides.caption_style
 

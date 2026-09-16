@@ -41,6 +41,21 @@ on:
         required: false
         default: "3"
         type: string
+      min_duration_s:
+        description: "Minimum clip duration in seconds"
+        required: false
+        default: "20"
+        type: string
+      max_duration_s:
+        description: "Maximum clip duration in seconds"
+        required: false
+        default: "60"
+        type: string
+      job_settings:
+        description: "Job settings JSON string"
+        required: false
+        default: "{}"
+        type: string
 
 concurrency:
   group: worker-${{ github.event.inputs.job_id }}
@@ -158,7 +173,10 @@ jobs:
             --callback-token "${{ github.event.inputs.callback_token }}" \
             --publish-targets '${{ github.event.inputs.publish_targets }}' \
             --whisper-model "${{ github.event.inputs.whisper_model }}" \
-            --max-clips "${{ github.event.inputs.max_clips }}"
+            --max-clips "${{ github.event.inputs.max_clips }}" \
+            --min-duration "${{ github.event.inputs.min_duration_s || '20' }}" \
+            --max-duration "${{ github.event.inputs.max_duration_s || '60' }}" \
+            --job-settings '${{ github.event.inputs.job_settings || "{}" }}'
 
       - name: Container Logs (WARP & POT Provider)
         if: always()

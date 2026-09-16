@@ -82,6 +82,8 @@ class FinalRenderQualityGate:
         expected_caption_style: str = "",
         expected_bgm_asset_id: str | None = None,
         require_audio: bool = True,
+        min_duration_s: float | None = None,
+        max_duration_s: float | None = None,
     ) -> FinalRenderGateResult:
         """Evaluates rendered MP4 against video, audio, caption, and BGM rules."""
         warnings: list[str] = []
@@ -173,6 +175,16 @@ class FinalRenderQualityGate:
             # FPS check
             if fps < 15.0 or fps > 120.0:
                 warnings.append(f"Non-standard frame rate: {fps} fps")
+
+            # Strict configured duration bounds check on ACTUAL rendered media
+            if min_duration_s is not None and video_duration < min_duration_s:
+                rejection_reasons.append(
+                    f"Actual rendered MP4 duration {video_duration:.2f}s is below configured minimum {min_duration_s:.2f}s"
+                )
+            if max_duration_s is not None and video_duration > max_duration_s:
+                rejection_reasons.append(
+                    f"Actual rendered MP4 duration {video_duration:.2f}s is above configured maximum {max_duration_s:.2f}s"
+                )
 
             # Duration tolerance check
             diff_s = abs(video_duration - expected_duration_s)

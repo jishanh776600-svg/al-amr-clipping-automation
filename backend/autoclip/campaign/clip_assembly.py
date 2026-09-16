@@ -117,7 +117,7 @@ class SmartBoundaryEngine:
         candidate: ClipCandidateRecord,
         transcript: Transcript,
         silences: list[Silence] | None = None,
-        duration_min_s: float = 15.0,
+        duration_min_s: float = 20.0,
         duration_max_s: float = 60.0,
         require_cta: bool = False,
     ) -> BoundaryOptimization:
@@ -157,6 +157,26 @@ class SmartBoundaryEngine:
             end_idx = min(total_words - 1, start_idx + 15)
 
         adjustments: list[str] = []
+
+        # Ensure candidate initial span reaches at least duration_min_s if transcript has enough material
+        current_dur = all_words[end_idx].end - all_words[start_idx].start
+        if current_dur < duration_min_s:
+            for cand_end in range(end_idx + 1, total_words):
+                new_dur = all_words[cand_end].end - all_words[start_idx].start
+                if new_dur > duration_max_s:
+                    break
+                if any(all_words[cand_end].text.strip().endswith(p) for p in SENTENCE_TERMINALS):
+                    end_idx = cand_end
+                    if new_dur >= duration_min_s:
+                        adjustments.append(f"expanded_to_sentence_boundary({new_dur:.1f}s)")
+                        break
+            current_dur = all_words[end_idx].end - all_words[start_idx].start
+            if current_dur < duration_min_s and end_idx < total_words - 1:
+                for cand_end in range(end_idx + 1, total_words):
+                    if all_words[cand_end].end - all_words[start_idx].start >= duration_min_s:
+                        end_idx = cand_end
+                        adjustments.append("expanded_to_meet_min_duration")
+                        break
 
         # ------------------------------------------------------------------
         # 1. Filler Stripping & Natural Sentence Opening
@@ -414,21 +434,22 @@ class PreRenderQualityGate:
         soft_warnings: list[str] = []
         rule_checks: list[dict[str, Any]] = []
 
-        # 1. Duration Compliance Check
-        min_dur = 15.0
-        max_dur = 60.0
-        if self.campaign_spec:
-            min_dur = float(getattr(self.campaign_spec.duration_min_s, "value", 15.0))
-            max_dur = float(getattr(self.campaign_spec.duration_max_s, "value", 60.0))
-        elif self.campaign_brief:
-            min_dur = float(self.campaign_brief.minimum_duration)
-            max_dur = float(self.campaign_brief.maximum_duration)
+        # 1. Duration Compliance Check (strict hard bounds)
+        from .duration import resolve_duration_limits
 
-        if duration_s < (min_dur - 0.5):
-            hard_rejections.append(f"duration_under_min({duration_s:.1f}s < {min_dur:.1f}s)")
+        min_dur, max_dur = resolve_duration_limits(
+            job_settings=self.job_settings,
+            campaign_spec=self.campaign_spec,
+            campaign_brief=self.campaign_brief,
+            default_min=20.0,
+            default_max=60.0,
+        )
+
+        if duration_s < min_dur:
+            hard_rejections.append(f"duration_under_min({duration_s:.2f}s < {min_dur:.2f}s)")
             rule_checks.append({"rule": "duration_min", "passed": False, "weight": 2.0})
-        elif duration_s > (max_dur + 0.5):
-            hard_rejections.append(f"duration_over_max({duration_s:.1f}s > {max_dur:.1f}s)")
+        elif duration_s > max_dur:
+            hard_rejections.append(f"duration_over_max({duration_s:.2f}s > {max_dur:.2f}s)")
             rule_checks.append({"rule": "duration_max", "passed": False, "weight": 2.0})
         else:
             rule_checks.append({"rule": "duration_bounds", "passed": True, "weight": 2.0})
@@ -612,17 +633,19 @@ class ClipAssemblyEngine:
         start_time = time.time()
         total_candidates = len(candidates)
 
-        duration_min = 15.0
-        duration_max = 60.0
+        from .duration import resolve_duration_limits
+
+        duration_min, duration_max = resolve_duration_limits(
+            job_settings=self.job_settings,
+            campaign_spec=self.campaign_spec,
+            campaign_brief=self.campaign_brief,
+            default_min=20.0,
+            default_max=60.0,
+        )
         require_cta = False
-        if self.campaign_spec:
-            duration_min = float(getattr(self.campaign_spec.duration_min_s, "value", 15.0))
-            duration_max = float(getattr(self.campaign_spec.duration_max_s, "value", 60.0))
-            if getattr(self.campaign_spec, "cta", None):
-                require_cta = bool(self.campaign_spec.cta.value) and getattr(self.campaign_spec.cta, "is_explicit", False)
+        if self.campaign_spec and getattr(self.campaign_spec, "cta", None):
+            require_cta = bool(self.campaign_spec.cta.value) and getattr(self.campaign_spec.cta, "is_explicit", False)
         elif self.campaign_brief:
-            duration_min = float(self.campaign_brief.minimum_duration)
-            duration_max = float(self.campaign_brief.maximum_duration)
             require_cta = bool(self.campaign_brief.call_to_action)
 
         all_specs: list[ClipSpecificationRecord] = []

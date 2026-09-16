@@ -51,6 +51,8 @@ class FinalPreRenderQualityGate:
         retention_score: float = 80.0,
         pacing_dead_air_pct: float = 5.0,
         visual_quality_score: float = 85.0,
+        min_duration_s: float | None = None,
+        max_duration_s: float | None = None,
     ) -> FinalGateResult:
         warnings: list[str] = []
         rejections: list[str] = []
@@ -112,16 +114,16 @@ class FinalPreRenderQualityGate:
             rule_checks.append({"rule": "dead_air_limit", "passed": True})
 
         # ------------------------------------------------------------------
-        # 4. Duration Bounds & Campaign Compliance
+        # 4. Duration Bounds & Campaign Compliance (strict hard bounds)
         # ------------------------------------------------------------------
-        if campaign_spec:
-            min_dur = float(campaign_spec.duration_min_s.value) if campaign_spec.duration_min_s else 5.0
-            max_dur = float(campaign_spec.duration_max_s.value) if campaign_spec.duration_max_s else 60.0
+        effective_min_dur = min_duration_s
+        effective_max_dur = max_duration_s
 
-            if duration_s < (min_dur - 0.5):
-                rejections.append(f"duration_below_campaign_minimum({duration_s:.1f}s < {min_dur:.1f}s)")
-            elif duration_s > (max_dur + 0.5):
-                rejections.append(f"duration_exceeds_campaign_maximum({duration_s:.1f}s > {max_dur:.1f}s)")
+        if campaign_spec:
+            if effective_min_dur is None and campaign_spec.duration_min_s:
+                effective_min_dur = float(campaign_spec.duration_min_s.value)
+            if effective_max_dur is None and campaign_spec.duration_max_s:
+                effective_max_dur = float(campaign_spec.duration_max_s.value)
 
             # Check banned words
             full_text = " ".join(w.text.lower() for w in words)
@@ -135,6 +137,11 @@ class FinalPreRenderQualityGate:
                 tail_text = " ".join(w.text.lower() for w in words[-min(10, len(words)):])
                 if not any(k in tail_text for k in ["follow", "link", "bio", "check", "subscribe", "join"]):
                     warnings.append("mandatory_campaign_cta_weak_or_missing")
+
+        if effective_min_dur is not None and duration_s < effective_min_dur:
+            rejections.append(f"duration_below_minimum({duration_s:.2f}s < {effective_min_dur:.2f}s)")
+        if effective_max_dur is not None and duration_s > effective_max_dur:
+            rejections.append(f"duration_exceeds_maximum({duration_s:.2f}s > {effective_max_dur:.2f}s)")
 
         # ------------------------------------------------------------------
         # 5. Crop Geometry & FFmpeg Render-Safety
