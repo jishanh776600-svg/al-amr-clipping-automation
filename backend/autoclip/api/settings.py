@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -120,28 +123,110 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
     return _settings_out(settings)
 
 
-@router.put("/settings/secrets", status_code=204)
-async def put_secret(payload: SecretIn) -> None:
-    """Store an API key or token. Values are write-only — never read back."""
+def _handle_secret_save(key: str, raw_value: str) -> None:
     valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
-    if payload.key not in valid:
+    if key not in valid:
         raise HTTPException(
-            status_code=400, detail=f"Unknown secret. Expected one of: {', '.join(valid)}"
+            status_code=400, detail=f"Unknown secret '{key}'. Expected one of: {', '.join(valid)}"
         )
-    val = payload.value.strip()
+    val = (raw_value or "").strip()
     if not val:
         raise HTTPException(status_code=400, detail="The value cannot be empty.")
 
     if config.is_masked_secret(val):
-        log.info("Ignoring update for secret '%s' because value is a masked placeholder.", payload.key)
+        log.warning(
+            "Ignoring attempt to overwrite secret '%s' with masked placeholder (%s). Stored secret preserved.",
+            key,
+            val[:12],
+        )
         return
 
     if val == "__CLEAR__":
-        config.delete_secret(payload.key)
-        log.info("Secret '%s' explicitly deleted via put_secret __CLEAR__ marker.", payload.key)
+        config.delete_secret(key)
+        log.info("Secret '%s' explicitly deleted via __CLEAR__ marker.", key)
         return
 
-    config.set_secret(payload.key, val)
+    config.set_secret(key, val)
+    log.info("Secret '%s' successfully encrypted and saved to durable vault.", key)
+
+
+@router.put("/settings/secrets", status_code=204)
+@router.post("/settings/secrets", status_code=204)
+async def put_secret(payload: SecretIn) -> None:
+    """Store an API key or token. Values are write-only — never read back."""
+    if not payload.key:
+        raise HTTPException(status_code=400, detail="The 'key' field is required.")
+    _handle_secret_save(payload.key, payload.value)
+
+
+@router.put("/settings/secrets/{key}", status_code=204)
+@router.post("/settings/secrets/{key}", status_code=204)
+async def put_secret_keyed(key: str, payload: SecretIn) -> None:
+    """Store an API key or token by key in URL path."""
+    _handle_secret_save(key, payload.value)
+
+
+@router.get("/settings/diagnostics")
+@router.get("/diagnostics/credentials")
+async def get_settings_diagnostics() -> dict[str, Any]:
+    """Safe diagnostic report verifying DB path, master key, and credential persistence without exposing secrets."""
+    from .. import paths
+    from ..db import store
+    from ..jobs import dispatcher
+    from ..security.vault import get_vault
+
+    vault = get_vault()
+    db_file = paths.db_path()
+    db_exists = db_file.is_file()
+    db_size = db_file.stat().st_size if db_exists else 0
+
+    render_disk = Path("/data")
+    is_disk_mounted = False
+    try:
+        is_disk_mounted = render_disk.is_dir() and os.access(render_disk, os.W_OK)
+    except Exception:
+        pass
+
+    master_key_env = bool(
+        os.environ.get("AL_AMR_MASTER_KEY")
+        or os.environ.get("AUTOCLIP_ENCRYPTION_KEY")
+        or os.environ.get("ENCRYPTION_KEY")
+    )
+    master_key_file = (paths.root() / ".master_key").is_file()
+
+    try:
+        creds = store.list_credentials()
+        stored_keys = [c.key for c in creds]
+    except Exception as exc:
+        stored_keys = []
+        log.warning("Diagnostics store list failed: %s", exc)
+
+    pat_status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+    pat_decrypted = False
+    try:
+        dec = vault.retrieve_secret(config.GITHUB_PAT_KEY)
+        pat_decrypted = bool(dec)
+    except Exception:
+        pat_decrypted = False
+
+    return {
+        "autoclip_home": os.environ.get("AUTOCLIP_HOME"),
+        "resolved_root": str(paths.root()),
+        "database_path": str(db_file),
+        "database_exists": db_exists,
+        "database_size_bytes": db_size,
+        "is_persistent_disk_mounted": is_disk_mounted,
+        "master_key_env_configured": master_key_env,
+        "master_key_file_exists": master_key_file,
+        "stored_credential_keys": stored_keys,
+        "github_pat": {
+            "configured": pat_status.get("configured", False),
+            "masked": pat_status.get("masked", "Not configured"),
+            "updated_at": pat_status.get("updated_at", ""),
+            "decryption_verified": pat_decrypted,
+        },
+        "dispatcher_token_available": bool(dispatcher.get_github_token()),
+    }
 
 
 @router.delete("/settings/secrets/{key}", status_code=204)

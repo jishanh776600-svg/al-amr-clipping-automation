@@ -571,8 +571,8 @@ class SettingsIn(BaseModel):
 
 
 class SecretIn(BaseModel):
-    key: str
-    value: str
+    key: str | None = None
+    value: str = ""
 
 
 class SystemOut(BaseModel):

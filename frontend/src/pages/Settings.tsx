@@ -621,7 +621,7 @@ function SecretField({
   label: string
   present: boolean
   status?: { configured: boolean; masked?: string; updated_at?: string }
-  onChanged: () => void
+  onChanged: () => Promise<void> | void
   onError: (error: Error) => void
 }) {
   const [value, setValue] = useState('')
@@ -649,7 +649,7 @@ function SecretField({
       setShowReplaceInput(false)
       setSavedNotice('✓ Token successfully encrypted and saved to database vault.')
       setTimeout(() => setSavedNotice(null), 4000)
-      onChanged()
+      await onChanged()
     } catch (err) {
       onError(err as Error)
     } finally {
@@ -667,7 +667,7 @@ function SecretField({
       setShowReplaceInput(false)
       setSavedNotice('Token cleared from durable vault.')
       setTimeout(() => setSavedNotice(null), 3000)
-      onChanged()
+      await onChanged()
     } catch (err) {
       onError(err as Error)
     } finally {

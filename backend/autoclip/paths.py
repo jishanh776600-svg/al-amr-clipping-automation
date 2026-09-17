@@ -44,6 +44,16 @@ def root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
 
+    # In production on Render or Linux containers with a mounted persistent volume:
+    # Check if /data exists and is a directory where we have write access.
+    # This prevents data loss when deployed on Render without AUTOCLIP_HOME set in the dashboard.
+    render_disk = Path("/data")
+    try:
+        if render_disk.is_dir() and os.access(render_disk, os.W_OK):
+            return render_disk.resolve()
+    except Exception:
+        pass
+
     default = Path.home() / DEFAULT_DIR_NAME
     if not default.exists():
         legacy = Path.home() / LEGACY_DIR_NAME

@@ -1106,6 +1106,8 @@ export const api = {
       body: JSON.stringify(value ? { key, value } : null),
     }),
 
+  getSettingsDiagnostics: () => request<Record<string, any>>('/api/settings/diagnostics'),
+
   mediaUrl: (jobId: string) => `/api/jobs/${jobId}/media`,
 
   listPublishing: (params?: {

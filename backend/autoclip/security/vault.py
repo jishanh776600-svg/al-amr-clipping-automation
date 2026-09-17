@@ -58,8 +58,33 @@ class CredentialVault:
         if env_key and env_key.strip():
             return env_key.strip()
 
+        # Check for a persistent master key file in root()
+        root_dir = paths.root()
+        key_file = root_dir / ".master_key"
+        try:
+            if key_file.is_file():
+                stored_key = key_file.read_text(encoding="utf-8").strip()
+                if stored_key:
+                    return stored_key
+        except Exception as exc:
+            log.warning("Could not read master key file %s: %s", key_file, exc)
+
+        # Generate and persist a stable master key for this installation
+        import secrets
+        new_key = f"autoclip-key-{secrets.token_urlsafe(32)}"
+        try:
+            root_dir.mkdir(parents=True, exist_ok=True)
+            key_file.write_text(new_key, encoding="utf-8")
+            import contextlib
+            with contextlib.suppress(OSError):
+                key_file.chmod(0o600)
+            log.info("Generated and persisted new durable master key to %s", key_file)
+            return new_key
+        except Exception as exc:
+            log.warning("Could not write master key file %s: %s", key_file, exc)
+
         # Local development fallback derived from the root path
-        fallback = f"autoclip-dev-salt-{paths.root().resolve()}"
+        fallback = f"autoclip-dev-salt-{root_dir.resolve()}"
         return fallback
 
     def get_cipher(self) -> Fernet:
