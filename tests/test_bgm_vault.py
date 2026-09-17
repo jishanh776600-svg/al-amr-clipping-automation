@@ -68,8 +68,8 @@ class TestBGMMigrationAndSchema:
     def test_migration_v15_creates_table_and_indexes(self, autoclip_home):
         with connection() as conn:
             v = migrate(conn)
-            assert v == 15
-            assert SCHEMA_VERSION == 15
+            assert v >= 15
+            assert v == SCHEMA_VERSION
 
             # Table existence and column verification
             cols = conn.execute("PRAGMA table_info(bgm_assets)").fetchall()
@@ -371,3 +371,97 @@ class TestBGMAPIEndpoints:
         assert job is not None
         assert job.settings["bgm_enabled"] is False
         assert job.settings.get("bgm_asset_id") is None
+
+    def test_persistent_storage_db_reconciliation(self, initialised_db):
+        """Verify that audio files in persistent storage missing from DB are reconciled idempotently."""
+        vault = BGMVault()
+        wav_bytes = make_valid_wav(duration_s=1.8)
+        asset_id = "53c0edbf5d384183"
+
+        # Place audio file directly on disk in persistent storage without DB record
+        file_path = vault.base_dir / f"{asset_id}.wav"
+        file_path.write_bytes(wav_bytes)
+
+        # Before reconciliation, DB has no record
+        assert store.get_bgm_asset(asset_id) is None
+
+        # 1. get_asset resolves and reconciles on-demand
+        asset = vault.get_asset(asset_id)
+        assert asset is not None
+        assert asset.id == asset_id
+        assert Path(asset.file_path).exists()
+        assert asset.enabled is True
+        assert asset.duration_s >= 1.7
+
+        # 2. Re-verifying store now has the record
+        stored_record = store.get_bgm_asset(asset_id)
+        assert stored_record is not None
+        assert stored_record.id == asset_id
+
+        # 3. list_assets includes it
+        all_assets = vault.list_assets()
+        assert any(a.id == asset_id for a in all_assets)
+
+        # Clean up
+        vault.delete_asset(asset_id)
+
+    def test_stale_and_missing_bgm_asset_resolution(self, initialised_db):
+        """Verify handling of missing/stale BGM asset IDs with both strict and fallback modes."""
+        vault = BGMVault()
+        stale_id = "53c0edbf5d384183"
+
+        # Strict mode raises BGMUnavailableError
+        with pytest.raises(BGMUnavailableError) as exc_info:
+            vault.resolve_campaign_bgm(stale_id, allow_fallback=False)
+        assert f"Selected BGM asset '{stale_id}' does not exist" in str(exc_info.value)
+
+        # Fallback mode proceeds gracefully with (False, None, None)
+        enabled, asset, path = vault.resolve_campaign_bgm(stale_id, allow_fallback=True)
+        assert enabled is False
+        assert asset is None
+        assert path is None
+
+    def test_job_creation_with_stale_bgm_asset_id_recovers_cleanly(
+        self, client: TestClient, source: Source
+    ):
+        """Verify that a job submitted with a stale/non-existent BGM asset ID does not crash."""
+        stale_id = "53c0edbf5d384183"
+        resp = client.post(
+            "/api/jobs",
+            json={
+                "source_id": source.id,
+                "settings": {
+                    "bgm_asset_id": stale_id,
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        job_data = resp.json()
+        job = store.get_job(job_data["id"])
+        assert job is not None
+        assert job.settings["bgm_enabled"] is False
+        assert job.settings.get("bgm_asset_id") is None
+        assert "bgm_warning" in job.settings
+        assert stale_id in job.settings["bgm_warning"]
+
+    def test_ad_hoc_upload_without_campaign_requirements(
+        self, client: TestClient, source: Source
+    ):
+        """Verify ad-hoc source upload without campaign specifications or BGM succeeds cleanly."""
+        resp = client.post(
+            "/api/jobs",
+            json={
+                "source_id": source.id,
+                "settings": {
+                    "min_duration_s": 15.0,
+                    "max_duration_s": 45.0,
+                    "max_clips": 3,
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        job = store.get_job(resp.json()["id"])
+        assert job is not None
+        assert job.settings["bgm_enabled"] is False
+        assert job.settings.get("campaign") is None
+

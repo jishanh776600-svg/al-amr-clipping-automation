@@ -527,7 +527,9 @@ async def create_autonomous_job(
             vault.resolve_campaign_bgm, bgm_asset_id
         )
     except BGMUnavailableError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_asset_id, exc)
+        bgm_enabled, bgm_asset, bgm_path = False, None, None
+        job_settings["bgm_warning"] = str(exc)
 
     job_settings["bgm_enabled"] = bgm_enabled
     job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None
@@ -688,7 +690,9 @@ async def create_job(
             vault.resolve_campaign_bgm, bgm_asset_id
         )
     except BGMUnavailableError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_asset_id, exc)
+        bgm_enabled, bgm_asset, bgm_path = False, None, None
+        job_settings["bgm_warning"] = str(exc)
 
     job_settings["bgm_enabled"] = bgm_enabled
     job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None

@@ -68,7 +68,14 @@ export function Ingest() {
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
     api.providerStatus().then(setProviders).catch(() => undefined)
-    api.listBGMAssets().then(setBgmAssets).catch(() => undefined)
+    api.listBGMAssets().then((list) => {
+      setBgmAssets(list)
+      setSelectedBgmId((current) => {
+        if (!current) return ''
+        const exists = list.some((a) => a.id === current && a.enabled)
+        return exists ? current : ''
+      })
+    }).catch(() => undefined)
     api.listCampaigns().then((list) => {
       setCampaigns(list)
       const paramCampaignId = searchParams.get('campaign')
@@ -176,6 +183,11 @@ export function Ingest() {
     try {
       const list = await api.listBGMAssets()
       setBgmAssets(list)
+      setSelectedBgmId((prev) => {
+        if (!prev) return ''
+        const exists = list.some((a) => a.id === prev && a.enabled)
+        return exists ? prev : ''
+      })
     } catch {
       // ignore
     }
@@ -217,8 +229,14 @@ export function Ingest() {
       if (asset.enabled && selectedBgmId === asset.id) {
         setSelectedBgmId('')
       }
-    } catch (err) {
-      setError(err as Error)
+    } catch (err: any) {
+      if (err?.status === 404 || err?.message?.includes('not found')) {
+        await refreshBgmAssets()
+        if (selectedBgmId === asset.id) setSelectedBgmId('')
+        setError(null)
+      } else {
+        setError(err as Error)
+      }
     }
   }
 
@@ -228,8 +246,14 @@ export function Ingest() {
       await api.deleteBGMAsset(id)
       if (selectedBgmId === id) setSelectedBgmId('')
       await refreshBgmAssets()
-    } catch (err) {
-      setError(err as Error)
+    } catch (err: any) {
+      if (err?.status === 404 || err?.message?.includes('not found')) {
+        await refreshBgmAssets()
+        if (selectedBgmId === id) setSelectedBgmId('')
+        setError(null)
+      } else {
+        setError(err as Error)
+      }
     }
   }
 
@@ -285,9 +309,12 @@ export function Ingest() {
       form.append('caption_style', captionStyle)
       jobOverrides.caption_style = captionStyle
 
-      // Step 20 BGM Selection
-      form.append('bgm_asset_id', selectedBgmId || '')
-      jobOverrides.bgm_asset_id = selectedBgmId || null
+      // Step 20 BGM Selection: Only pass BGM asset ID if verified to exist in vault and enabled
+      const effectiveBgmId = bgmAssets.some((a) => a.id === selectedBgmId && a.enabled)
+        ? selectedBgmId
+        : ''
+      form.append('bgm_asset_id', effectiveBgmId)
+      jobOverrides.bgm_asset_id = effectiveBgmId || null
 
       form.append('overrides', JSON.stringify(jobOverrides))
 
