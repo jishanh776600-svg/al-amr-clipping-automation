@@ -106,8 +106,8 @@ class InstagramPublisher(BasePublisher):
                 platform=self.platform_name,
                 destination_id=destination_id,
                 success=False,
-                status="skipped",
-                error="META_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID not configured.",
+                status="failed",
+                error="META_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID not configured in server environment.",
                 error_code="authentication_error",
                 retryable=False,
             )
@@ -117,7 +117,9 @@ class InstagramPublisher(BasePublisher):
         public_url = self.resolve_public_media_url(export_id, drive_link, auth_token)
 
         # Dry run or validation
-        if dry_run or not os.getenv("META_PUBLISH_LIVE", "").lower() in ("true", "1", "yes"):
+        is_live_disabled = os.getenv("META_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("META_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")
+        actual_dry_run = dry_run or is_live_disabled
+        if actual_dry_run:
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.get(

@@ -78,8 +78,8 @@ class YouTubePublisher(BasePublisher):
                 platform=self.platform_name,
                 destination_id=destination_id,
                 success=False,
-                status="skipped",
-                error="YOUTUBE_REFRESH_TOKEN not configured.",
+                status="failed",
+                error="YOUTUBE_REFRESH_TOKEN not configured in server environment.",
                 error_code="authentication_error",
                 retryable=False,
             )
@@ -111,9 +111,9 @@ class YouTubePublisher(BasePublisher):
 
         tags = list(set(metadata.tags + ["Shorts", "Viral"]))
 
-        # Check live publish configuration (default is dry-run for safety)
-        is_live_enabled = os.getenv("YOUTUBE_PUBLISH_LIVE", "").lower() in ("true", "1", "yes")
-        actual_dry_run = dry_run or (not is_live_enabled)
+        # Check live publish configuration (default is live when credentials are present)
+        is_live_disabled = os.getenv("YOUTUBE_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("YOUTUBE_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")
+        actual_dry_run = dry_run or is_live_disabled
 
         if actual_dry_run:
             log.info("YouTube Publisher: Dry run verified successfully for '%s'.", title)

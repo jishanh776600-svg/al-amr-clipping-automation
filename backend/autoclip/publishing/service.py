@@ -229,30 +229,73 @@ class PublishingService:
             extra={"clip_id": clip_id, "job_id": job_id},
         )
 
-        media_path = Path(final_render.output_path) if final_render else Path("")
+        media_path = Path(final_render.output_path) if final_render and final_render.output_path else Path("")
         temp_file_to_clean: Path | None = None
         drive_link: str | None = None
 
-        if not media_path.exists():
+        has_media = media_path.is_file() and media_path.stat().st_size > 0
+        if not has_media:
             exports = store.list_exports(clip_id)
             drive_file_id = None
             for exp in exports:
+                if exp.path and Path(exp.path).is_file() and Path(exp.path).stat().st_size > 0:
+                    media_path = Path(exp.path)
+                    has_media = True
+                    break
                 if exp.drive_file_id:
                     drive_file_id = exp.drive_file_id
                     drive_link = exp.drive_web_view_link
                     pub_metadata.extra["export_id"] = exp.id
                     break
-            if drive_file_id:
+
+            if not has_media and drive_file_id:
                 try:
+                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                        temp_file_to_clean = Path(tf.name)
                     drive_storage = GoogleDriveStorage()
                     if drive_storage.is_configured:
-                        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-                            temp_file_to_clean = Path(tf.name)
                         log.info("Downloading clip %s media from Google Drive %s...", clip_id, drive_file_id)
                         drive_storage.download_file(drive_file_id, temp_file_to_clean)
-                        media_path = temp_file_to_clean
+                        if temp_file_to_clean.is_file() and temp_file_to_clean.stat().st_size > 0:
+                            media_path = temp_file_to_clean
+                            has_media = True
+
+                    # Fallback direct download if drive_storage was unconfigured or failed
+                    if not has_media:
+                        direct_url = f"https://drive.google.com/uc?export=download&id={drive_file_id}"
+                        log.info("Attempting direct HTTP download from Google Drive %s...", direct_url)
+                        import httpx
+                        with httpx.Client(timeout=60.0, follow_redirects=True) as dl_client:
+                            resp = dl_client.get(direct_url)
+                            if resp.status_code == 200 and len(resp.content) > 1000:
+                                temp_file_to_clean.write_bytes(resp.content)
+                                media_path = temp_file_to_clean
+                                has_media = True
                 except Exception as exc:
                     log.warning("Failed downloading from Google Drive for clip %s: %s", clip_id, exc)
+
+        if not has_media or not media_path.exists():
+            log.warning("No accessible media file found for clip %s locally or on Google Drive.", clip_id)
+            now_fail = models.utcnow()
+            record_id = existing.id if existing else models.new_id()
+            err_msg = "Final render output file not accessible locally or on Google Drive."
+            failed_pub = models.PublicationRecord(
+                id=record_id,
+                job_id=job_id,
+                clip_id=clip_id,
+                final_render_id=final_render.id if final_render else None,
+                platform=norm_platform,
+                destination_id=dest,
+                status="FAILED_PERMANENT",
+                attempt_number=(existing.attempt_number + 1) if existing else 1,
+                idempotency_key=idempotency_key,
+                error_code="invalid_media",
+                error_message=err_msg,
+                created_at=existing.created_at if existing else now_fail,
+                updated_at=now_fail,
+            )
+            store.create_publication(failed_pub)
+            return failed_pub
 
         # Create or update publication record in UPLOADING status
         now_start = models.utcnow()

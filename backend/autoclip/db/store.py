@@ -11,7 +11,7 @@ import json
 import sqlite3
 from typing import Any
 
-from . import connection
+from . import connection, models
 from .models import (
     AppCredentialRecord,
     CampaignGuideline,

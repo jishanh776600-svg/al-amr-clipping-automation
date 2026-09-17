@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,11 @@ log = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
+# Concurrency & In-Progress Tracking
+_publishing_in_progress: set[str] = set()
+_publishing_lock = asyncio.Lock()
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _escape_md(text: str) -> str:
     """Escape special characters for Telegram legacy Markdown."""
@@ -31,6 +37,45 @@ def _escape_md(text: str) -> str:
     for ch in ("_", "*", "`", "["):
         text = text.replace(ch, f"\\{ch}")
     return text
+
+
+def _sanitize_error(err: str) -> str:
+    """Sanitize error message to strip sensitive credentials and cap length."""
+    if not err:
+        return "Unknown error"
+    # Mask potential token/key patterns
+    cleaned = re.sub(
+        r"(token|key|secret|authorization|bearer)[=:\s]+[A-Za-z0-9_\-\.]{8,}",
+        r"\1=***REDACTED***",
+        str(err),
+        flags=re.IGNORECASE,
+    )
+    # Strip any brackets or unescaped markdown syntax that could break formatting
+    cleaned = _escape_md(cleaned)
+    if len(cleaned) > 200:
+        cleaned = cleaned[:197] + "..."
+    return cleaned
+
+
+def _format_card_content(
+    original_text: str,
+    status_header: str,
+    platforms_status: dict[str, str],
+    has_caption: bool,
+) -> str:
+    """Compose review card text with status badge while respecting Telegram length limits."""
+    delimiter = "\n\n━━━━━━━━━━━━━━━━━━━━\n"
+    base = (original_text or "").split(delimiter)[0].strip()
+
+    status_block = f"{delimiter.strip()}\n{status_header}\n"
+    for plat, st in platforms_status.items():
+        status_block += f"\n• *{plat}*: {st}"
+
+    max_len = 1020 if has_caption else 4000
+    available_base = max_len - len(status_block) - 4
+    if len(base) > available_base:
+        base = base[: max(0, available_base - 3)] + "..."
+    return f"{base}\n\n{status_block}"
 
 
 def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str, str, list[str]]:
@@ -46,8 +91,6 @@ def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str
         if not chat_id:
             chat_id = str(job_settings.get("telegram_chat_id") or (job_settings.get("telegram") or {}).get("chat_id") or "").strip()
 
-    if chat_id and chat_id not in allowed_ids:
-        allowed_ids.append(chat_id)
     return bot_token, chat_id, allowed_ids
 
 
@@ -59,12 +102,163 @@ def is_telegram_configured(job_settings: dict[str, Any] | None = None) -> bool:
 def is_user_authorized(from_id: str | int, allowed_ids: list[str]) -> bool:
     """Validate whether the user is authorized to perform approval actions."""
     if not allowed_ids:
-        # If no explicit restriction configured, allow operator
         return True
     return str(from_id) in allowed_ids
 
 
-async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_settings: dict[str, Any] | None = None) -> dict[str, Any] | None:
+async def _safe_edit_telegram_message(
+    bot_token: str,
+    chat_id: int | str,
+    message_id: int | str | None,
+    text: str,
+    has_caption: bool = False,
+    reply_markup: dict[str, Any] | None = None,
+) -> bool:
+    """Safely edit a Telegram message or caption with Markdown protection and length capping."""
+    if not message_id:
+        return False
+
+    method = "editMessageCaption" if has_caption else "editMessageText"
+    field_name = "caption" if has_caption else "text"
+    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/{method}"
+    max_len = 1020 if has_caption else 4000
+
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        field_name: text[:max_len],
+        "parse_mode": "Markdown",
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return True
+            # Retry without parse_mode if Markdown parsing failed (HTTP 400)
+            if resp.status_code == 400:
+                payload_plain = dict(payload)
+                payload_plain.pop("parse_mode", None)
+                resp_plain = await client.post(url, json=payload_plain)
+                if resp_plain.status_code == 200:
+                    return True
+                log.warning("Telegram %s plain retry failed (HTTP %s): %s", method, resp_plain.status_code, resp_plain.text)
+            else:
+                log.warning("Telegram %s failed (HTTP %s): %s", method, resp.status_code, resp.text)
+    except Exception as exc:
+        log.warning("Exception in _safe_edit_telegram_message: %s", exc)
+    return False
+
+
+async def _safe_send_telegram_message(
+    bot_token: str,
+    chat_id: int | str,
+    text: str,
+    reply_to_message_id: int | str | None = None,
+    reply_markup: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Send a Telegram message with Markdown formatting and plain text fallback."""
+    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text[:4096],
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": False,
+    }
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code == 400:
+                payload_plain = dict(payload)
+                payload_plain.pop("parse_mode", None)
+                resp_plain = await client.post(url, json=payload_plain)
+                if resp_plain.status_code == 200:
+                    return resp_plain.json()
+                log.warning("Telegram sendMessage plain retry failed (HTTP %s): %s", resp_plain.status_code, resp_plain.text)
+            else:
+                log.warning("Telegram sendMessage failed (HTTP %s): %s", resp.status_code, resp.text)
+    except Exception as exc:
+        log.warning("Exception in _safe_send_telegram_message: %s", exc)
+    return None
+
+
+async def _answer_callback_query(
+    bot_token: str, callback_query_id: str, text: str, show_alert: bool = False
+) -> None:
+    """Acknowledge Telegram callback query immediately to stop client-side spinner."""
+    if not callback_query_id:
+        return
+    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/answerCallbackQuery"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                url,
+                json={"callback_query_id": callback_query_id, "text": text, "show_alert": show_alert},
+            )
+    except Exception as exc:
+        log.warning("Failed to answer callback query %s: %s", callback_query_id, exc)
+
+
+def _record_review_sent(
+    job_id: str,
+    clip_id: str,
+    chat_id: str | int,
+    message_id: str | int | None = None,
+    has_caption: bool = False,
+) -> None:
+    """Record TELEGRAM_REVIEW_SENT action in approval history and telemetry for deduplication."""
+    try:
+        approval = store.get_clip_approval(clip_id)
+        if not approval:
+            approval = models.ClipApprovalRecord(
+                id=models.new_id(),
+                clip_id=clip_id,
+                job_id=job_id,
+                current_status="PENDING_REVIEW",
+                version=1,
+                publish_eligible=True,
+                blocking_reasons=[],
+                created_at=models.utcnow(),
+                updated_at=models.utcnow(),
+            )
+            store.create_clip_approval(approval)
+        if message_id:
+            approval.telemetry["telegram_message_id"] = message_id
+            approval.telemetry["telegram_chat_id"] = str(chat_id)
+            approval.telemetry["telegram_has_caption"] = has_caption
+
+        approval.operator_action = "TELEGRAM_REVIEW_SENT"
+        approval.operator_note = f"Delivered review card to Telegram chat {chat_id}"
+        approval.history.append({
+            "from_status": approval.current_status,
+            "to_status": approval.current_status,
+            "operator_action": "TELEGRAM_REVIEW_SENT",
+            "operator_note": f"Delivered review card to Telegram chat {chat_id}",
+            "actor": "system:telegram_bot",
+            "version": approval.version,
+            "timestamp": models.utcnow(),
+        })
+        approval.updated_at = models.utcnow()
+        store.update_clip_approval(approval)
+    except Exception as exc:
+        log.warning("Could not record review delivery in approval history: %s", exc)
+
+
+async def send_clip_review(
+    job_id: str,
+    clip_id: str,
+    force: bool = False,
+    job_settings: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Send an interactive review card with video preview and inline buttons to operator."""
     bot_token, chat_id, _ = get_telegram_config(job_settings)
     if not bot_token or not chat_id:
@@ -80,7 +274,7 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
     approval = store.get_clip_approval(clip_id)
     if not force and approval:
         for h in approval.history:
-            if h.get("action") == "TELEGRAM_REVIEW_SENT":
+            if h.get("operator_action") == "TELEGRAM_REVIEW_SENT" or h.get("action") == "TELEGRAM_REVIEW_SENT":
                 log.info("Telegram review card already delivered for clip %s. Skipping duplicate.", clip_id)
                 return {"status": "already_sent", "clip_id": clip_id}
 
@@ -89,12 +283,10 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
     exports = store.list_exports(clip_id)
 
     drive_link = ""
-    export_id = ""
     for exp in exports:
         if exp.drive_web_view_link:
             drive_link = exp.drive_web_view_link
-        if exp.id:
-            export_id = exp.id
+            break
 
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"
@@ -159,8 +351,10 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
                         resp = await client.post(send_video_url, data=data, files=files)
                         if resp.status_code == 200:
                             log.info("Telegram review video delivered successfully for clip %s", clip_id)
-                            _record_review_sent(job_id, clip_id, chat_id)
-                            return resp.json()
+                            resp_json = resp.json()
+                            msg_id = resp_json.get("result", {}).get("message_id")
+                            _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
+                            return resp_json
                         elif resp.status_code == 400:
                             # Retry video without markdown parse_mode
                             data_plain = dict(data)
@@ -170,8 +364,10 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
                             resp_plain = await client.post(send_video_url, data=data_plain, files=files_plain)
                             if resp_plain.status_code == 200:
                                 log.info("Telegram review video (plain) delivered for clip %s", clip_id)
-                                _record_review_sent(job_id, clip_id, chat_id)
-                                return resp_plain.json()
+                                resp_json = resp_plain.json()
+                                msg_id = resp_json.get("result", {}).get("message_id")
+                                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
+                                return resp_json
                         log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
             except Exception as exc:
                 log.warning("Failed sending video directly via Telegram API: %s", exc)
@@ -190,8 +386,10 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
             resp = await client.post(send_msg_url, json=data)
             if resp.status_code == 200:
                 log.info("Telegram review message delivered successfully for clip %s", clip_id)
-                _record_review_sent(job_id, clip_id, chat_id)
-                return resp.json()
+                resp_json = resp.json()
+                msg_id = resp_json.get("result", {}).get("message_id")
+                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=False)
+                return resp_json
             elif resp.status_code == 400:
                 # Retry message as plain text
                 data_plain = dict(data)
@@ -199,8 +397,10 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
                 resp2 = await client.post(send_msg_url, json=data_plain)
                 if resp2.status_code == 200:
                     log.info("Telegram review message (plain fallback) delivered for clip %s", clip_id)
-                    _record_review_sent(job_id, clip_id, chat_id)
-                    return resp2.json()
+                    resp_json = resp2.json()
+                    msg_id = resp_json.get("result", {}).get("message_id")
+                    _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=False)
+                    return resp_json
                 else:
                     log.error("Telegram sendMessage plain fallback failed (HTTP %s): %s", resp2.status_code, resp2.text)
                     return None
@@ -212,34 +412,6 @@ async def send_clip_review(job_id: str, clip_id: str, force: bool = False, job_s
         return None
 
 
-def _record_review_sent(job_id: str, clip_id: str, chat_id: str | int) -> None:
-    """Record TELEGRAM_REVIEW_SENT action in approval history for deduplication."""
-    try:
-        approval = store.get_clip_approval(clip_id)
-        if not approval:
-            approval = models.ClipApprovalRecord(
-                id=models.new_id(),
-                clip_id=clip_id,
-                job_id=job_id,
-                current_status="PENDING_REVIEW",
-                version=1,
-                publish_eligible=True,
-                blocking_reasons=[],
-                created_at=models.utcnow(),
-                updated_at=models.utcnow(),
-            )
-            store.create_clip_approval(approval)
-        approval.apply_action(
-            new_status=approval.current_status,
-            operator_action="TELEGRAM_REVIEW_SENT",
-            operator_note=f"Delivered review card to Telegram chat {chat_id}",
-            actor="system:telegram_bot",
-        )
-        store.update_clip_approval(approval)
-    except Exception as exc:
-        log.warning("Could not record review delivery in approval history: %s", exc)
-
-
 async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
     """Process incoming Telegram updates, validating authorization and executing actions."""
     bot_token, _, allowed_ids = get_telegram_config()
@@ -248,17 +420,18 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
 
     callback_query = update.get("callback_query")
     if not callback_query:
-        # Not an inline button callback, acknowledge gracefully
         return {"status": "ignored", "message": "No callback_query in update"}
 
-    cb_id = callback_query.get("id")
+    cb_id = callback_query.get("id") or ""
     from_user = callback_query.get("from", {})
     user_id = from_user.get("id")
     username = from_user.get("username", "") or str(user_id)
     cb_data = callback_query.get("data", "")
     message = callback_query.get("message", {})
     message_id = message.get("message_id")
-    chat_id = message.get("chat", {}).get("id")
+    chat_id = message.get("chat", {}).get("id") or os.getenv("TELEGRAM_CHAT_ID") or ""
+    has_caption = bool(message.get("caption"))
+    original_text = message.get("caption") or message.get("text") or ""
 
     # 1. Operator Authorization Check
     if not is_user_authorized(user_id, allowed_ids):
@@ -270,6 +443,16 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
             show_alert=True,
         )
         return {"status": "unauthorized", "user_id": user_id}
+
+    # 2. Prevent interactions while already busy or done
+    if cb_data in ("tg:busy", "tg:done"):
+        await _answer_callback_query(
+            bot_token,
+            cb_id,
+            text="⏳ Action already completed or currently in progress.",
+            show_alert=False,
+        )
+        return {"status": "already_handled", "action": cb_data}
 
     if not cb_data.startswith("tg:"):
         await _answer_callback_query(bot_token, cb_id, text="Unknown action.")
@@ -289,9 +472,8 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         return {"status": "not_found", "clip_id": clip_id}
 
     job_id = clip.job_id
-    actor = f"telegram:{username or user_id}"
+    actor = f"telegram:@{username}" if username else f"telegram:{user_id}"
 
-    # Get or create Step 24 approval record
     approval = store.get_clip_approval(clip_id)
     if not approval:
         approval = models.ClipApprovalRecord(
@@ -307,60 +489,124 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         )
         store.create_clip_approval(approval)
 
+    # ------------------------------------------------------------------
+    # ACTION: APPROVE & PUBLISH
+    # ------------------------------------------------------------------
     if action == "appr":
-        # Idempotency check: Already approved
-        if approval.current_status == "APPROVED":
-            await _answer_callback_query(bot_token, cb_id, text="ℹ️ Clip is already APPROVED.", show_alert=False)
-            return {"status": "already_approved", "clip_id": clip_id, "job_id": job_id}
+        # Check if already currently uploading in-memory
+        if clip_id in _publishing_in_progress:
+            await _answer_callback_query(
+                bot_token,
+                cb_id,
+                text="⏳ Publishing is already in progress for this clip. Please wait.",
+                show_alert=False,
+            )
+            return {"status": "already_publishing", "clip_id": clip_id, "job_id": job_id}
 
-        # Check transition validity
-        if not approval.can_transition_to("APPROVED"):
-            msg = f"Cannot approve clip: currently {approval.current_status}."
-            await _answer_callback_query(bot_token, cb_id, text=msg, show_alert=True)
-            return {"status": "invalid_transition", "current": approval.current_status}
+        # Check existing publications: if both YouTube and Instagram succeeded, prevent re-publishing
+        existing_pubs = store.list_publications_for_clip(clip_id)
+        published_platforms = {p.platform.lower() for p in existing_pubs if p.status == "PUBLISHED"}
+        if "youtube" in published_platforms and "instagram" in published_platforms:
+            await _answer_callback_query(
+                bot_token,
+                cb_id,
+                text="✅ Clip is already published to all platforms.",
+                show_alert=False,
+            )
+            return {"status": "already_published", "clip_id": clip_id, "job_id": job_id}
 
-        approval.apply_action(
-            new_status="APPROVED",
-            operator_action="APPROVE",
-            operator_note=f"Approved & published via Telegram Bot by @{username}",
-            actor=actor,
-        )
-        store.update_clip_approval(approval)
-        log.info("Clip %s APPROVED via Telegram by %s", clip_id, actor)
-
-        # Trigger Step 25 & 26 Publishing Orchestration
-        asyncio.create_task(_execute_auto_publish(job_id, clip_id))
-
-        # Acknowledge callback immediately to unblock Telegram UI
+        # Immediate callback query acknowledgment to stop Telegram client spinner instantly
         await _answer_callback_query(
             bot_token,
             cb_id,
-            text="✅ Clip APPROVED! Auto-publishing to YouTube & Instagram initiated.",
+            text="⏳ Approval received! Initiating auto-publish...",
             show_alert=False,
         )
 
-        # Update Telegram message with approval badge and disable buttons
-        await _update_telegram_message_status(
+        # Update DB approval state
+        if approval.current_status != "APPROVED":
+            if approval.can_transition_to("APPROVED"):
+                approval.apply_action(
+                    new_status="APPROVED",
+                    operator_action="APPROVE",
+                    operator_note=f"Approved & published via Telegram Bot by @{username}",
+                    actor=actor,
+                )
+                store.update_clip_approval(approval)
+                log.info("Clip %s transitioned to APPROVED via Telegram by %s", clip_id, actor)
+            else:
+                err_msg = f"Cannot approve clip: currently in status {approval.current_status}."
+                await _safe_send_telegram_message(
+                    bot_token,
+                    chat_id,
+                    f"⚠️ {err_msg}",
+                    reply_to_message_id=message_id,
+                )
+                return {"status": "invalid_transition", "current": approval.current_status}
+        else:
+            # Already APPROVED, record that operator re-triggered publishing
+            approval.operator_action = "APPROVE"
+            approval.operator_note = f"Publishing re-triggered via Telegram Bot by @{username}"
+            approval.history.append({
+                "from_status": "APPROVED",
+                "to_status": "APPROVED",
+                "operator_action": "APPROVE",
+                "operator_note": f"Publishing re-triggered via Telegram Bot by @{username}",
+                "actor": actor,
+                "version": approval.version,
+                "timestamp": models.utcnow(),
+            })
+            approval.updated_at = models.utcnow()
+            store.update_clip_approval(approval)
+
+        # Immediate Review Card Update: Show "Publishing started..." and disable interactive buttons
+        initial_status_text = _format_card_content(
+            original_text=original_text,
+            status_header="⏳ *APPROVED — Publishing started...*",
+            platforms_status={
+                "YouTube Shorts": "⏳ Queued",
+                "Instagram Reels": "⏳ Queued",
+            },
+            has_caption=has_caption,
+        )
+        await _safe_edit_telegram_message(
             bot_token=bot_token,
             chat_id=chat_id,
             message_id=message_id,
-            has_caption=bool(message.get("caption")),
-            original_text=message.get("caption") or message.get("text") or "",
-            status_text="✅ *APPROVED & AUTO-PUBLISHING STARTED*",
-            button_text="✅ Approved & Publishing",
+            text=initial_status_text,
+            has_caption=has_caption,
+            reply_markup={"inline_keyboard": [[{"text": "⏳ Publishing in progress...", "callback_data": "tg:busy"}]]},
         )
+
+        # Launch Step 25 & 26 Publishing in Background Task
+        task = asyncio.create_task(
+            _execute_auto_publish(
+                job_id=job_id,
+                clip_id=clip_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                has_caption=has_caption,
+                original_text=original_text,
+                bot_token=bot_token,
+            )
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return {"status": "approved", "clip_id": clip_id, "job_id": job_id}
 
+    # ------------------------------------------------------------------
+    # ACTION: REJECT
+    # ------------------------------------------------------------------
     elif action == "rej":
-        # Idempotency check: Already rejected
+        await _answer_callback_query(bot_token, cb_id, text="❌ Clip rejected.", show_alert=False)
+
         if approval.current_status == "REJECTED":
-            await _answer_callback_query(bot_token, cb_id, text="ℹ️ Clip is already REJECTED.", show_alert=False)
             return {"status": "already_rejected", "clip_id": clip_id, "job_id": job_id}
 
         if not approval.can_transition_to("REJECTED"):
             msg = f"Cannot reject clip: currently {approval.current_status}."
-            await _answer_callback_query(bot_token, cb_id, text=msg, show_alert=True)
+            await _safe_send_telegram_message(bot_token, chat_id, f"⚠️ {msg}", reply_to_message_id=message_id)
             return {"status": "invalid_transition", "current": approval.current_status}
 
         approval.apply_action(
@@ -372,35 +618,34 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         store.update_clip_approval(approval)
         log.info("Clip %s REJECTED via Telegram by %s", clip_id, actor)
 
-        # Cancel any pending/scheduled queue items for this clip
         try:
             PublishingOrchestrator().cancel_items_for_clip(clip_id, reason=f"Rejected via Telegram by @{username}")
         except Exception as exc:
             log.warning("Could not cancel queue items for rejected clip %s: %s", clip_id, exc)
 
-        await _answer_callback_query(bot_token, cb_id, text="❌ Clip rejected.", show_alert=False)
-
         await _update_telegram_message_status(
             bot_token=bot_token,
             chat_id=chat_id,
             message_id=message_id,
-            has_caption=bool(message.get("caption")),
-            original_text=message.get("caption") or message.get("text") or "",
+            has_caption=has_caption,
+            original_text=original_text,
             status_text="❌ *REJECTED BY OPERATOR*",
             button_text="❌ Rejected",
         )
-
         return {"status": "rejected", "clip_id": clip_id, "job_id": job_id}
 
+    # ------------------------------------------------------------------
+    # ACTION: REQUEST CHANGES
+    # ------------------------------------------------------------------
     elif action == "chg":
-        # Idempotency check: Already changes requested
+        await _answer_callback_query(bot_token, cb_id, text="🔄 Changes requested.", show_alert=False)
+
         if approval.current_status == "CHANGES_REQUESTED":
-            await _answer_callback_query(bot_token, cb_id, text="ℹ️ Changes already requested.", show_alert=False)
             return {"status": "already_changes_requested", "clip_id": clip_id, "job_id": job_id}
 
         if not approval.can_transition_to("CHANGES_REQUESTED"):
             msg = f"Cannot request changes: currently {approval.current_status}."
-            await _answer_callback_query(bot_token, cb_id, text=msg, show_alert=True)
+            await _safe_send_telegram_message(bot_token, chat_id, f"⚠️ {msg}", reply_to_message_id=message_id)
             return {"status": "invalid_transition", "current": approval.current_status}
 
         approval.apply_action(
@@ -412,103 +657,321 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         store.update_clip_approval(approval)
         log.info("Clip %s CHANGES_REQUESTED via Telegram by %s", clip_id, actor)
 
-        # Cancel any pending/scheduled queue items for this clip
         try:
             PublishingOrchestrator().cancel_items_for_clip(clip_id, reason=f"Changes requested via Telegram by @{username}")
         except Exception as exc:
             log.warning("Could not cancel queue items for changed clip %s: %s", clip_id, exc)
 
-        await _answer_callback_query(bot_token, cb_id, text="🔄 Changes requested.", show_alert=False)
-
         await _update_telegram_message_status(
             bot_token=bot_token,
             chat_id=chat_id,
             message_id=message_id,
-            has_caption=bool(message.get("caption")),
-            original_text=message.get("caption") or message.get("text") or "",
+            has_caption=has_caption,
+            original_text=original_text,
             status_text="🔄 *CHANGES REQUESTED BY OPERATOR*",
             button_text="🔄 Changes Requested",
         )
-
         return {"status": "changes_requested", "clip_id": clip_id, "job_id": job_id}
 
     return {"status": "unknown_action", "action": action}
 
 
-async def _execute_auto_publish(job_id: str, clip_id: str) -> None:
+async def _execute_auto_publish(
+    job_id: str,
+    clip_id: str,
+    chat_id: int | str | None = None,
+    message_id: int | str | None = None,
+    has_caption: bool = False,
+    original_text: str = "",
+    bot_token: str | None = None,
+) -> dict[str, Any]:
     """Asynchronously publish the approved clip to YouTube and Instagram."""
+    if not bot_token or not chat_id:
+        cfg_token, cfg_chat, _ = get_telegram_config()
+        bot_token = bot_token or cfg_token
+        chat_id = chat_id or cfg_chat
+
+    if not original_text:
+        approval = store.get_clip_approval(clip_id)
+        if approval and approval.telemetry:
+            chat_id = chat_id or approval.telemetry.get("telegram_chat_id")
+            message_id = message_id or approval.telemetry.get("telegram_message_id")
+            has_caption = has_caption or bool(approval.telemetry.get("telegram_has_caption"))
+
+    async with _publishing_lock:
+        if clip_id in _publishing_in_progress:
+            log.warning("Publishing already in progress for clip %s. Skipping duplicate trigger.", clip_id)
+            return {"status": "already_in_progress", "clip_id": clip_id}
+        _publishing_in_progress.add(clip_id)
+
     log.info("Executing auto-publishing for approved clip %s (job %s)...", clip_id, job_id)
+    platforms_status: dict[str, str] = {
+        "YouTube Shorts": "⏳ Queued",
+        "Instagram Reels": "⏳ Queued",
+    }
+    results: dict[str, models.PublicationRecord | None] = {}
+
     try:
         service = PublishingService()
         orchestrator = PublishingOrchestrator(service=service)
 
-        # 1. Enqueue publication across enabled standard destinations
-        destinations = orchestrator.ensure_default_destinations()
-        queued_items = []
-        for d in destinations:
-            if d.enabled and d.platform in ("youtube", "instagram"):
-                try:
-                    item = orchestrator.enqueue_publication(
-                        job_id=job_id,
-                        clip_id=clip_id,
-                        destination_id=d.id,
-                    )
-                    queued_items.append(item)
-                except Exception as exc:
-                    log.warning("Could not enqueue clip %s to %s: %s", clip_id, d.display_name, exc)
+        # Enqueue in orchestrator for tracking/audit
+        try:
+            destinations = orchestrator.ensure_default_destinations()
+            for d in destinations:
+                if d.enabled and d.platform in ("youtube", "instagram"):
+                    try:
+                        orchestrator.enqueue_publication(
+                            job_id=job_id,
+                            clip_id=clip_id,
+                            destination_id=d.id,
+                        )
+                    except Exception as enc_exc:
+                        log.debug("Enqueue publication note for %s: %s", d.display_name, enc_exc)
+        except Exception as dest_exc:
+            log.warning("Could not ensure default destinations: %s", dest_exc)
 
-        # 2. Directly trigger publishing via PublishingService for immediate execution
-        results = await service.publish_clip_all_destinations(
-            job_id=job_id,
-            clip_id=clip_id,
-            platforms=["youtube", "instagram"],
-            dry_run=False,
-        )
-        log.info(
-            "Auto-publishing completed for clip %s: %d destination records updated.",
-            clip_id,
-            len(results),
-        )
-
-        # 3. Report granular platform results back to the operator on Telegram
-        bot_token, chat_id, _ = get_telegram_config()
-        if bot_token and chat_id and results:
-            lines = [f"📢 *Auto-Publish Results for Clip* `{clip_id}`:"]
-            for r in results:
-                status_icon = "✅ SUCCESS" if r.status == "published" else "❌ FAILED"
-                p_name = r.platform.upper()
-                if r.status == "published":
-                    post_link = f" - [View Post]({r.published_url})" if r.published_url else ""
-                    lines.append(f"• *{p_name}*: {status_icon}{post_link}")
-                else:
-                    err_msg = (r.error_message or "Unknown error")[:120]
-                    lines.append(f"• *{p_name}*: {status_icon} (`{err_msg}`)")
-            report_text = "\n".join(lines)
-            try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    await client.post(
-                        f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage",
-                        json={"chat_id": chat_id, "text": report_text, "parse_mode": "Markdown"},
-                    )
-            except Exception as notify_exc:
-                log.warning("Could not send Telegram publish report: %s", notify_exc)
-
-    except Exception as exc:
-        log.exception("Auto-publishing failed for approved clip %s: %s", clip_id, exc)
-
-
-async def _answer_callback_query(
-    bot_token: str, callback_query_id: str, text: str, show_alert: bool = False
-) -> None:
-    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/answerCallbackQuery"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                url,
-                json={"callback_query_id": callback_query_id, "text": text, "show_alert": show_alert},
+        # -------------------------------------------------------------
+        # 1. Publish to YouTube Shorts
+        # -------------------------------------------------------------
+        platforms_status["YouTube Shorts"] = "⏳ Uploading..."
+        if bot_token and chat_id and message_id:
+            curr_text = _format_card_content(
+                original_text=original_text,
+                status_header="⏳ *APPROVED — Publishing in progress...*",
+                platforms_status=platforms_status,
+                has_caption=has_caption,
             )
-    except Exception as exc:
-        log.warning("Failed to answer callback query %s: %s", callback_query_id, exc)
+            await _safe_edit_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=curr_text,
+                has_caption=has_caption,
+                reply_markup={"inline_keyboard": [[{"text": "⏳ Uploading to YouTube...", "callback_data": "tg:busy"}]]},
+            )
+
+        try:
+            yt_rec = await service.publish_clip(
+                job_id=job_id,
+                clip_id=clip_id,
+                platform="youtube",
+                destination="dest-youtube-main",
+                dry_run=False,
+            )
+        except Exception as exc:
+            log.exception("Exception during YouTube publication for clip %s: %s", clip_id, exc)
+            recs = store.list_publications_for_clip(clip_id)
+            yt_candidates = [r for r in recs if r.platform.lower() == "youtube"]
+            if yt_candidates:
+                yt_rec = yt_candidates[0]
+            else:
+                yt_rec = models.PublicationRecord(
+                    id=models.new_id(),
+                    job_id=job_id,
+                    clip_id=clip_id,
+                    platform="youtube",
+                    destination_id="dest-youtube-main",
+                    status="FAILED_PERMANENT",
+                    error_code="execution_error",
+                    error_message=str(exc),
+                )
+        results["youtube"] = yt_rec
+
+        if yt_rec and yt_rec.status == "PUBLISHED":
+            platforms_status["YouTube Shorts"] = "✅ Published"
+        else:
+            err = (yt_rec.error_message if yt_rec else "Upload failed") or "Upload failed"
+            platforms_status["YouTube Shorts"] = f"❌ Failed ({_sanitize_error(err)[:50]})"
+
+        # -------------------------------------------------------------
+        # 2. Publish to Instagram Reels
+        # -------------------------------------------------------------
+        platforms_status["Instagram Reels"] = "⏳ Uploading..."
+        if bot_token and chat_id and message_id:
+            curr_text = _format_card_content(
+                original_text=original_text,
+                status_header="⏳ *APPROVED — Publishing in progress...*",
+                platforms_status=platforms_status,
+                has_caption=has_caption,
+            )
+            await _safe_edit_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=curr_text,
+                has_caption=has_caption,
+                reply_markup={"inline_keyboard": [[{"text": "⏳ Uploading to Instagram...", "callback_data": "tg:busy"}]]},
+            )
+
+        try:
+            ig_rec = await service.publish_clip(
+                job_id=job_id,
+                clip_id=clip_id,
+                platform="instagram",
+                destination="dest-instagram-main",
+                dry_run=False,
+            )
+        except Exception as exc:
+            log.exception("Exception during Instagram publication for clip %s: %s", clip_id, exc)
+            recs = store.list_publications_for_clip(clip_id)
+            ig_candidates = [r for r in recs if r.platform.lower() == "instagram"]
+            if ig_candidates:
+                ig_rec = ig_candidates[0]
+            else:
+                ig_rec = models.PublicationRecord(
+                    id=models.new_id(),
+                    job_id=job_id,
+                    clip_id=clip_id,
+                    platform="instagram",
+                    destination_id="dest-instagram-main",
+                    status="FAILED_PERMANENT",
+                    error_code="execution_error",
+                    error_message=str(exc),
+                )
+        results["instagram"] = ig_rec
+
+        if ig_rec and ig_rec.status == "PUBLISHED":
+            platforms_status["Instagram Reels"] = "✅ Published"
+        else:
+            err = (ig_rec.error_message if ig_rec else "Upload failed") or "Upload failed"
+            platforms_status["Instagram Reels"] = f"❌ Failed ({_sanitize_error(err)[:50]})"
+
+        # -------------------------------------------------------------
+        # 3. Compute Final Outcomes & Status
+        # -------------------------------------------------------------
+        yt_pub = results.get("youtube")
+        ig_pub = results.get("instagram")
+        yt_ok = bool(yt_pub and yt_pub.status == "PUBLISHED")
+        ig_ok = bool(ig_pub and ig_pub.status == "PUBLISHED")
+
+        if yt_ok and ig_ok:
+            final_badge = "✅ *CLIP PUBLISHED*"
+            button_label = "✅ Published"
+            overall_status = "PUBLISHED"
+        elif yt_ok or ig_ok:
+            final_badge = "⚠️ *PARTIALLY PUBLISHED*"
+            button_label = "⚠️ Partially Published"
+            overall_status = "PARTIALLY_PUBLISHED"
+        else:
+            final_badge = "❌ *PUBLISHING FAILED*"
+            button_label = "❌ Publishing Failed"
+            overall_status = "PUBLISH_FAILED"
+
+        # Update card permanently
+        if bot_token and chat_id and message_id:
+            final_card_text = _format_card_content(
+                original_text=original_text,
+                status_header=final_badge,
+                platforms_status=platforms_status,
+                has_caption=has_caption,
+            )
+            await _safe_edit_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=final_card_text,
+                has_caption=has_caption,
+                reply_markup={"inline_keyboard": [[{"text": button_label, "callback_data": "tg:done"}]]},
+            )
+
+        # Send follow-up confirmation message
+        if bot_token and chat_id:
+            if yt_ok and ig_ok:
+                yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
+                ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
+                followup_lines = [
+                    "🎉 *Clip Successfully Published!*",
+                    "",
+                    f"🎬 *Clip ID:* `{clip_id}`",
+                    f"📺 *YouTube Shorts:* [Watch on YouTube]({yt_url})" if yt_url else "📺 *YouTube Shorts:* ✅ Published",
+                    f"📸 *Instagram Reels:* [Watch on Instagram]({ig_url})" if ig_url else "📸 *Instagram Reels:* ✅ Published",
+                ]
+            elif yt_ok or ig_ok:
+                followup_lines = [
+                    "⚠️ *Clip Partially Published*",
+                    "",
+                    f"🎬 *Clip ID:* `{clip_id}`",
+                ]
+                if yt_ok:
+                    yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
+                    followup_lines.append(f"• *YouTube Shorts:* ✅ [Watch on YouTube]({yt_url})" if yt_url else "• *YouTube Shorts:* ✅ Published")
+                else:
+                    yt_err = _sanitize_error(yt_pub.error_message if yt_pub else "Upload failed")
+                    followup_lines.append(f"• *YouTube Shorts:* ❌ `{yt_err}`")
+
+                if ig_ok:
+                    ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
+                    followup_lines.append(f"• *Instagram Reels:* ✅ [Watch on Instagram]({ig_url})" if ig_url else "• *Instagram Reels:* ✅ Published")
+                else:
+                    ig_err = _sanitize_error(ig_pub.error_message if ig_pub else "Upload failed")
+                    followup_lines.append(f"• *Instagram Reels:* ❌ `{ig_err}`")
+            else:
+                yt_err = _sanitize_error(yt_pub.error_message if yt_pub else "Upload failed")
+                ig_err = _sanitize_error(ig_pub.error_message if ig_pub else "Upload failed")
+                followup_lines = [
+                    "❌ *Clip Publishing Failed*",
+                    "",
+                    f"🎬 *Clip ID:* `{clip_id}`",
+                    f"• *YouTube Shorts:* ❌ `{yt_err}`",
+                    f"• *Instagram Reels:* ❌ `{ig_err}`",
+                    "",
+                    "Please verify platform credentials and media accessibility in Settings.",
+                ]
+
+            await _safe_send_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                text="\n".join(followup_lines),
+                reply_to_message_id=message_id,
+            )
+
+        # Update approval audit & telemetry in DB
+        try:
+            approval = store.get_clip_approval(clip_id)
+            if approval:
+                approval.telemetry["publishing_result"] = overall_status
+                approval.telemetry["publishing_completed_at"] = models.utcnow()
+                approval.history.append({
+                    "from_status": approval.current_status,
+                    "to_status": approval.current_status,
+                    "operator_action": "AUTO_PUBLISH_RESULT",
+                    "operator_note": f"Publish outcome: {overall_status} (YT={yt_ok}, IG={ig_ok})",
+                    "actor": "system:auto_publish",
+                    "version": approval.version,
+                    "timestamp": models.utcnow(),
+                })
+                approval.updated_at = models.utcnow()
+                store.update_clip_approval(approval)
+        except Exception as db_exc:
+            log.warning("Could not update approval telemetry: %s", db_exc)
+
+        return {"status": overall_status.lower(), "clip_id": clip_id, "results": results}
+
+    except Exception as fatal_exc:
+        log.exception("Fatal unhandled exception in auto-publish for clip %s: %s", clip_id, fatal_exc)
+        sanitized_fatal = _sanitize_error(str(fatal_exc))
+        if bot_token and chat_id:
+            if message_id:
+                await _safe_edit_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=f"{original_text}\n\n━━━━━━━━━━━━━━━━━━━━\n❌ *PUBLISHING FAILED*\n\nError: `{sanitized_fatal}`"[:1020 if has_caption else 4000],
+                    has_caption=has_caption,
+                    reply_markup={"inline_keyboard": [[{"text": "❌ Publishing Failed", "callback_data": "tg:done"}]]},
+                )
+            await _safe_send_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                text=f"❌ *Auto-Publish Error for Clip* `{clip_id}`:\n\n`{sanitized_fatal}`\n\nPlease check server logs.",
+                reply_to_message_id=message_id,
+            )
+        return {"status": "error", "error": str(fatal_exc), "clip_id": clip_id}
+
+    finally:
+        async with _publishing_lock:
+            _publishing_in_progress.discard(clip_id)
 
 
 async def _update_telegram_message_status(
@@ -520,22 +983,14 @@ async def _update_telegram_message_status(
     status_text: str,
     button_text: str,
 ) -> None:
-    updated_text = f"{original_text}\n\n{status_text}"
+    """Helper to update a message status and replace buttons with a static disabled button."""
+    updated_text = f"{original_text}\n\n━━━━━━━━━━━━━━━━━━━━\n{status_text}"
     markup = {"inline_keyboard": [[{"text": button_text, "callback_data": "tg:done"}]]}
-
-    method = "editMessageCaption" if has_caption else "editMessageText"
-    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/{method}"
-    field_name = "caption" if has_caption else "text"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            data = {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                field_name: updated_text[:1024 if has_caption else 4096],
-                "parse_mode": "Markdown",
-                "reply_markup": markup,
-            }
-            await client.post(url, json=data)
-    except Exception as exc:
-        log.warning("Failed to update message %s status: %s", message_id, exc)
+    await _safe_edit_telegram_message(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        message_id=message_id,
+        text=updated_text,
+        has_caption=has_caption,
+        reply_markup=markup,
+    )
