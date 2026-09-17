@@ -482,11 +482,17 @@ class PreRenderQualityGate:
 
         # 5. CTA Compliance Check
         cta_required = False
-        if self.campaign_spec and getattr(self.campaign_spec, "cta", None):
-            cta_item = self.campaign_spec.cta
-            cta_required = bool(cta_item.value) and getattr(cta_item, "is_explicit", False)
-        elif self.campaign_brief and getattr(self.campaign_brief, "call_to_action", None):
-            cta_required = True
+        if self.campaign_spec:
+            cta_item = getattr(self.campaign_spec, "cta_required", None) or getattr(self.campaign_spec, "cta", None)
+            if cta_item is not None:
+                val = getattr(cta_item, "value", cta_item)
+                conf = getattr(cta_item, "confidence", "")
+                cta_required = bool(val) and (conf == "explicit" or getattr(cta_item, "is_explicit", False))
+        elif self.campaign_brief:
+            cta_required = bool(
+                getattr(self.campaign_brief, "cta_required", False)
+                or getattr(self.campaign_brief, "call_to_action", False)
+            )
 
         if cta_required:
             if not optimization.cta_type:
@@ -529,7 +535,10 @@ class PreRenderQualityGate:
                 if val:
                     banned_terms.append(str(val).lower())
         elif self.campaign_brief:
-            banned_terms.extend([w.lower() for w in self.campaign_brief.banned_keywords])
+            banned_words = getattr(self.campaign_brief, "banned_words", None) or getattr(self.campaign_brief, "banned_keywords", None) or []
+            banned_topics = getattr(self.campaign_brief, "banned_topics", None) or []
+            banned_terms.extend([str(w).lower() for w in banned_words if w])
+            banned_terms.extend([str(w).lower() for w in banned_topics if w])
 
         for banned in banned_terms:
             if not banned:
@@ -643,10 +652,17 @@ class ClipAssemblyEngine:
             default_max=60.0,
         )
         require_cta = False
-        if self.campaign_spec and getattr(self.campaign_spec, "cta", None):
-            require_cta = bool(self.campaign_spec.cta.value) and getattr(self.campaign_spec.cta, "is_explicit", False)
+        if self.campaign_spec:
+            cta_item = getattr(self.campaign_spec, "cta_required", None) or getattr(self.campaign_spec, "cta", None)
+            if cta_item is not None:
+                val = getattr(cta_item, "value", cta_item)
+                conf = getattr(cta_item, "confidence", "")
+                require_cta = bool(val) and (conf == "explicit" or getattr(cta_item, "is_explicit", False))
         elif self.campaign_brief:
-            require_cta = bool(self.campaign_brief.call_to_action)
+            require_cta = bool(
+                getattr(self.campaign_brief, "cta_required", False)
+                or getattr(self.campaign_brief, "call_to_action", False)
+            )
 
         all_specs: list[ClipSpecificationRecord] = []
         approved_specs: list[ClipSpecificationRecord] = []
