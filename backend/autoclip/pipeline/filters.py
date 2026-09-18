@@ -156,6 +156,12 @@ _FILTER_INDEX["none"] = _FILTER_INDEX["original"]
 _FILTER_INDEX["default"] = _FILTER_INDEX["original"]
 _FILTER_INDEX["bw"] = _FILTER_INDEX["black_and_white"]
 _FILTER_INDEX["b&w"] = _FILTER_INDEX["black_and_white"]
+_FILTER_INDEX["black_&_white"] = _FILTER_INDEX["black_and_white"]
+
+
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def list_filters() -> list[VisualFilter]:
@@ -163,9 +169,23 @@ def list_filters() -> list[VisualFilter]:
     return list(FILTERS)
 
 
+def is_valid_filter(filter_id: str | None) -> bool:
+    """Return True if the filter_id maps to a recognized visual filter."""
+    if not filter_id:
+        return True
+    normalized = str(filter_id).strip().lower().replace(" ", "_").replace("-", "_")
+    return normalized in _FILTER_INDEX or normalized.replace("_&_", "_and_") in _FILTER_INDEX
+
+
 def get_filter(filter_id: str | None) -> VisualFilter:
     """Retrieve visual filter by ID, defaulting safely to Original."""
     if not filter_id:
         return _FILTER_INDEX["original"]
     normalized = str(filter_id).strip().lower().replace(" ", "_").replace("-", "_")
-    return _FILTER_INDEX.get(normalized, _FILTER_INDEX["original"])
+    if normalized in _FILTER_INDEX:
+        return _FILTER_INDEX[normalized]
+    alt = normalized.replace("_&_", "_and_")
+    if alt in _FILTER_INDEX:
+        return _FILTER_INDEX[alt]
+    log.warning("Unknown visual filter '%s'; falling back to 'original'.", filter_id)
+    return _FILTER_INDEX["original"]

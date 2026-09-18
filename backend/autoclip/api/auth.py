@@ -31,6 +31,7 @@ PUBLIC_PREFIXES = (
     "/openapi.json",
     "/assets",
     "/api/telegram/webhook",
+    "/telegram/webhook",
 )
 
 

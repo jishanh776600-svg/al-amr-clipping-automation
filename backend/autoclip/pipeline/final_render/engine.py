@@ -74,6 +74,7 @@ class FinalRenderEngine:
                 expected_bgm_asset_id=bgm_asset_id,
                 min_duration_s=min_duration_s,
                 max_duration_s=max_duration_s,
+                expected_visual_filter=visual_filter,
             )
             if existing_gate.is_approved:
                 log.info("Clip %s output already exists and passes quality gate at %s; reusing.", clip.id, final_mp4_path)
@@ -92,6 +93,7 @@ class FinalRenderEngine:
                     video_codec=existing_gate.video_metrics.get("video_codec", "h264"),
                     audio_codec=existing_gate.audio_metrics.get("audio_codec", "aac"),
                     caption_style=caption_style_key,
+                    visual_filter=visual_filter,
                     bgm_asset_id=bgm_asset_id,
                     bgm_asset_name=bgm_asset_name,
                     quality_score=existing_gate.quality_score,
@@ -205,6 +207,7 @@ class FinalRenderEngine:
             expected_bgm_asset_id=bgm_asset_id,
             min_duration_s=min_duration_s,
             max_duration_s=max_duration_s,
+            expected_visual_filter=visual_filter,
         )
 
         elapsed_s = round(time.time() - start_time, 3)
@@ -253,6 +256,7 @@ class FinalRenderEngine:
             video_codec=gate_res.video_metrics.get("video_codec", "h264"),
             audio_codec=gate_res.audio_metrics.get("audio_codec", "aac"),
             caption_style=caption_style_key,
+            visual_filter=visual_filter,
             bgm_asset_id=bgm_asset_id,
             bgm_asset_name=bgm_asset_name,
             quality_score=gate_res.quality_score,

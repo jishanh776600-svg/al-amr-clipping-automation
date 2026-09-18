@@ -91,7 +91,7 @@ def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str
         if not chat_id:
             chat_id = str(job_settings.get("telegram_chat_id") or (job_settings.get("telegram") or {}).get("chat_id") or "").strip()
 
-    if not bot_token or not chat_id:
+    if not bot_token or not chat_id or not allowed_ids:
         try:
             from ..security.vault import get_vault
             vault = get_vault()
@@ -103,6 +103,10 @@ def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str
                 v_cid = vault.retrieve_secret("telegram_chat_id") or vault.retrieve_secret("TELEGRAM_CHAT_ID")
                 if v_cid:
                     chat_id = v_cid.strip()
+            if not allowed_ids:
+                v_uids = vault.retrieve_secret("telegram_allowed_user_ids") or vault.retrieve_secret("TELEGRAM_ALLOWED_USER_IDS")
+                if v_uids:
+                    allowed_ids = [uid.strip() for uid in v_uids.split(",") if uid.strip()]
         except Exception:
             pass
 
@@ -114,11 +118,22 @@ def is_telegram_configured(job_settings: dict[str, Any] | None = None) -> bool:
     return bool(token and chat_id)
 
 
-def is_user_authorized(from_id: str | int, allowed_ids: list[str]) -> bool:
-    """Validate whether the user is authorized to perform approval actions."""
+def is_user_authorized(from_id: str | int | None, allowed_ids: list[str], username: str | None = None) -> bool:
+    """Validate whether the user is authorized to perform approval actions.
+
+    Supports numeric user IDs as well as Telegram usernames (with or without '@').
+    """
     if not allowed_ids:
         return True
-    return str(from_id) in allowed_ids
+    fid = str(from_id).strip() if from_id is not None else ""
+    u_norm = (username or "").strip().lstrip("@").lower()
+    for allowed in allowed_ids:
+        a_clean = allowed.strip()
+        if fid and a_clean == fid:
+            return True
+        if u_norm and a_clean.lstrip("@").lower() == u_norm:
+            return True
+    return False
 
 
 async def _safe_edit_telegram_message(
@@ -485,18 +500,23 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         return {"status": "ignored", "message": "No callback_query in update"}
 
     cb_id = callback_query.get("id") or ""
-    from_user = callback_query.get("from", {})
+    from_user = callback_query.get("from") or {}
     user_id = from_user.get("id")
-    username = from_user.get("username", "") or str(user_id)
+    raw_username = from_user.get("username", "")
+    username = raw_username or str(user_id)
     cb_data = callback_query.get("data", "")
-    message = callback_query.get("message", {})
+    message = callback_query.get("message") or {}
     message_id = message.get("message_id")
-    chat_id = message.get("chat", {}).get("id") or os.getenv("TELEGRAM_CHAT_ID") or ""
+    chat_id = (
+        (message.get("chat") or {}).get("id")
+        if isinstance(message.get("chat"), dict)
+        else (os.getenv("TELEGRAM_CHAT_ID") or "")
+    )
     has_caption = bool(message.get("caption"))
     original_text = message.get("caption") or message.get("text") or ""
 
     # 1. Operator Authorization Check
-    if not is_user_authorized(user_id, allowed_ids):
+    if not is_user_authorized(user_id, allowed_ids, raw_username):
         log.warning("Unauthorized operator attempt from user %s (id=%s)", username, user_id)
         await _answer_callback_query(
             bot_token,
@@ -529,14 +549,14 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
     clip_id = parts[2]
 
     clip = store.get_clip(clip_id)
-    if not clip:
+    approval = store.get_clip_approval(clip_id)
+    if not clip and not approval:
         await _answer_callback_query(bot_token, cb_id, text=f"Clip {clip_id} not found.", show_alert=True)
         return {"status": "not_found", "clip_id": clip_id}
 
-    job_id = clip.job_id
+    job_id = clip.job_id if clip else (approval.job_id if approval else "")
     actor = f"telegram:@{username}" if username else f"telegram:{user_id}"
 
-    approval = store.get_clip_approval(clip_id)
     if not approval:
         approval = models.ClipApprovalRecord(
             id=models.new_id(),
@@ -576,6 +596,21 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
                 show_alert=False,
             )
             return {"status": "already_published", "clip_id": clip_id, "job_id": job_id}
+
+        # Campaign Mandatory Compliance Gate: Block publishing if mandatory rules failed
+        clip_meta = store.get_clip_metadata(clip_id)
+        if clip_meta and clip_meta.telemetry:
+            comp_data = clip_meta.telemetry.get("campaign_compliance")
+            if comp_data and comp_data.get("passed") is False:
+                violations = comp_data.get("violations", [])
+                v_text = ", ".join(violations[:2]) if violations else "Mandatory requirements not met"
+                await _answer_callback_query(
+                    bot_token,
+                    cb_id,
+                    text=f"❌ Cannot publish: Campaign compliance failed ({v_text}).",
+                    show_alert=True,
+                )
+                return {"status": "compliance_failed", "clip_id": clip_id, "violations": violations}
 
         # Immediate callback query acknowledgment to stop Telegram client spinner instantly
         await _answer_callback_query(
@@ -1056,3 +1091,63 @@ async def _update_telegram_message_status(
         has_caption=has_caption,
         reply_markup=markup,
     )
+
+
+async def poll_telegram_updates(
+    bot_token: str | None = None,
+    poll_timeout_s: int = 30,
+    stop_event: asyncio.Event | None = None,
+) -> None:
+    """Continuously poll Telegram getUpdates for interactive callbacks.
+
+    Enables full Telegram approval workflows in environments where incoming webhooks
+    cannot reach the server (e.g. local development or strict firewall egress).
+    """
+    if not bot_token:
+        bot_token, _, _ = get_telegram_config()
+    if not bot_token:
+        log.warning("Cannot start Telegram polling: TELEGRAM_BOT_TOKEN not configured.")
+        return
+
+    offset = 0
+    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/getUpdates"
+    log.info("Starting Telegram Bot API interactive update polling loop...")
+
+    async with httpx.AsyncClient(timeout=float(poll_timeout_s + 10)) as client:
+        while stop_event is None or not stop_event.is_set():
+            try:
+                params: dict[str, Any] = {
+                    "offset": offset,
+                    "timeout": poll_timeout_s,
+                    "allowed_updates": ["callback_query", "message"],
+                }
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        updates = data.get("result", [])
+                        for upd in updates:
+                            offset = max(offset, upd.get("update_id", 0) + 1)
+                            try:
+                                await handle_telegram_update(upd)
+                            except Exception as upd_err:
+                                log.error(
+                                    "Error processing Telegram update %s: %s",
+                                    upd.get("update_id"),
+                                    upd_err,
+                                )
+                elif resp.status_code in (401, 404):
+                    log.error("Telegram polling stopped with HTTP %s: Invalid bot token.", resp.status_code)
+                    break
+                else:
+                    await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log.warning("Exception in Telegram polling loop: %s", exc)
+                await asyncio.sleep(5.0)
+
+
+# Canonical alias for webhook handling
+handle_telegram_webhook_payload = handle_telegram_update
+

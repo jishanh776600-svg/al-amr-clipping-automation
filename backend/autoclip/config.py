@@ -94,7 +94,9 @@ class IngestSettings(BaseModel):
 
 class ExportSettings(BaseModel):
     ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
-    caption_style: str = "bold_pop"
+    caption_style: str = "classic_professional"
+    visual_filter: str = "original"
+    bgm_asset_id: str = ""
     #: Integrated loudness target in LUFS. -14 is the de-facto platform standard.
     loudness_lufs: float = -14.0
     #: Use h264_nvenc when the hardware supports it. Falls back to libx264.

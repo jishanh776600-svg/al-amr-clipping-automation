@@ -42,15 +42,57 @@ export function Ingest() {
 
   // Caption / Subtitle Style Selection (25 Options)
   const [captionStylesList, setCaptionStylesList] = useState<CaptionStyleItem[]>([])
-  const [captionStyle, setCaptionStyle] = useState<string>('classic_professional')
+  const [captionStyle, setCaptionStyle] = useState<string>(() => {
+    try {
+      return localStorage.getItem('alamr_caption_style') || 'classic_professional'
+    } catch {
+      return 'classic_professional'
+    }
+  })
 
   // Visual Filter Selection (20+ Options)
   const [visualFiltersList, setVisualFiltersList] = useState<VisualFilter[]>([])
-  const [visualFilter, setVisualFilter] = useState<string>('original')
+  const [visualFilter, setVisualFilter] = useState<string>(() => {
+    try {
+      return localStorage.getItem('alamr_visual_filter') || 'original'
+    } catch {
+      return 'original'
+    }
+  })
 
   // Step 20: BGM Vault & Campaign Background Music (Step 20 Operator Choice)
   const [bgmAssets, setBgmAssets] = useState<BGMAsset[]>([])
-  const [selectedBgmId, setSelectedBgmId] = useState<string>('')
+  const [selectedBgmId, setSelectedBgmId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('alamr_selected_bgm_id') || ''
+    } catch {
+      return ''
+    }
+  })
+
+  const updateCaptionStyle = (newStyle: string) => {
+    setCaptionStyle(newStyle)
+    try {
+      localStorage.setItem('alamr_caption_style', newStyle)
+    } catch {}
+    api.putSettings({ export: { caption_style: newStyle } as any }).catch(() => undefined)
+  }
+
+  const updateVisualFilter = (newFilter: string) => {
+    setVisualFilter(newFilter)
+    try {
+      localStorage.setItem('alamr_visual_filter', newFilter)
+    } catch {}
+    api.putSettings({ export: { visual_filter: newFilter } as any }).catch(() => undefined)
+  }
+
+  const updateSelectedBgmId = (newBgmId: string) => {
+    setSelectedBgmId(newBgmId)
+    try {
+      localStorage.setItem('alamr_selected_bgm_id', newBgmId)
+    } catch {}
+    api.putSettings({ export: { bgm_asset_id: newBgmId } as any }).catch(() => undefined)
+  }
   const [bgmVaultOpen, setBgmVaultOpen] = useState(false)
   const [bgmUploading, setBgmUploading] = useState(false)
   const [bgmUploadFile, setBgmUploadFile] = useState<File | null>(null)
@@ -75,6 +117,22 @@ export function Ingest() {
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
     api.providerStatus().then(setProviders).catch(() => undefined)
+    api.getSettings().then((s) => {
+      if (s?.export) {
+        if (s.export.caption_style) {
+          const cached = localStorage.getItem('alamr_caption_style')
+          if (!cached) setCaptionStyle(s.export.caption_style)
+        }
+        if (s.export.visual_filter) {
+          const cached = localStorage.getItem('alamr_visual_filter')
+          if (!cached) setVisualFilter(s.export.visual_filter)
+        }
+        if (s.export.bgm_asset_id !== undefined) {
+          const cached = localStorage.getItem('alamr_selected_bgm_id')
+          if (cached === null) setSelectedBgmId(s.export.bgm_asset_id)
+        }
+      }
+    }).catch(() => undefined)
     api.listCaptionStyles().then((list) => {
       if (list && list.length > 0) setCaptionStylesList(list)
     }).catch(() => undefined)
@@ -84,7 +142,7 @@ export function Ingest() {
     api.listBGMAssets().then((list) => {
       setBgmAssets(list)
       setSelectedBgmId((current) => {
-        if (!current) return ''
+        if (!current || current === 'none') return current
         const exists = list.some((a) => a.id === current && a.enabled)
         return exists ? current : ''
       })
@@ -197,7 +255,7 @@ export function Ingest() {
       const list = await api.listBGMAssets()
       setBgmAssets(list)
       setSelectedBgmId((prev) => {
-        if (!prev) return ''
+        if (!prev || prev === 'none') return prev
         const exists = list.some((a) => a.id === prev && a.enabled)
         return exists ? prev : ''
       })
@@ -227,7 +285,7 @@ export function Ingest() {
       setBgmUploadTags('')
       if (bgmFileInputRef.current) bgmFileInputRef.current.value = ''
       await refreshBgmAssets()
-      setSelectedBgmId(created.id)
+      updateSelectedBgmId(created.id)
     } catch (err) {
       setError(err as Error)
     } finally {
@@ -240,12 +298,12 @@ export function Ingest() {
       await api.updateBGMAsset(asset.id, { enabled: !asset.enabled })
       await refreshBgmAssets()
       if (asset.enabled && selectedBgmId === asset.id) {
-        setSelectedBgmId('')
+        updateSelectedBgmId('')
       }
     } catch (err: any) {
       if (err?.status === 404 || err?.message?.includes('not found')) {
         await refreshBgmAssets()
-        if (selectedBgmId === asset.id) setSelectedBgmId('')
+        if (selectedBgmId === asset.id) updateSelectedBgmId('')
         setError(null)
       } else {
         setError(err as Error)
@@ -257,12 +315,12 @@ export function Ingest() {
     if (!window.confirm('Delete this BGM track from vault?')) return
     try {
       await api.deleteBGMAsset(id)
-      if (selectedBgmId === id) setSelectedBgmId('')
+      if (selectedBgmId === id) updateSelectedBgmId('')
       await refreshBgmAssets()
     } catch (err: any) {
       if (err?.status === 404 || err?.message?.includes('not found')) {
         await refreshBgmAssets()
-        if (selectedBgmId === id) setSelectedBgmId('')
+        if (selectedBgmId === id) updateSelectedBgmId('')
         setError(null)
       } else {
         setError(err as Error)
@@ -859,7 +917,7 @@ export function Ingest() {
             <label className="text-xs text-ink-300 font-medium whitespace-nowrap">Preset:</label>
             <select
               value={captionStyle}
-              onChange={(e) => setCaptionStyle(e.target.value)}
+              onChange={(e) => updateCaptionStyle(e.target.value)}
               className="bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-2.5 py-1.5 focus:border-sodium-500"
             >
               {(captionStylesList.length > 0 ? captionStylesList : [
@@ -906,7 +964,7 @@ export function Ingest() {
           ].map((item) => (
             <div
               key={item.key}
-              onClick={() => setCaptionStyle(item.key)}
+              onClick={() => updateCaptionStyle(item.key)}
               className={`p-3 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                 captionStyle === item.key
                   ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
@@ -952,7 +1010,7 @@ export function Ingest() {
             <label className="text-xs text-ink-300 font-medium whitespace-nowrap">Filter:</label>
             <select
               value={visualFilter}
-              onChange={(e) => setVisualFilter(e.target.value)}
+              onChange={(e) => updateVisualFilter(e.target.value)}
               className="bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-2.5 py-1.5 focus:border-sodium-500"
             >
               {(visualFiltersList.length > 0 ? visualFiltersList : [
@@ -994,7 +1052,7 @@ export function Ingest() {
           ].map((item) => (
             <div
               key={item.id}
-              onClick={() => setVisualFilter(item.id)}
+              onClick={() => updateVisualFilter(item.id)}
               className={`p-3 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                 visualFilter === item.id
                   ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
@@ -1071,7 +1129,7 @@ export function Ingest() {
                     name="bgm_selection"
                     value=""
                     checked={selectedBgmId === ''}
-                    onChange={() => setSelectedBgmId('')}
+                    onChange={() => updateSelectedBgmId('')}
                     className="text-sodium-500 focus:ring-sodium-500"
                   />
                   <span className="font-semibold text-sm text-ink-100">Default BGM</span>
@@ -1105,7 +1163,7 @@ export function Ingest() {
                     name="bgm_selection"
                     value="none"
                     checked={selectedBgmId === 'none'}
-                    onChange={() => setSelectedBgmId('none')}
+                    onChange={() => updateSelectedBgmId('none')}
                     className="text-sodium-500 focus:ring-sodium-500"
                   />
                   <span className="font-semibold text-sm text-ink-100">No BGM</span>
@@ -1143,7 +1201,7 @@ export function Ingest() {
                         name="bgm_selection"
                         value={asset.id}
                         checked={selectedBgmId === asset.id}
-                        onChange={() => setSelectedBgmId(asset.id)}
+                        onChange={() => updateSelectedBgmId(asset.id)}
                         className="text-sodium-500 focus:ring-sodium-500"
                       />
                       <span className="font-semibold text-sm text-ink-100 truncate" title={asset.name}>

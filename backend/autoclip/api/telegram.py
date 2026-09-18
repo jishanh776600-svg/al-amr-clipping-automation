@@ -12,16 +12,29 @@ from ..telegram.review_bot import handle_telegram_update
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/telegram", tags=["telegram"])
+router = APIRouter(tags=["telegram"])
 
 
-@router.post("/webhook")
+@router.post("/api/telegram/webhook")
+@router.post("/telegram/webhook")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Receive live interactive approval callbacks from Telegram Bot API."""
     expected_secret = (os.getenv("TELEGRAM_WEBHOOK_SECRET") or "").strip()
+    if not expected_secret:
+        try:
+            from ..security.vault import get_vault
+            v_sec = (
+                get_vault().retrieve_secret("telegram_webhook_secret")
+                or get_vault().retrieve_secret("TELEGRAM_WEBHOOK_SECRET")
+            )
+            if v_sec:
+                expected_secret = v_sec.strip()
+        except Exception:
+            pass
+
     if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
         raise HTTPException(status_code=403, detail="Invalid Telegram webhook secret token.")
 

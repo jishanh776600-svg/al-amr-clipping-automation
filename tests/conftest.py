@@ -59,7 +59,7 @@ class FakeKeyring:
         self.store.pop((service, key), None)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> FakeKeyring:
     """Replace the keyring backend with a working in-memory one."""
     kr = FakeKeyring()

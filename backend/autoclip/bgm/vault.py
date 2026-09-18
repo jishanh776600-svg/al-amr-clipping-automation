@@ -75,6 +75,26 @@ class BGMVault:
                 enabled=True,
             )
             store.create_bgm_asset(record)
+
+            # Persist metadata sidecar JSON alongside the audio file for persistent continuity
+            sidecar_path = self.base_dir / f"{asset_id}.json"
+            try:
+                import json
+                sidecar_data = {
+                    "id": asset_id,
+                    "name": title,
+                    "original_filename": filename,
+                    "genre": genre,
+                    "mood": mood,
+                    "tags": tags,
+                    "mime_type": mime,
+                    "duration_s": duration_s,
+                    "file_size_bytes": file_size,
+                }
+                sidecar_path.write_text(json.dumps(sidecar_data, indent=2), encoding="utf-8")
+            except Exception as exc:
+                log.warning("Could not write sidecar metadata for %s: %s", asset_id, exc)
+
             log.info("Registered BGM asset %s ('%s', %.1fs) in vault", asset_id, title, duration_s)
             return record
 
@@ -82,6 +102,12 @@ class BGMVault:
             if dest_path.exists():
                 try:
                     dest_path.unlink()
+                except OSError:
+                    pass
+            sidecar_err = self.base_dir / f"{asset_id}.json"
+            if sidecar_err.exists():
+                try:
+                    sidecar_err.unlink()
                 except OSError:
                     pass
             raise
@@ -97,7 +123,7 @@ class BGMVault:
         # 0. Seed bundled canonical assets into vault directory if missing
         if BUNDLED_ASSETS_DIR.exists():
             for p in BUNDLED_ASSETS_DIR.iterdir():
-                if p.is_file() and p.suffix.lower() in self.SUPPORTED_EXTENSIONS:
+                if p.is_file() and (p.suffix.lower() in self.SUPPORTED_EXTENSIONS or p.suffix.lower() == ".json"):
                     dest = self.base_dir / p.name
                     if not dest.exists():
                         try:
@@ -121,12 +147,38 @@ class BGMVault:
                     continue
 
                 asset_id = p.stem
+                sidecar = self.base_dir / f"{asset_id}.json"
+                sidecar_meta: dict[str, Any] = {}
+                if sidecar.is_file():
+                    try:
+                        import json
+                        sidecar_meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                    except Exception:
+                        sidecar_meta = {}
+
+                if sidecar_meta.get("id"):
+                    asset_id = str(sidecar_meta["id"])
+
                 if asset_id in existing_assets or p.resolve() in existing_paths:
+                    # Self-heal: If existing record name is corrupted (matches raw UUID/filename) but sidecar has real name, heal it
+                    if sidecar_meta.get("name"):
+                        rec = existing_assets.get(asset_id)
+                        if rec and (rec.name == p.stem or rec.name == p.name or rec.name == asset_id):
+                            store.update_bgm_asset(
+                                asset_id,
+                                name=sidecar_meta["name"],
+                                genre=sidecar_meta.get("genre") or rec.genre,
+                                mood=sidecar_meta.get("mood") or rec.mood,
+                                tags=sidecar_meta.get("tags") or rec.tags,
+                            )
                     continue
 
                 try:
                     media_info = validate_audio_stream(p)
-                    title = infer_title(None, p.name)
+                    title = sidecar_meta.get("name") or infer_title(None, p.name)
+                    genre = clean_text(sidecar_meta.get("genre", ""))
+                    mood = clean_text(sidecar_meta.get("mood", ""))
+                    tags = clean_tags(sidecar_meta.get("tags", []))
                     mime = get_mime_type(p)
                     file_size = p.stat().st_size
                     duration_s = round(media_info.duration_s, 2)
@@ -135,15 +187,30 @@ class BGMVault:
                         id=asset_id,
                         name=title,
                         file_path=str(p.resolve()),
-                        genre="",
-                        mood="",
-                        tags=[],
+                        genre=genre,
+                        mood=mood,
+                        tags=tags,
                         mime_type=mime,
                         duration_s=duration_s,
                         file_size_bytes=file_size,
                         enabled=True,
                     )
                     store.create_bgm_asset(record)
+                    # If sidecar was missing, generate it now
+                    if not sidecar.is_file():
+                        try:
+                            import json
+                            sidecar_data = {
+                                "id": asset_id,
+                                "name": title,
+                                "original_filename": p.name,
+                                "genre": genre,
+                                "mood": mood,
+                                "tags": tags,
+                            }
+                            sidecar.write_text(json.dumps(sidecar_data, indent=2), encoding="utf-8")
+                        except Exception:
+                            pass
                     existing_assets[asset_id] = record
                     reconciled.append(record)
                     log.info(
@@ -168,19 +235,84 @@ class BGMVault:
         return store.list_bgm_assets(enabled_only=enabled_only, genre=genre)
 
     def get_asset(self, asset_id: str) -> BGMAssetRecord | None:
-        """Fetch an asset by its unique identifier, reconciling from disk on-demand if missing in DB."""
+        """Fetch an asset by its unique identifier or name, reconciling from disk on-demand if missing in DB."""
+        if not asset_id:
+            return None
+
+        # 1. Try exact match by ID in DB
         asset = store.get_bgm_asset(asset_id)
         if asset is not None:
             return asset
 
-        # If not found in DB, check if the audio file exists on disk in persistent storage
+        # 2. Canonical alias mapping
+        target = asset_id.strip().lower()
+        canonical_map = {
+            "cinematic": "canonical_cinematic",
+            "lofi": "canonical_lofi",
+            "lo-fi": "canonical_lofi",
+            "rock": "canonical_upbeat",
+            "upbeat": "canonical_upbeat",
+            "podcast": "canonical_ambient",
+            "ambient": "canonical_ambient",
+            "motivation": "canonical_motivation",
+        }
+        mapped_id = canonical_map.get(target)
+        if mapped_id:
+            m = store.get_bgm_asset(mapped_id)
+            if m is not None:
+                return m
+
+        # 3. Check existing assets in DB by name or tags
+        all_assets = store.list_bgm_assets()
+        for a in all_assets:
+            if a.id.strip().lower() == target:
+                return a
+            if a.name.strip().lower() == target:
+                return a
+
+        # 4. Reconcile vault from disk so unindexed audio files are registered
+        self.reconcile_vault()
+
+        asset = store.get_bgm_asset(asset_id)
+        if asset is not None:
+            return asset
+
+        if mapped_id:
+            m = store.get_bgm_asset(mapped_id)
+            if m is not None:
+                return m
+
+        all_assets = store.list_bgm_assets()
+        for a in all_assets:
+            if a.id.strip().lower() == target:
+                return a
+            if a.name.strip().lower() == target:
+                return a
+            if target in a.name.strip().lower() or (a.genre and target in a.genre.strip().lower()):
+                return a
+            if a.tags and any(target in t.lower() for t in a.tags):
+                return a
+
+        # 5. If not found in DB, check if the audio file exists on disk in persistent storage
         if self.base_dir.exists():
             for ext in self.SUPPORTED_EXTENSIONS:
                 candidate = self.base_dir / f"{asset_id}{ext}"
                 if candidate.is_file():
                     try:
+                        sidecar = self.base_dir / f"{asset_id}.json"
+                        sidecar_meta: dict[str, Any] = {}
+                        if sidecar.is_file():
+                            try:
+                                import json
+                                sidecar_meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                            except Exception:
+                                pass
+
                         media_info = validate_audio_stream(candidate)
-                        title = infer_title(None, candidate.name)
+                        title = sidecar_meta.get("name") or infer_title(None, candidate.name)
+                        genre = clean_text(sidecar_meta.get("genre", ""))
+                        mood = clean_text(sidecar_meta.get("mood", ""))
+                        tags = clean_tags(sidecar_meta.get("tags", []))
                         mime = get_mime_type(candidate)
                         file_size = candidate.stat().st_size
                         duration_s = round(media_info.duration_s, 2)
@@ -189,9 +321,9 @@ class BGMVault:
                             id=asset_id,
                             name=title,
                             file_path=str(candidate.resolve()),
-                            genre="",
-                            mood="",
-                            tags=[],
+                            genre=genre,
+                            mood=mood,
+                            tags=tags,
                             mime_type=mime,
                             duration_s=duration_s,
                             file_size_bytes=file_size,
@@ -220,7 +352,7 @@ class BGMVault:
     ) -> BGMAssetRecord | None:
         """Update editable metadata or enabled status."""
         cleaned_tags = clean_tags(tags) if tags is not None else None
-        return store.update_bgm_asset(
+        res = store.update_bgm_asset(
             asset_id=asset_id,
             name=clean_text(name) if name is not None else None,
             genre=clean_text(genre) if genre is not None else None,
@@ -228,6 +360,24 @@ class BGMVault:
             tags=cleaned_tags,
             enabled=enabled,
         )
+        if res:
+            sidecar = self.base_dir / f"{asset_id}.json"
+            try:
+                import json
+                cur_data: dict[str, Any] = {}
+                if sidecar.is_file():
+                    cur_data = json.loads(sidecar.read_text(encoding="utf-8"))
+                cur_data.update({
+                    "id": res.id,
+                    "name": res.name,
+                    "genre": res.genre,
+                    "mood": res.mood,
+                    "tags": res.tags,
+                })
+                sidecar.write_text(json.dumps(cur_data, indent=2), encoding="utf-8")
+            except Exception as exc:
+                log.warning("Failed to update sidecar JSON for %s: %s", asset_id, exc)
+        return res
 
     def delete_asset(self, asset_id: str) -> bool:
         """Remove an asset from disk and delete its database record."""
@@ -254,6 +404,14 @@ class BGMVault:
                         except OSError as exc:
                             log.warning("Could not delete orphan audio file %s: %s", candidate, exc)
 
+        # Also remove sidecar JSON if it exists
+        sidecar = self.base_dir / f"{asset_id}.json"
+        if sidecar.exists():
+            try:
+                sidecar.unlink()
+            except OSError:
+                pass
+
         db_deleted = store.delete_bgm_asset(asset_id)
         return db_deleted or deleted_file
 
@@ -271,7 +429,7 @@ class BGMVault:
 
         if asset_id is not None:
             cleaned_id = str(asset_id).strip()
-            if cleaned_id.lower() in ("none", "null", "false", "no", "disabled", "__none__"):
+            if cleaned_id.lower() in ("none", "null", "false", "no", "off", "disabled", "__none__"):
                 return False, None, None
 
             if cleaned_id:

@@ -220,6 +220,7 @@ async def export_clip(clip_id: str, payload: ExportRequestIn) -> ExportOut:
         words=words,
         style=style,
         ratio=payload.ratio,
+        visual_filter=payload.visual_filter,
     )
 
     try:

@@ -588,9 +588,27 @@ def register_style(style: CaptionStyle) -> None:
     PRESETS[style.key] = style
 
 
+STYLE_ALIASES: dict[str, str] = {
+    "kinetic": "bold_pop",
+    "dynamic": "rich_dynamic",
+    "professional": "classic_professional",
+    "classic": "classic_professional",
+    "karaoke": "karaoke_fill",
+    "minimal": "clean_lower",
+    "luxury": "minimal_luxury",
+    "glitch": "cyber_glitch",
+    "neon": "neon_glow",
+    "editorial": "editorial_serif",
+    "arcade": "retro_arcade",
+    "podcast": "podcast_subtle",
+    "headline": "headline_impact",
+}
+
+
 def get_style(key: str) -> CaptionStyle:
     """Return style by key; raises ValueError if not found (strictly preserves API)."""
     norm = key.strip().lower().replace("-", "_").replace(" ", "_") if key else ""
+    norm = STYLE_ALIASES.get(norm, norm)
     style = PRESETS.get(norm)
     if style is None:
         raise ValueError(f"Unknown caption style {key!r}. Available: {', '.join(PRESETS)}")
@@ -602,6 +620,7 @@ def resolve_style(key: str | None) -> CaptionStyle:
     if not key:
         return CLASSIC_PROFESSIONAL
     norm = key.strip().lower().replace("-", "_").replace(" ", "_")
+    norm = STYLE_ALIASES.get(norm, norm)
     return PRESETS.get(norm, CLASSIC_PROFESSIONAL)
 
 
@@ -1122,13 +1141,15 @@ class CaptionEngine:
 
         except Exception as exc:
             log.error("Caption generation error for clip %s: %s", clip.id, exc)
+            fallback_used = True
+            fallback_reason = f"build_ass_failed: {str(exc)}"
             subs = pysubs2.SSAFile()
             subs.info["PlayResX"] = str(width)
             subs.info["PlayResY"] = str(height)
             gate_res = CaptionGateResult(
                 status="CAPTION_REJECT",
                 quality_score=0.0,
-                rejection_reasons=[f"build_ass_failed: {str(exc)}"],
+                rejection_reasons=[fallback_reason],
                 warnings=[],
                 rule_checks=[{"rule": "build_ass", "passed": False}],
             )

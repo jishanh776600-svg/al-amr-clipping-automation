@@ -301,15 +301,26 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         aspect_ratio = "1:1"
 
     # 8. Caption preset preference
-    caption_preset = "classic_professional"
-    if "karaoke" in lower_text:
-        caption_preset = "karaoke_fill"
-    elif "boxed" in lower_text:
-        caption_preset = "boxed"
-    elif "clean" in lower_text or "lower" in lower_text:
-        caption_preset = "clean_lower"
-    elif "bold" in lower_text or "dynamic" in lower_text:
-        caption_preset = "bold_pop"
+    caption_preset = "bold_pop"
+    for preset_key in (
+        "karaoke_fill", "boxed", "clean_lower", "bold_pop", "classic_professional",
+        "neon_glow", "minimal_luxury", "cyber_glitch", "editorial_serif", "fire_punch",
+        "sunset_warmth", "ocean_breeze", "monochrome_chic", "retro_arcade", "podcast_subtle",
+        "headline_impact", "midnight_blue", "pastel_dream", "crimson_shadow", "emerald_elite",
+        "golden_hour", "comic_action", "tech_clean", "slate_modern", "rich_dynamic",
+    ):
+        if preset_key in lower_text or preset_key.replace("_", " ") in lower_text:
+            caption_preset = preset_key
+            break
+    if caption_preset == "bold_pop":
+        if "karaoke" in lower_text:
+            caption_preset = "karaoke_fill"
+        elif "boxed" in lower_text:
+            caption_preset = "boxed"
+        elif "clean" in lower_text or "lower" in lower_text:
+            caption_preset = "clean_lower"
+        elif "classic" in lower_text or "professional" in lower_text:
+            caption_preset = "classic_professional"
 
     # 9. Brand & Key concepts
     branding_rules: list[str] = []
@@ -419,3 +430,7 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         mandatory_rules=mandatory_rules,
         preference_rules=preference_rules,
     )
+
+
+# Canonical alias
+extract_campaign_from_text = parse_guidelines_into_brief

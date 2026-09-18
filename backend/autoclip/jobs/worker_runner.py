@@ -316,9 +316,34 @@ async def async_main() -> None:
     if hasattr(source, "source_acquisition") and source.source_acquisition:
         job_settings["source_acquisition"] = source.source_acquisition
 
-    # 4b. Ensure BGM assets are available and properly referenced on worker filesystem
-    bgm_enabled = bool(job_settings.get("bgm_enabled", False))
-    bgm_asset_id = job_settings.get("bgm_asset_id")
+    # 4b. Propagate visual_filter and caption_style settings
+    eff_visual_filter = (
+        job_settings.get("visual_filter")
+        or (job_settings.get("export") or {}).get("visual_filter")
+        or "original"
+    )
+    eff_caption_style = (
+        job_settings.get("caption_style")
+        or (job_settings.get("export") or {}).get("caption_style")
+        or settings.export.caption_style
+        or "classic_professional"
+    )
+    settings.export.visual_filter = eff_visual_filter
+    settings.export.caption_style = eff_caption_style
+    job_settings["visual_filter"] = eff_visual_filter
+    job_settings["caption_style"] = eff_caption_style
+
+    # 4c. Ensure BGM assets are available and properly referenced on worker filesystem
+    bgm_setting = job_settings.get("bgm_enabled")
+    bgm_asset_id = job_settings.get("bgm_asset_id") or (job_settings.get("export") or {}).get("bgm_asset_id")
+    if str(bgm_asset_id).lower() in ("none", "null", "false", "no", "disabled", "__none__"):
+        bgm_enabled = False
+    elif bgm_setting is not None:
+        bgm_enabled = bool(bgm_setting)
+    else:
+        # Default enabled if BGM assets exist
+        bgm_enabled = True
+
     from ..bgm.vault import BGMVault
     vault = BGMVault()
     vault.reconcile_vault()

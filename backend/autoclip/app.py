@@ -87,6 +87,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     pub_ticker_task = asyncio.create_task(_publishing_queue_ticker(), name="alamr-publishing-ticker")
 
+    tg_polling_task = None
+    if os.getenv("TELEGRAM_POLLING") == "1":
+        from .telegram.review_bot import poll_telegram_updates
+        tg_polling_task = asyncio.create_task(poll_telegram_updates(), name="alamr-telegram-polling")
+
     # Serving the API without a worker is useful for debugging a stuck queue and
     # makes API tests deterministic — jobs stay queued instead of racing off.
     worker_enabled = os.environ.get(ENV_NO_WORKER) != "1"
@@ -102,6 +107,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         sweeper_task.cancel()
         pub_ticker_task.cancel()
+        if tg_polling_task is not None:
+            tg_polling_task.cancel()
         if worker_enabled:
             await queue.stop()
         # Flush all pending database writes to durable disk before process exit

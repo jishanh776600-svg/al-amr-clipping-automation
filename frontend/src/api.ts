@@ -801,6 +801,8 @@ export interface Settings {
   export: {
     ratio: string
     caption_style: string
+    visual_filter?: string
+    bgm_asset_id?: string
     loudness_lufs: number
     prefer_hardware_encoder: boolean
     crf: number

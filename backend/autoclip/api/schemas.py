@@ -515,6 +515,8 @@ class ExportRequestIn(BaseModel):
     ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
     style: str = "bold_pop"
     write_srt: bool = False
+    visual_filter: str = "original"
+    bgm_asset_id: str | None = None
 
 
 class CaptionStyleOut(BaseModel):

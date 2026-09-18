@@ -206,14 +206,32 @@ class PipelineRunner:
         """Run the full pipeline and return the exported clips."""
         store.update_job(self.job.id, status="running", started_at=utcnow(), error=None)
 
-        # Apply campaign export preferences if configured
+        # Apply campaign export preferences if configured, respecting operator overrides
+        operator_style = (
+            self.job.settings.get("caption_style")
+            or (self.job.settings.get("export") or {}).get("caption_style")
+        )
+        operator_filter = (
+            self.job.settings.get("visual_filter")
+            or (self.job.settings.get("export") or {}).get("visual_filter")
+        )
+        if operator_filter:
+            self.settings.export.visual_filter = operator_filter
+
         campaign_data = self.job.settings.get("campaign")
         if campaign_data:
             campaign = CampaignBrief.model_validate(campaign_data)
             if campaign.aspect_ratio:
                 self.settings.export.ratio = campaign.aspect_ratio
             if campaign.caption_preset:
-                self.settings.export.caption_style = campaign.caption_preset
+                # Operator explicit selection on job takes precedence unless omitted or default
+                if not operator_style or operator_style in ("default", ""):
+                    self.settings.export.caption_style = campaign.caption_preset
+                    self.job.settings["caption_style"] = campaign.caption_preset
+                else:
+                    self.settings.export.caption_style = operator_style
+        elif operator_style:
+            self.settings.export.caption_style = operator_style
 
         try:
             audio = self._stage_prepare()
@@ -943,13 +961,20 @@ class PipelineRunner:
 
         from .audio_mix import BGMMixingEngine
 
+        from ..bgm.vault import BGMVault
+        vault = BGMVault()
+
         bgm_enabled = bool(self.job.settings.get("bgm_enabled", False))
         bgm_asset_id = self.job.settings.get("bgm_asset_id")
         bgm_asset = None
 
         if bgm_enabled:
             if bgm_asset_id:
-                bgm_asset = store.get_bgm_asset(bgm_asset_id)
+                bgm_asset = vault.get_asset(bgm_asset_id)
+            if not bgm_asset or not Path(bgm_asset.file_path).is_file():
+                _, res_asset, res_path = vault.resolve_campaign_bgm(bgm_asset_id, allow_fallback=True)
+                if res_asset and res_path and res_path.is_file():
+                    bgm_asset = res_asset
             if not bgm_asset or not Path(bgm_asset.file_path).is_file():
                 asset_name = self.job.settings.get("bgm_asset_name", bgm_asset_id or "Unknown")
                 raise RuntimeError(
@@ -1026,6 +1051,20 @@ class PipelineRunner:
         bgm_asset_path = self.job.settings.get("bgm_asset_path")
 
         if bgm_enabled:
+            if not bgm_asset_path or not Path(bgm_asset_path).exists():
+                from ..bgm.vault import BGMVault
+                vault = BGMVault()
+                asset = vault.get_asset(bgm_asset_id)
+                if asset and Path(asset.file_path).exists():
+                    bgm_asset_path = asset.file_path
+                    self.job.settings["bgm_asset_path"] = bgm_asset_path
+                    self.job.settings["bgm_asset_name"] = asset.name
+                else:
+                    _, res_asset, res_path = vault.resolve_campaign_bgm(bgm_asset_id, allow_fallback=True)
+                    if res_asset and res_path and res_path.exists():
+                        bgm_asset_path = str(res_path)
+                        self.job.settings["bgm_asset_path"] = bgm_asset_path
+                        self.job.settings["bgm_asset_name"] = res_asset.name
             if not bgm_asset_path or not Path(bgm_asset_path).exists():
                 raise RuntimeError(
                     f"BGM audio dependency failed: asset '{bgm_asset_name}' ({bgm_asset_id}) was not found on disk at {bgm_asset_path}."

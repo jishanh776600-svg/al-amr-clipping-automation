@@ -84,6 +84,7 @@ class FinalRenderQualityGate:
         require_audio: bool = True,
         min_duration_s: float | None = None,
         max_duration_s: float | None = None,
+        expected_visual_filter: str = "original",
     ) -> FinalRenderGateResult:
         """Evaluates rendered MP4 against video, audio, caption, and BGM rules."""
         warnings: list[str] = []
@@ -92,6 +93,7 @@ class FinalRenderQualityGate:
         audio_metrics: dict[str, Any] = {}
         provenance: dict[str, Any] = {
             "caption_style": expected_caption_style,
+            "visual_filter": expected_visual_filter,
             "bgm_asset_id": expected_bgm_asset_id,
         }
 
@@ -110,6 +112,46 @@ class FinalRenderQualityGate:
                 quality_score=0.0,
                 rejection_reasons=[f"File size too small ({file_size} bytes); corrupt output header"],
             )
+
+        # 1b. Check existing metadata if evaluating existing package
+        metadata_file = output_path.parent / "metadata.json"
+        if metadata_file.is_file():
+            try:
+                import json
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+                rec_filter = str(meta.get("visual_filter") or "original").strip().lower()
+                exp_filter = str(expected_visual_filter or "original").strip().lower()
+                if rec_filter != exp_filter:
+                    rejection_reasons.append(
+                        f"Visual filter mismatch in existing output: recorded '{rec_filter}', expected '{exp_filter}'"
+                    )
+
+                from ..captions import STYLE_ALIASES
+                rec_style = str(meta.get("caption_style") or "").strip().lower()
+                exp_style = str(expected_caption_style or "").strip().lower()
+                rec_style_norm = STYLE_ALIASES.get(rec_style, rec_style)
+                exp_style_norm = STYLE_ALIASES.get(exp_style, exp_style)
+                if exp_style and rec_style and rec_style_norm != exp_style_norm:
+                    rejection_reasons.append(
+                        f"Caption style mismatch in existing output: recorded '{rec_style}', expected '{exp_style}'"
+                    )
+
+                rec_bgm = meta.get("bgm_asset_id")
+                bgm_canonical = {
+                    "cinematic": "canonical_cinematic",
+                    "lofi": "canonical_lofi",
+                    "rock": "canonical_upbeat",
+                    "podcast": "canonical_ambient",
+                    "motivation": "canonical_motivation",
+                }
+                exp_bgm_norm = bgm_canonical.get(str(expected_bgm_asset_id).lower(), str(expected_bgm_asset_id))
+                rec_bgm_norm = bgm_canonical.get(str(rec_bgm).lower(), str(rec_bgm))
+                if expected_bgm_asset_id is not None and rec_bgm_norm != exp_bgm_norm:
+                    rejection_reasons.append(
+                        f"BGM asset ID mismatch in existing output: recorded '{rec_bgm}', expected '{expected_bgm_asset_id}'"
+                    )
+            except Exception as exc:
+                log.warning("Could not parse existing metadata.json for idempotency validation: %s", exc)
 
         # 2. Container & Stream parse
         try:

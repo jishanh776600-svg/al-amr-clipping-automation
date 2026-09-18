@@ -21,6 +21,7 @@ import base64
 import hashlib
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -101,6 +102,21 @@ class CredentialVault:
                 log.warning("Could not anchor environment master key to %s: %s", key_file, exc)
             return clean_env
 
+        # 3. Check alternative persistent location (/data/.master_key) if clean_env was not set
+        if Path("/data/.master_key") != key_file and Path("/data/.master_key").is_file():
+            try:
+                alt_key = Path("/data/.master_key").read_text(encoding="utf-8").strip()
+                if alt_key:
+                    log.info("Adopting existing persistent master key from /data/.master_key")
+                    try:
+                        root_dir.mkdir(parents=True, exist_ok=True)
+                        key_file.write_text(alt_key, encoding="utf-8")
+                    except Exception:
+                        pass
+                    return alt_key
+            except Exception:
+                pass
+
         # 3. Generate and persist a stable random master key for this installation volume
         import secrets
         new_key = f"autoclip-key-{secrets.token_urlsafe(32)}"
@@ -118,6 +134,44 @@ class CredentialVault:
         # 4. Local development fallback derived from the root path
         fallback = f"autoclip-dev-salt-{root_dir.resolve()}"
         return fallback
+
+    def _candidate_keys(self) -> list[str]:
+        """Collect all potential candidate master keys for multi-key self-healing recovery."""
+        candidates: list[str] = []
+        if self._explicit_key:
+            candidates.append(self._explicit_key)
+
+        key_locations = [paths.root() / ".master_key"]
+        if Path("/data/.master_key") != paths.root() / ".master_key":
+            key_locations.append(Path("/data/.master_key"))
+        for kf in key_locations:
+            try:
+                if kf.is_file():
+                    content = kf.read_text(encoding="utf-8").strip()
+                    if content and content not in candidates:
+                        candidates.append(content)
+            except Exception:
+                pass
+
+        for env_var in (
+            "AL_AMR_MASTER_KEY",
+            "AUTOCLIP_ENCRYPTION_KEY",
+            "ENCRYPTION_KEY",
+            "OPERATOR_TOKEN",
+            "AUTOCLIP_API_KEY",
+        ):
+            val = os.environ.get(env_var)
+            if val and val.strip() and val.strip() not in candidates:
+                candidates.append(val.strip())
+
+        try:
+            salt1 = f"autoclip-dev-salt-{paths.root().resolve()}"
+            if salt1 not in candidates:
+                candidates.append(salt1)
+        except Exception:
+            pass
+
+        return candidates
 
     def get_cipher(self) -> Fernet:
         """Return the active Fernet cipher instance."""
@@ -167,6 +221,7 @@ class CredentialVault:
         """Retrieve and decrypt a stored secret.
 
         Returns the plaintext secret to internal callers only, or None if not set.
+        Includes self-healing multi-key candidate recovery if the active master key changed.
         """
         rec = store.get_credential(key)
         if rec is None:
@@ -174,19 +229,42 @@ class CredentialVault:
 
         cipher = self.get_cipher()
         try:
-            decrypted = cipher.decrypt(rec.ciphertext.encode("utf-8")).decode("utf-8")
-            return decrypted
-        except InvalidToken as exc:
-            log.error(
-                "Failed to decrypt credential '%s'. The master encryption key may have changed.",
+            return cipher.decrypt(rec.ciphertext.encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            log.warning(
+                "Primary master key failed to decrypt credential '%s'. Attempting multi-key candidate recovery...",
                 key,
             )
-            raise RuntimeError(
-                f"Could not decrypt stored credential '{key}'. Master encryption key mismatch."
-            ) from exc
         except Exception as exc:
             log.error("Unexpected error decrypting credential '%s': %s", key, exc)
             return None
+
+        # Multi-candidate key self-healing recovery
+        for candidate_key in self._candidate_keys():
+            if not candidate_key or candidate_key == self._cached_key_source:
+                continue
+            try:
+                candidate_fernet = Fernet(_derive_fernet_key(candidate_key))
+                decrypted = candidate_fernet.decrypt(rec.ciphertext.encode("utf-8")).decode("utf-8")
+                log.info(
+                    "Credential '%s' successfully recovered using fallback candidate key. Re-encrypting with active master key.",
+                    key,
+                )
+                # Re-encrypt with active primary cipher and heal the record
+                new_ciphertext = cipher.encrypt(decrypted.encode("utf-8")).decode("utf-8")
+                fingerprint = self.mask_token(key, decrypted)
+                store.save_credential(key, new_ciphertext, fingerprint)
+                return decrypted
+            except (InvalidToken, Exception):
+                continue
+
+        log.error(
+            "Failed to decrypt credential '%s'. The master encryption key may have changed.",
+            key,
+        )
+        raise RuntimeError(
+            f"Could not decrypt stored credential '{key}'. Master encryption key mismatch."
+        )
 
     def delete_secret(self, key: str) -> bool:
         """Delete a secret from the persistent store."""

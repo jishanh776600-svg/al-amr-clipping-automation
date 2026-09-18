@@ -85,11 +85,12 @@ class FinalRenderMetadata:
     video_codec: str
     audio_codec: str
     caption_style: str
-    bgm_asset_id: str | None
-    bgm_asset_name: str
-    quality_score: float
-    quality_status: str
-    render_timestamp: str
+    visual_filter: str = "original"
+    bgm_asset_id: str | None = None
+    bgm_asset_name: str = ""
+    quality_score: float = 100.0
+    quality_status: str = "RENDER_PASS"
+    render_timestamp: str = ""
     pipeline_version: str = "step_22"
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -106,6 +107,7 @@ class FinalRenderMetadata:
             "video_codec": self.video_codec,
             "audio_codec": self.audio_codec,
             "caption_style": self.caption_style,
+            "visual_filter": self.visual_filter,
             "bgm_asset_id": self.bgm_asset_id,
             "bgm_asset_name": self.bgm_asset_name,
             "quality_score": self.quality_score,

@@ -27,6 +27,7 @@ class RequirementItem(Generic[T]):
 
     value: T
     confidence: Literal["explicit", "inferred"] = "explicit"
+    priority: Literal["mandatory", "preferred", "optional"] = "mandatory"
     source_doc_id: str = ""
     source_filename: str = ""
     source_type: str = ""  # pdf, docx, google_drive, google_docs, campaign_url
@@ -37,6 +38,7 @@ class RequirementItem(Generic[T]):
         return {
             "value": self.value,
             "confidence": self.confidence,
+            "priority": self.priority,
             "source_doc_id": self.source_doc_id,
             "source_filename": self.source_filename,
             "source_type": self.source_type,
@@ -49,6 +51,7 @@ class RequirementItem(Generic[T]):
         return cls(
             value=d.get("value"),
             confidence=d.get("confidence", "explicit"),
+            priority=d.get("priority", "mandatory"),
             source_doc_id=d.get("source_doc_id", ""),
             source_filename=d.get("source_filename", ""),
             source_type=d.get("source_type", ""),
