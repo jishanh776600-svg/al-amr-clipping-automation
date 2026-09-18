@@ -56,6 +56,21 @@ on:
         required: false
         default: "{}"
         type: string
+      visual_filter:
+        description: "Visual filter profile"
+        required: false
+        default: "original"
+        type: string
+      caption_style:
+        description: "Caption style preset"
+        required: false
+        default: "classic_professional"
+        type: string
+      bgm_asset_id:
+        description: "Background music asset ID or name"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: worker-${{ github.event.inputs.job_id }}
@@ -179,6 +194,9 @@ jobs:
             --max-clips "${{ github.event.inputs.max_clips }}" \
             --min-duration "${WORKER_MIN_DURATION_S:-20}" \
             --max-duration "${WORKER_MAX_DURATION_S:-30}" \
+            --visual-filter "${{ github.event.inputs.visual_filter || 'original' }}" \
+            --caption-style "${{ github.event.inputs.caption_style || 'classic_professional' }}" \
+            --bgm-asset-id "${{ github.event.inputs.bgm_asset_id || '' }}" \
             --job-settings "${WORKER_JOB_SETTINGS:-{}}"
 
       - name: Container Logs (WARP & POT Provider)

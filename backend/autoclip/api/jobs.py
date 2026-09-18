@@ -274,6 +274,8 @@ async def create_autonomous_job(
                         bgm_asset_id = parsed_ov.get("bgm_asset_id")
                     if not visual_filter:
                         visual_filter = parsed_ov.get("visual_filter")
+                    if not caption_style:
+                        caption_style = parsed_ov.get("caption_style")
             except Exception:
                 pass
 
@@ -541,7 +543,7 @@ async def create_autonomous_job(
     vault = BGMVault()
     try:
         bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
-            vault.resolve_campaign_bgm, bgm_asset_id
+            vault.resolve_campaign_bgm, bgm_asset_id, allow_fallback=True
         )
     except BGMUnavailableError as exc:
         log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_asset_id, exc)

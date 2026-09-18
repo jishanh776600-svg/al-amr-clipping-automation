@@ -141,11 +141,6 @@ export function Ingest() {
     }).catch(() => undefined)
     api.listBGMAssets().then((list) => {
       setBgmAssets(list)
-      setSelectedBgmId((current) => {
-        if (!current || current === 'none') return current
-        const exists = list.some((a) => a.id === current && a.enabled)
-        return exists ? current : ''
-      })
     }).catch(() => undefined)
     api.listCampaigns().then((list) => {
       setCampaigns(list)
@@ -383,10 +378,8 @@ export function Ingest() {
       form.append('visual_filter', visualFilter)
       jobOverrides.visual_filter = visualFilter
 
-      // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id -> Exact Track
-      const effectiveBgmId = selectedBgmId === 'none'
-        ? 'none'
-        : (bgmAssets.some((a) => a.id === selectedBgmId && a.enabled) ? selectedBgmId : '')
+      // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id or track name -> Exact Track
+      const effectiveBgmId = (selectedBgmId || '').trim()
       form.append('bgm_asset_id', effectiveBgmId)
       jobOverrides.bgm_asset_id = effectiveBgmId || null
 

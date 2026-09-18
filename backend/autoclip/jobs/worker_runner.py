@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration", type=_float_or_none, default=None, help="Minimum clip duration in seconds")
     parser.add_argument("--max-duration", type=_float_or_none, default=None, help="Maximum clip duration in seconds")
     parser.add_argument("--job-settings", default="{}", help="Job settings JSON string")
+    parser.add_argument("--visual-filter", default="", help="Visual filter preset (e.g. black_and_white, cinematic_warm)")
+    parser.add_argument("--caption-style", default="", help="Caption style preset (e.g. kinetic, bold_pop)")
+    parser.add_argument("--bgm-asset-id", default="", help="BGM asset ID or name (e.g. motivation)")
     return parser.parse_args()
 
 
@@ -200,8 +203,27 @@ async def async_main() -> None:
     if raw_job_settings:
         try:
             incoming_settings = json.loads(raw_job_settings) if isinstance(raw_job_settings, str) else dict(raw_job_settings)
-        except Exception:
+        except Exception as exc:
+            log.warning("Failed parsing raw_job_settings: %s", exc)
             incoming_settings = {}
+
+    # Layer explicit CLI arguments over incoming_settings
+    cli_filter = getattr(args, "visual_filter", None)
+    if cli_filter and str(cli_filter).strip():
+        incoming_settings["visual_filter"] = str(cli_filter).strip()
+
+    cli_caption = getattr(args, "caption_style", None)
+    if cli_caption and str(cli_caption).strip():
+        incoming_settings["caption_style"] = str(cli_caption).strip()
+
+    cli_bgm = getattr(args, "bgm_asset_id", None)
+    if cli_bgm and str(cli_bgm).strip():
+        val = str(cli_bgm).strip()
+        incoming_settings["bgm_asset_id"] = val
+        if val.lower() in ("none", "null", "false", "no", "disabled", "__none__"):
+            incoming_settings["bgm_enabled"] = False
+        else:
+            incoming_settings["bgm_enabled"] = True
 
     from autoclip.campaign.duration import resolve_duration_limits, resolve_max_clips
 

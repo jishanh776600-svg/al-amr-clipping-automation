@@ -32,6 +32,8 @@ PUBLIC_PREFIXES = (
     "/assets",
     "/api/telegram/webhook",
     "/telegram/webhook",
+    "/api/bgm",
+    "/bgm",
 )
 
 

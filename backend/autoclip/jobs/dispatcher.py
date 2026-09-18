@@ -126,6 +126,21 @@ async def dispatch_job_to_github(
         "max_clips": str(max_clips),
         "min_duration_s": str(min_dur),
         "max_duration_s": str(max_dur),
+        "visual_filter": str(
+            job.settings.get("visual_filter")
+            or (job.settings.get("export") or {}).get("visual_filter")
+            or "original"
+        ),
+        "caption_style": str(
+            job.settings.get("caption_style")
+            or (job.settings.get("export") or {}).get("caption_style")
+            or "classic_professional"
+        ),
+        "bgm_asset_id": str(
+            job.settings.get("bgm_asset_id")
+            or (job.settings.get("export") or {}).get("bgm_asset_id")
+            or ""
+        ),
         "job_settings": json.dumps(job.settings),
     }
 
