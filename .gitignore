@@ -51,6 +51,7 @@ secrets/
 *.jpg
 *.png
 !tests/test_media/*
+!backend/autoclip/bgm/assets/*
 
 # Testing & Linting
 .pytest_cache/
