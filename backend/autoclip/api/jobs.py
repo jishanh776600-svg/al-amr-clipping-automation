@@ -488,9 +488,10 @@ async def create_autonomous_job(
                 pass
 
     # Ensure canonical duration constraints and max_clips are explicitly set at root and clips level
-    min_dur = job_settings.get("min_duration_s") or (job_settings.get("clips") or {}).get("min_duration_s") or base_settings.clips.min_duration_s
-    max_dur = job_settings.get("max_duration_s") or (job_settings.get("clips") or {}).get("max_duration_s") or base_settings.clips.max_duration_s
-    max_c = job_settings.get("max_clips") or (job_settings.get("clips") or {}).get("max_clips") or base_settings.clips.max_clips
+    from ..campaign.duration import resolve_duration_limits, resolve_max_clips
+
+    min_dur, max_dur = resolve_duration_limits(job_settings, default_min=20.0, default_max=30.0)
+    max_c = resolve_max_clips(job_settings, default_max_clips=5)
     job_settings["min_duration_s"] = float(min_dur)
     job_settings["max_duration_s"] = float(max_dur)
     job_settings["max_clips"] = int(max_c)
@@ -671,14 +672,18 @@ async def create_job(
         )
 
     job_settings = settings.model_dump(mode="json")
-    job_settings["min_duration_s"] = float(settings.clips.min_duration_s)
-    job_settings["max_duration_s"] = float(settings.clips.max_duration_s)
-    job_settings["max_clips"] = int(settings.clips.max_clips)
+    from ..campaign.duration import resolve_duration_limits, resolve_max_clips
+
+    min_dur, max_dur = resolve_duration_limits(job_settings, default_min=20.0, default_max=30.0)
+    max_c = resolve_max_clips(job_settings, default_max_clips=5)
+    job_settings["min_duration_s"] = float(min_dur)
+    job_settings["max_duration_s"] = float(max_dur)
+    job_settings["max_clips"] = int(max_c)
     if "clips" not in job_settings or not isinstance(job_settings["clips"], dict):
         job_settings["clips"] = {}
-    job_settings["clips"]["min_duration_s"] = float(settings.clips.min_duration_s)
-    job_settings["clips"]["max_duration_s"] = float(settings.clips.max_duration_s)
-    job_settings["clips"]["max_clips"] = int(settings.clips.max_clips)
+    job_settings["clips"]["min_duration_s"] = float(min_dur)
+    job_settings["clips"]["max_duration_s"] = float(max_dur)
+    job_settings["clips"]["max_clips"] = int(max_c)
     if overrides.caption_style:
         job_settings["caption_style"] = overrides.caption_style
 
@@ -1302,15 +1307,43 @@ async def worker_callback(
             )
             await asyncio.to_thread(store.create_clip_metadata, meta_record)
 
+    # Ingest approvals if reported
+    if payload.approvals:
+        for app in payload.approvals:
+            app_record = models.ClipApprovalRecord(
+                id=app.get("id", new_id()),
+                job_id=job_id,
+                clip_id=app["clip_id"],
+                current_status=app.get("current_status", "PENDING_REVIEW"),
+                operator_action=app.get("operator_action"),
+                operator_note=app.get("operator_note", ""),
+                version=int(app.get("version", 1)),
+                previous_status=app.get("previous_status"),
+                publish_eligible=bool(app.get("publish_eligible", False)),
+                blocking_reasons=app.get("blocking_reasons", []),
+                history=app.get("history", []),
+                telemetry=app.get("telemetry", {}),
+                created_at=app.get("created_at", store.utcnow()),
+                updated_at=app.get("updated_at", store.utcnow()),
+            )
+            existing = await asyncio.to_thread(store.get_clip_approval, app["clip_id"])
+            if existing:
+                await asyncio.to_thread(store.update_clip_approval, app_record)
+            else:
+                await asyncio.to_thread(store.create_clip_approval, app_record)
+
     # Trigger Telegram Human Review upon completion
     if payload.status == "done":
         from ..telegram.review_bot import is_telegram_configured, send_clip_review
-        if is_telegram_configured():
+        if is_telegram_configured(job.settings):
             async def _send_reviews_task():
                 clips_to_review = await asyncio.to_thread(store.list_clips_for_job, job_id)
                 for clip_item in clips_to_review:
+                    fr = await asyncio.to_thread(store.get_final_render, clip_item.id)
+                    if not fr or fr.quality_status != "RENDER_PASS":
+                        continue
                     try:
-                        await send_clip_review(job_id, clip_item.id)
+                        await send_clip_review(job_id, clip_item.id, job_settings=job.settings)
                     except Exception as exc:
                         log.warning("Failed sending Telegram review for clip %s: %s", clip_item.id, exc)
             asyncio.create_task(_send_reviews_task())

@@ -111,10 +111,9 @@ async def dispatch_job_to_github(
     brief_data = campaign_brief if campaign_brief is not None else job.settings.get("campaign", {})
     publish_targets = job.settings.get("publish_targets", [])
 
-    from ..campaign.duration import resolve_max_clips
+    from ..campaign.duration import resolve_duration_limits, resolve_max_clips
 
-    min_dur = job.settings.get("min_duration_s") or (job.settings.get("clips") or {}).get("min_duration_s") or 20.0
-    max_dur = job.settings.get("max_duration_s") or (job.settings.get("clips") or {}).get("max_duration_s") or 60.0
+    min_dur, max_dur = resolve_duration_limits(job.settings, default_min=20.0, default_max=30.0)
     max_clips = resolve_max_clips(job.settings, default_max_clips=5)
 
     inputs = {

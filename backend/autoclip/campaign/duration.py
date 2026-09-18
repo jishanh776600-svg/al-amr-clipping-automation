@@ -7,7 +7,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 DEFAULT_MIN_DURATION_S: float = 20.0
-DEFAULT_MAX_DURATION_S: float = 60.0
+DEFAULT_MAX_DURATION_S: float = 30.0
 
 
 def resolve_duration_limits(

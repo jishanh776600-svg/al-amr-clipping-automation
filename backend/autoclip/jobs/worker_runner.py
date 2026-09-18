@@ -81,6 +81,7 @@ def send_callback(
     final_renders: list[dict[str, Any]] | None = None,
     clip_metadata: list[dict[str, Any]] | None = None,
     publishing_records: list[dict[str, Any]] | None = None,
+    approvals: list[dict[str, Any]] | None = None,
     acquisition_event: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not callback_url:
@@ -112,6 +113,8 @@ def send_callback(
         payload["clip_metadata"] = clip_metadata
     if publishing_records is not None:
         payload["publishing_records"] = publishing_records
+    if approvals is not None:
+        payload["approvals"] = approvals
     if acquisition_event is not None:
         payload["acquisition_event"] = acquisition_event
 
@@ -206,7 +209,7 @@ async def async_main() -> None:
         job_settings=incoming_settings,
         campaign_brief=brief_data if brief_data else None,
         default_min=20.0,
-        default_max=60.0,
+        default_max=30.0,
     )
 
     if args.min_duration is not None and args.min_duration > 0:
@@ -541,7 +544,45 @@ async def async_main() -> None:
         if meta:
             clip_metadata_payload.append(meta.to_dict())
 
-    # 7. Final completion callback
+    # 7. Trigger Telegram Review delivery from worker if configured (only for successfully rendered clips)
+    rendered_clip_ids = {fr["clip_id"] for fr in final_renders_payload if fr.get("quality_status") == "RENDER_PASS"}
+    try:
+        from ..telegram.review_bot import is_telegram_configured, send_clip_review
+        if is_telegram_configured(job_settings) and rendered_clip_ids:
+            log.info("Telegram configured: worker delivering review cards for %d clips...", len(rendered_clip_ids))
+            for c in clips:
+                if c.id not in rendered_clip_ids:
+                    continue
+                try:
+                    await send_clip_review(args.job_id, c.id, job_settings=job_settings)
+                except Exception as exc:
+                    log.warning("Worker Telegram review delivery failed for clip %s: %s", c.id, exc)
+    except Exception as exc:
+        log.warning("Could not initialize Telegram review delivery on worker: %s", exc)
+
+    # Collect approvals so control plane knows review status
+    approvals_payload = []
+    for c in clips:
+        app = store.get_clip_approval(c.id)
+        if app:
+            approvals_payload.append({
+                "id": app.id,
+                "clip_id": app.clip_id,
+                "job_id": app.job_id,
+                "current_status": app.current_status,
+                "operator_action": app.operator_action,
+                "operator_note": app.operator_note,
+                "version": app.version,
+                "previous_status": app.previous_status,
+                "publish_eligible": app.publish_eligible,
+                "blocking_reasons": app.blocking_reasons,
+                "history": app.history,
+                "telemetry": app.telemetry,
+                "created_at": app.created_at,
+                "updated_at": app.updated_at,
+            })
+
+    # 8. Final completion callback
     report(
         status="done",
         stage="completed",
@@ -552,21 +593,9 @@ async def async_main() -> None:
         final_renders=final_renders_payload,
         clip_metadata=clip_metadata_payload,
         publishing_records=publishing_payload,
+        approvals=approvals_payload,
     )
     log.info("AL AMR Worker completed job %s successfully with %d clips.", args.job_id, len(clips))
-
-    # 8. Trigger Telegram Review delivery from worker if configured
-    try:
-        from ..telegram.review_bot import is_telegram_configured, send_clip_review
-        if is_telegram_configured(job_settings):
-            log.info("Telegram configured: worker delivering review cards for %d clips...", len(clips))
-            for c in clips:
-                try:
-                    await send_clip_review(args.job_id, c.id, job_settings=job_settings)
-                except Exception as exc:
-                    log.warning("Worker Telegram review delivery failed for clip %s: %s", c.id, exc)
-    except Exception as exc:
-        log.warning("Could not initialize Telegram review delivery on worker: %s", exc)
 
 
 def main() -> None:

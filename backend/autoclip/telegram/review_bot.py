@@ -91,6 +91,21 @@ def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str
         if not chat_id:
             chat_id = str(job_settings.get("telegram_chat_id") or (job_settings.get("telegram") or {}).get("chat_id") or "").strip()
 
+    if not bot_token or not chat_id:
+        try:
+            from ..security.vault import get_vault
+            vault = get_vault()
+            if not bot_token:
+                v_tok = vault.retrieve_secret("telegram_bot_token") or vault.retrieve_secret("TELEGRAM_BOT_TOKEN")
+                if v_tok:
+                    bot_token = v_tok.strip()
+            if not chat_id:
+                v_cid = vault.retrieve_secret("telegram_chat_id") or vault.retrieve_secret("TELEGRAM_CHAT_ID")
+                if v_cid:
+                    chat_id = v_cid.strip()
+        except Exception:
+            pass
+
     return bot_token, chat_id, allowed_ids
 
 
@@ -287,6 +302,21 @@ async def send_clip_review(
         if exp.drive_web_view_link:
             drive_link = exp.drive_web_view_link
             break
+
+    media_path = Path(final_render.output_path) if final_render and final_render.output_path else None
+    has_local_media = bool(media_path and media_path.exists())
+    has_drive_media = bool(drive_link)
+
+    # Only send review cards for clips that are actually rendered and have media or drive preview
+    if not final_render or (not has_local_media and not has_drive_media):
+        log.warning(
+            "Cannot send Telegram review: clip %s has no verified media (final_render=%s, local_media=%s, drive=%s).",
+            clip_id,
+            bool(final_render),
+            has_local_media,
+            has_drive_media,
+        )
+        return None
 
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"

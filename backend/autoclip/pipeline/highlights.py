@@ -181,32 +181,41 @@ async def detect(
             scored_candidates: list[tuple[int, ClipCandidate]] = []
 
             for start_idx in range(0, total_w, step):
-                end_idx = min(total_w - 1, start_idx + max_w - 1)
-                if end_idx > start_idx:
-                    seg_words = transcript.words[start_idx : end_idx + 1]
-                    dur = seg_words[-1].end - seg_words[0].start
-                    if dur < config.min_duration_s:
-                        continue
+                # Deterministically advance curr_end up to config.max_duration_s
+                curr_end = start_idx
+                while curr_end + 1 < total_w:
+                    next_dur = transcript.words[curr_end + 1].end - transcript.words[start_idx].start
+                    if next_dur > config.max_duration_s:
+                        break
+                    curr_end += 1
 
-                    seg_text = " ".join(w.text for w in seg_words)
-                    lower_seg = seg_text.lower()
+                if curr_end <= start_idx:
+                    continue
+                dur = transcript.words[curr_end].end - transcript.words[start_idx].start
+                if dur < config.min_duration_s or dur > config.max_duration_s:
+                    continue
 
-                    # Guideline match score
-                    match_count = sum(1 for term in guideline_terms if term in lower_seg)
-                    base_score = 75 + min(20, match_count * 5)
-                    reason = f"Guideline topic match ({match_count} terms)" if match_count > 0 else "Speech density highlight"
+                end_idx = curr_end
+                seg_words = transcript.words[start_idx : end_idx + 1]
+                seg_text = " ".join(w.text for w in seg_words)
+                lower_seg = seg_text.lower()
 
-                    hook = seg_text[:60].strip()
-                    title = seg_text[:40].strip() + "..."
-                    cand = ClipCandidate(
-                        start_word_index=start_idx,
-                        end_word_index=end_idx,
-                        title=title,
-                        hook=hook,
-                        score=base_score,
-                        reason=reason,
-                    )
-                    scored_candidates.append((base_score, cand))
+                # Guideline match score
+                match_count = sum(1 for term in guideline_terms if term in lower_seg)
+                base_score = 75 + min(20, match_count * 5)
+                reason = f"Guideline topic match ({match_count} terms)" if match_count > 0 else "Speech density highlight"
+
+                hook = seg_text[:60].strip()
+                title = seg_text[:40].strip() + "..."
+                cand = ClipCandidate(
+                    start_word_index=start_idx,
+                    end_word_index=end_idx,
+                    title=title,
+                    hook=hook,
+                    score=base_score,
+                    reason=reason,
+                )
+                scored_candidates.append((base_score, cand))
 
             # Sort by score descending and take top candidates
             scored_candidates.sort(key=lambda item: item[0], reverse=True)

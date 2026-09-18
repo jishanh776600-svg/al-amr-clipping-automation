@@ -602,6 +602,7 @@ class WorkerCallbackIn(BaseModel):
     final_renders: list[dict[str, Any]] | None = None
     clip_metadata: list[dict[str, Any]] | None = None
     publishing_records: list[dict[str, Any]] | None = None
+    approvals: list[dict[str, Any]] | None = None
     acquisition_event: dict[str, Any] | None = None
 
 

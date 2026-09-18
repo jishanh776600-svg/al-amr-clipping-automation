@@ -442,7 +442,7 @@ class PreRenderQualityGate:
             campaign_spec=self.campaign_spec,
             campaign_brief=self.campaign_brief,
             default_min=20.0,
-            default_max=60.0,
+            default_max=30.0,
         )
 
         if duration_s < min_dur:
@@ -649,7 +649,7 @@ class ClipAssemblyEngine:
             campaign_spec=self.campaign_spec,
             campaign_brief=self.campaign_brief,
             default_min=20.0,
-            default_max=60.0,
+            default_max=30.0,
         )
         require_cta = False
         if self.campaign_spec:

@@ -590,10 +590,23 @@ class PipelineRunner:
         provider = build_provider(provider_name, self.settings)
         config = detection_config(self.settings)
 
-        if campaign is not None:
-            config.min_duration_s = campaign.minimum_duration
-            config.max_duration_s = campaign.maximum_duration
-            config.max_clips = max(config.max_clips, campaign.maximum_candidates * 2)
+        from autoclip.campaign.duration import resolve_duration_limits, resolve_max_clips
+
+        eff_min_dur, eff_max_dur = resolve_duration_limits(
+            job_settings=self.job.settings,
+            campaign_spec=campaign_spec,
+            campaign_brief=campaign,
+            default_min=20.0,
+            default_max=30.0,
+        )
+        config.min_duration_s = eff_min_dur
+        config.max_duration_s = eff_max_dur
+        config.max_clips = resolve_max_clips(
+            job_settings=self.job.settings,
+            campaign_spec=campaign_spec,
+            campaign_brief=campaign,
+            default_max_clips=5,
+        )
 
         total_duration = transcript.words[-1].end if transcript.words else 0.0
         if total_duration > 0 and config.min_duration_s >= total_duration:
@@ -816,6 +829,8 @@ class PipelineRunner:
         # Update clips in store to reflect tightened start/end timings and new ranks
         if final_clips:
             store.replace_clips(self.job.id, final_clips)
+        else:
+            store.replace_clips(self.job.id, [])
 
         self._finish_stage(stage)
         return final_clips, final_crop_paths
@@ -1041,7 +1056,7 @@ class PipelineRunner:
         min_dur, max_dur = resolve_duration_limits(
             job_settings=self.job.settings,
             default_min=20.0,
-            default_max=60.0,
+            default_max=30.0,
         )
 
         render_engine = FinalRenderEngine(config=FinalRenderConfig(ratio=ratio))
