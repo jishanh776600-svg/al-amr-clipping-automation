@@ -900,9 +900,18 @@ export function onAuthChange(callback: (token: string) => void): () => void {
 
 export function resolveUrl(path: string): string {
   if (!path) return path
-  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && path.startsWith('http://')) {
+      return path.replace(/^http:\/\//i, 'https://')
+    }
+    return path
+  }
   const normalized = path.startsWith('/') ? path : `/${path}`
-  return `${API_BASE_URL}${normalized}`
+  let base = API_BASE_URL
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && base.startsWith('http://')) {
+    base = base.replace(/^http:\/\//i, 'https://')
+  }
+  return `${base}${normalized}`
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -912,14 +921,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ? { Authorization: `Bearer ${activeToken}`, 'X-API-Key': activeToken }
     : {}
 
-  const response = await fetch(fullUrl, {
-    ...init,
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...authHeaders,
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(fullUrl, {
+      ...init,
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...authHeaders,
+        ...init?.headers,
+      },
+    })
+  } catch (err: any) {
+    const rawMsg = err?.message || String(err)
+    if (
+      rawMsg.includes('Failed to fetch') ||
+      rawMsg.includes('NetworkError') ||
+      rawMsg.includes('Network request failed') ||
+      err?.name === 'TypeError'
+    ) {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
+      const hint = isOffline
+        ? 'Your browser appears offline. Check your internet connection.'
+        : 'Could not connect to the AL AMR server. Ensure the server is reachable and valid authentication credentials are configured in Settings.'
+      throw new ApiError(`Network request failed: ${rawMsg}`, 0, hint)
+    }
+    throw err
+  }
 
   if (!response.ok) {
     if (response.status === 401 && typeof window !== 'undefined') {

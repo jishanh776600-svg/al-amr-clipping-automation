@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -120,6 +121,10 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
+        # Preflight CORS OPTIONS requests must never require authentication
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if get_valid_api_keys():
             path = request.url.path
             # Check if this path requires authentication (only /api and /internal routes, excluding public ones and worker-callback which verifies payload)
@@ -146,6 +151,14 @@ def create_app() -> FastAPI:
                         headers={"WWW-Authenticate": "Bearer"},
                     )
         return await call_next(request)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     app.include_router(api_router)
 

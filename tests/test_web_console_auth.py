@@ -146,3 +146,43 @@ def test_secrets_not_exposed_in_settings_response(auth_client_env):
     # Ensure operator token itself is not returned in settings
     assert token not in raw_text
     assert "sk-" not in raw_text
+
+
+def test_preflight_options_allowed_without_auth(auth_client_env):
+    """CORS preflight OPTIONS requests to protected endpoints must succeed with 200/CORS headers and no 401."""
+    client, _ = auth_client_env
+
+    endpoints = [
+        "/api/jobs/create-autonomous",
+        "/api/jobs",
+        "/api/settings",
+        "/api/sources",
+    ]
+
+    for ep in endpoints:
+        # Preflight requests intentionally have no Authorization header
+        resp = client.options(
+            ep,
+            headers={
+                "Origin": "https://al-amr-clipping-automation.onrender.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization, content-type, x-api-key",
+            },
+        )
+        assert resp.status_code == 200, f"OPTIONS {ep} returned {resp.status_code}, expected 200"
+        assert resp.headers.get("access-control-allow-origin") == "https://al-amr-clipping-automation.onrender.com"
+        assert "access-control-allow-methods" in resp.headers
+
+
+def test_cors_headers_present_on_unauthorized_responses(auth_client_env):
+    """When an unauthenticated request returns 401, CORS headers must still be attached so the browser can read the response status."""
+    client, _ = auth_client_env
+
+    resp = client.post(
+        "/api/jobs/create-autonomous",
+        headers={"Origin": "https://al-amr-clipping-automation.onrender.com"},
+    )
+    assert resp.status_code == 401
+    assert resp.headers.get("access-control-allow-origin") == "https://al-amr-clipping-automation.onrender.com"
+    assert resp.json().get("detail") is not None
+

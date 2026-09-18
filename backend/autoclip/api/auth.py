@@ -69,6 +69,10 @@ async def require_auth(
     if not keys:
         return  # Permissive mode: no authentication required
 
+    # Allow preflight CORS OPTIONS requests
+    if request.method == "OPTIONS":
+        return
+
     # Allow public endpoints
     path = request.url.path
     if any(path == p or path.startswith(f"{p}/") for p in PUBLIC_PREFIXES):
