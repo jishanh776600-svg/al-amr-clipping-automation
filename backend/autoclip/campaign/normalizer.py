@@ -437,6 +437,64 @@ class CampaignNormalizer:
                         source_filename=d.filename,
                     ))
 
+                for ci in getattr(b, "cta_instructions", []):
+                    spec.cta_instructions.append(RequirementItem(
+                        value=ci,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+                if getattr(b, "cta_text", None):
+                    spec.cta_instructions.append(RequirementItem(
+                        value=b.cta_text,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+
+        # SEO & Metadata Requirements
+        for d, b in per_doc_briefs:
+            for h in getattr(b, "hashtags", []):
+                if h not in [x.value for x in spec.hashtags]:
+                    spec.hashtags.append(RequirementItem(
+                        value=h,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+            for p in getattr(b, "title_patterns", []):
+                if p not in [x.value for x in spec.title_patterns]:
+                    spec.title_patterns.append(RequirementItem(
+                        value=p,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+            for g in getattr(b, "description_guidelines", []):
+                if g not in [x.value for x in spec.description_guidelines]:
+                    spec.description_guidelines.append(RequirementItem(
+                        value=g,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+            for m in getattr(b, "required_mentions", []):
+                if m not in [x.value for x in spec.required_mentions]:
+                    spec.required_mentions.append(RequirementItem(
+                        value=m,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+            for r in getattr(b, "branding_rules", []):
+                if r not in [x.value for x in spec.branding_rules]:
+                    spec.branding_rules.append(RequirementItem(
+                        value=r,
+                        confidence="explicit",
+                        source_doc_id=d.doc_id,
+                        source_filename=d.filename,
+                    ))
+
         # Style, Pacing, Caption Preset
         first_doc, first_brief = per_doc_briefs[0]
         spec.tone = RequirementItem(

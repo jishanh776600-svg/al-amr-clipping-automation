@@ -271,6 +271,15 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     # 6. Call to Action (CTA)
     cta_required = False
     cta_types: list[str] = []
+    cta_instructions: list[str] = []
+    cta_text = ""
+
+    cta_heading_match = re.search(r"(?:call\s+to\s+action|cta(?:\s+text|\s+wording|\s+instruction)?|closing\s+cta)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if cta_heading_match:
+        cta_required = True
+        cta_text = cta_heading_match.group(1).strip()
+        cta_instructions.append(cta_text)
+
     if any(phrase in lower_text for phrase in ("call to action", "cta", "subscribe", "link in bio", "follow", "comment below", "share this")):
         cta_required = True
         if "subscribe" in lower_text:
@@ -292,21 +301,88 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         aspect_ratio = "1:1"
 
     # 8. Caption preset preference
-    caption_preset = "bold_pop"
+    caption_preset = "classic_professional"
     if "karaoke" in lower_text:
         caption_preset = "karaoke_fill"
     elif "boxed" in lower_text:
         caption_preset = "boxed"
     elif "clean" in lower_text or "lower" in lower_text:
         caption_preset = "clean_lower"
+    elif "bold" in lower_text or "dynamic" in lower_text:
+        caption_preset = "bold_pop"
 
     # 9. Brand & Key concepts
+    branding_rules: list[str] = []
     brand_match = re.search(r"(?:brand|product|company)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
     if brand_match:
         brand_terms = [b.strip() for b in re.split(r"[,;•|]+", brand_match.group(1)) if b.strip()]
         for b in brand_terms:
             if b and b not in required_concepts:
                 required_concepts.append(b)
+                branding_rules.append(b)
+
+    # 10. Hashtags extraction
+    hashtags: list[str] = []
+    raw_hash_matches = re.findall(r"#[A-Za-z0-9_]+", raw_text)
+    for h in raw_hash_matches:
+        if h not in hashtags:
+            hashtags.append(h)
+    tag_heading_match = re.search(r"(?:hashtags?|tags?)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if tag_heading_match:
+        extra_tags = [t.strip() for t in re.split(r"[,;\s]+", tag_heading_match.group(1)) if t.strip()]
+        for t in extra_tags:
+            norm_tag = t if t.startswith("#") else f"#{t}"
+            if norm_tag not in hashtags:
+                hashtags.append(norm_tag)
+
+    # 11. Title Patterns extraction
+    title_patterns: list[str] = []
+    for tm in re.finditer(r"(?:title(?:\s+pattern|\s+format|\s+requirements)?|headline)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE):
+        t_val = tm.group(1).strip()
+        if t_val and t_val not in title_patterns:
+            title_patterns.append(t_val)
+
+    # 12. Description Guidelines & links extraction
+    description_guidelines: list[str] = []
+    for dm in re.finditer(r"(?:description|caption(?:\s+requirements)?|body\s+copy|link\s+in\s+description)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE):
+        d_val = dm.group(1).strip()
+        if d_val and d_val not in description_guidelines:
+            description_guidelines.append(d_val)
+    raw_urls = re.findall(r"https?://[^\s<>\"']+|www\.[^\s<>\"']+", raw_text)
+    for u in raw_urls:
+        url_note = f"Include link: {u}"
+        if url_note not in description_guidelines:
+            description_guidelines.append(url_note)
+
+    # 13. Required Mentions extraction
+    required_mentions: list[str] = []
+    raw_mention_matches = re.findall(r"@[A-Za-z0-9_.]+", raw_text)
+    for m in raw_mention_matches:
+        if m not in required_mentions:
+            required_mentions.append(m)
+    mention_heading_match = re.search(r"(?:mention|handle|tag\s+account)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+    if mention_heading_match:
+        extra_mentions = [m.strip() for m in re.split(r"[,;\s]+", mention_heading_match.group(1)) if m.strip()]
+        for m in extra_mentions:
+            norm_m = m if m.startswith("@") else f"@{m}"
+            if norm_m not in required_mentions:
+                required_mentions.append(norm_m)
+
+    # 14. Mandatory vs Preference Rules classification
+    mandatory_rules: list[str] = []
+    preference_rules: list[str] = []
+    mandatory_pattern = re.compile(r"\b(must|mandatory|required|strictly|shall|do not|never|prohibited)\b", re.IGNORECASE)
+    preference_pattern = re.compile(r"\b(prefer|preferred|optional|recommended|nice to have|ideally)\b", re.IGNORECASE)
+
+    for line in lines:
+        if len(line) < 15 or len(line) > 200:
+            continue
+        if mandatory_pattern.search(line):
+            if line not in mandatory_rules:
+                mandatory_rules.append(line)
+        elif preference_pattern.search(line):
+            if line not in preference_rules:
+                preference_rules.append(line)
 
     # Context summary (first 500 chars)
     topic_context = raw_text[:500].strip()
@@ -333,4 +409,13 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         aspect_ratio=aspect_ratio,
         caption_preset=caption_preset,
         output_count=5,
+        hashtags=hashtags,
+        title_patterns=title_patterns,
+        description_guidelines=description_guidelines,
+        required_mentions=required_mentions,
+        cta_instructions=cta_instructions,
+        cta_text=cta_text,
+        branding_rules=branding_rules,
+        mandatory_rules=mandatory_rules,
+        preference_rules=preference_rules,
     )

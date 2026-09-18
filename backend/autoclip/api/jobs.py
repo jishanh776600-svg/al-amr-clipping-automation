@@ -212,6 +212,7 @@ async def create_autonomous_job(
     destinations: Any = None
     overrides: Any = None
     caption_style: str | None = None
+    visual_filter: str | None = None
     bgm_asset_id: str | None = None
 
     if "application/json" in content_type:
@@ -219,6 +220,7 @@ async def create_autonomous_job(
         url = body.get("video_url") or body.get("url")
         campaign_url = body.get("campaign_url")
         caption_style = body.get("caption_style")
+        visual_filter = body.get("visual_filter")
         bgm_asset_id = body.get("bgm_asset_id")
 
         if body.get("guideline_id"):
@@ -243,6 +245,8 @@ async def create_autonomous_job(
         overrides = body.get("overrides") or body.get("settings")
         if not bgm_asset_id and isinstance(overrides, dict):
             bgm_asset_id = overrides.get("bgm_asset_id")
+        if not visual_filter and isinstance(overrides, dict):
+            visual_filter = overrides.get("visual_filter")
     else:
         form = await request.form()
         raw_url = form.get("url") or form.get("video_url")
@@ -255,15 +259,21 @@ async def create_autonomous_job(
         raw_caption_style = form.get("caption_style")
         if isinstance(raw_caption_style, str):
             caption_style = raw_caption_style.strip() or None
+        raw_visual_filter = form.get("visual_filter")
+        if isinstance(raw_visual_filter, str):
+            visual_filter = raw_visual_filter.strip() or None
         raw_bgm_asset_id = form.get("bgm_asset_id")
         if isinstance(raw_bgm_asset_id, str):
             bgm_asset_id = raw_bgm_asset_id.strip() or None
         raw_overrides = form.get("overrides")
-        if not bgm_asset_id and raw_overrides:
+        if raw_overrides:
             try:
                 parsed_ov = json.loads(str(raw_overrides))
                 if isinstance(parsed_ov, dict):
-                    bgm_asset_id = parsed_ov.get("bgm_asset_id")
+                    if not bgm_asset_id:
+                        bgm_asset_id = parsed_ov.get("bgm_asset_id")
+                    if not visual_filter:
+                        visual_filter = parsed_ov.get("visual_filter")
             except Exception:
                 pass
 
@@ -521,6 +531,12 @@ async def create_autonomous_job(
             job_settings["export"] = {}
         job_settings["export"]["caption_style"] = caption_style
 
+    if visual_filter:
+        job_settings["visual_filter"] = visual_filter
+        if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+            job_settings["export"] = {}
+        job_settings["export"]["visual_filter"] = visual_filter
+
     # Step 20: Resolve Campaign BGM Selection
     vault = BGMVault()
     try:
@@ -686,6 +702,11 @@ async def create_job(
     job_settings["clips"]["max_clips"] = int(max_c)
     if overrides.caption_style:
         job_settings["caption_style"] = overrides.caption_style
+    if getattr(overrides, "visual_filter", None):
+        job_settings["visual_filter"] = overrides.visual_filter
+        if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+            job_settings["export"] = {}
+        job_settings["export"]["visual_filter"] = overrides.visual_filter
 
     # Step 20: Resolve Campaign BGM Selection
     bgm_asset_id = getattr(overrides, "bgm_asset_id", None)

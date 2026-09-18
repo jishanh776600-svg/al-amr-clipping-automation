@@ -21,6 +21,8 @@ from .validation import (
 
 log = logging.getLogger(__name__)
 
+BUNDLED_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
 
 class BGMVault:
     """Manages persistent audio assets for the AL AMR BGM Vault."""
@@ -41,31 +43,29 @@ class BGMVault:
         dest_path = self.base_dir / f"{asset_id}{suffix}"
 
         try:
-            if isinstance(source, bytes):
+            if isinstance(source, (str, Path)):
+                shutil.copy2(source, dest_path)
+            elif isinstance(source, bytes):
                 validate_file_size(len(source))
                 dest_path.write_bytes(source)
-            elif isinstance(source, Path):
-                validate_file_size(source.stat().st_size)
-                shutil.copy2(source, dest_path)
             else:
-                data = source.read()
-                validate_file_size(len(data))
-                dest_path.write_bytes(data)
+                content = source.read()
+                validate_file_size(len(content))
+                dest_path.write_bytes(content)
 
             media_info = validate_audio_stream(dest_path)
-
-            title = infer_title(metadata.name if metadata else None, filename)
-            genre = clean_text(metadata.genre if metadata else "")
-            mood = clean_text(metadata.mood if metadata else "")
-            tags = clean_tags(metadata.tags if metadata else [])
-            mime = get_mime_type(dest_path)
             file_size = dest_path.stat().st_size
+            title = infer_title(metadata.name if metadata else None, filename)
+            genre = clean_text(metadata.genre) if metadata else ""
+            mood = clean_text(metadata.mood) if metadata else ""
+            tags = clean_tags(metadata.tags) if metadata else []
+            mime = get_mime_type(dest_path)
             duration_s = round(media_info.duration_s, 2)
 
             record = BGMAssetRecord(
                 id=asset_id,
                 name=title,
-                file_path=str(dest_path),
+                file_path=str(dest_path.resolve()),
                 genre=genre,
                 mood=mood,
                 tags=tags,
@@ -92,7 +92,19 @@ class BGMVault:
         """Scan persistent storage for audio files missing from the database and register them idempotently."""
         reconciled: list[BGMAssetRecord] = []
         if not self.base_dir.exists():
-            return reconciled
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+
+        # 0. Seed bundled canonical assets into vault directory if missing
+        if BUNDLED_ASSETS_DIR.exists():
+            for p in BUNDLED_ASSETS_DIR.iterdir():
+                if p.is_file() and p.suffix.lower() in self.SUPPORTED_EXTENSIONS:
+                    dest = self.base_dir / p.name
+                    if not dest.exists():
+                        try:
+                            shutil.copy2(p, dest)
+                            log.info("Seeded canonical BGM asset %s into vault persistent storage", p.name)
+                        except Exception as exc:
+                            log.warning("Could not seed canonical asset %s: %s", p.name, exc)
 
         try:
             existing_assets = {a.id: a for a in store.list_bgm_assets()}
@@ -251,52 +263,75 @@ class BGMVault:
         """Resolve a campaign-level BGM selection.
 
         Returns (enabled, asset, path).
-        If asset_id is empty, None, or 'none', returns (False, None, None).
-        Raises BGMUnavailableError if a specified asset is missing, disabled, or unreadable (unless allow_fallback is True).
+        - Explicitly disabled ('none', 'disabled', 'no', 'false'): returns (False, None, None).
+        - Explicit selection: returns exact asset; if missing and allow_fallback=True, recovers with default.
+        - Default (empty/None): enables canonical BGM asset if available in the vault.
         """
-        if not asset_id:
-            return False, None, None
+        self.reconcile_vault()
 
-        cleaned_id = asset_id.strip()
-        if not cleaned_id or cleaned_id.lower() in ("none", "null", "false", "no"):
-            return False, None, None
-
-        asset = self.get_asset(cleaned_id)
-        if not asset:
-            if allow_fallback:
-                log.warning(
-                    "Selected BGM asset '%s' does not exist in the BGM Vault. Proceeding with No BGM.",
-                    cleaned_id,
-                )
+        if asset_id is not None:
+            cleaned_id = str(asset_id).strip()
+            if cleaned_id.lower() in ("none", "null", "false", "no", "disabled", "__none__"):
                 return False, None, None
-            raise BGMUnavailableError(
-                f"Selected BGM asset '{cleaned_id}' does not exist in the BGM Vault."
-            )
 
-        if not asset.enabled:
-            if allow_fallback:
-                log.warning(
-                    "Selected BGM asset '%s' (%s) is currently disabled. Proceeding with No BGM.",
-                    asset.name,
-                    asset.id,
-                )
-                return False, None, None
-            raise BGMUnavailableError(
-                f"Selected BGM asset '{asset.name}' ({asset.id}) is currently disabled."
-            )
+            if cleaned_id:
+                asset = self.get_asset(cleaned_id)
+                if not asset:
+                    if allow_fallback:
+                        log.warning(
+                            "Selected BGM asset '%s' does not exist in the BGM Vault. Recovering with default BGM.",
+                            cleaned_id,
+                        )
+                        fallback_assets = self.list_assets(enabled_only=True)
+                        if fallback_assets:
+                            fb = fallback_assets[0]
+                            return True, fb, Path(fb.file_path)
+                        return False, None, None
+                    raise BGMUnavailableError(
+                        f"Selected BGM asset '{cleaned_id}' does not exist in the BGM Vault."
+                    )
 
-        path = Path(asset.file_path)
-        if not path.exists():
-            if allow_fallback:
-                log.warning(
-                    "BGM audio file for '%s' (%s) missing on disk at %s. Proceeding with No BGM.",
-                    asset.name,
-                    asset.id,
-                    path,
-                )
-                return False, None, None
-            raise BGMUnavailableError(
-                f"BGM audio file for '{asset.name}' ({asset.id}) was not found on disk at {path}."
-            )
+                if not asset.enabled:
+                    if allow_fallback:
+                        log.warning(
+                            "Selected BGM asset '%s' (%s) is disabled. Recovering with default BGM.",
+                            asset.name,
+                            asset.id,
+                        )
+                        fallback_assets = [a for a in self.list_assets(enabled_only=True) if a.id != asset.id]
+                        if fallback_assets:
+                            fb = fallback_assets[0]
+                            return True, fb, Path(fb.file_path)
+                        return False, None, None
+                    raise BGMUnavailableError(
+                        f"Selected BGM asset '{asset.name}' ({asset.id}) is currently disabled."
+                    )
 
-        return True, asset, path
+                path = Path(asset.file_path)
+                if not path.exists():
+                    if allow_fallback:
+                        log.warning(
+                            "BGM audio file for '%s' (%s) missing on disk at %s. Recovering with default BGM.",
+                            asset.name,
+                            asset.id,
+                            path,
+                        )
+                        fallback_assets = [a for a in self.list_assets(enabled_only=True) if a.id != asset.id and Path(a.file_path).exists()]
+                        if fallback_assets:
+                            fb = fallback_assets[0]
+                            return True, fb, Path(fb.file_path)
+                        return False, None, None
+                    raise BGMUnavailableError(
+                        f"BGM audio file for '{asset.name}' ({asset.id}) was not found on disk at {path}."
+                    )
+
+                return True, asset, path
+
+        # DEFAULT: If user has not explicitly disabled BGM and a valid BGM asset exists -> BGM enabled
+        available = self.list_assets(enabled_only=True)
+        for a in available:
+            p = Path(a.file_path)
+            if p.exists():
+                return True, a, p
+
+        return False, None, None

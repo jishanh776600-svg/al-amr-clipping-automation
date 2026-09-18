@@ -224,14 +224,21 @@ class TestBGMVaultLifecycleAndManagement:
         assert vault.get_asset(asset.id) is None
 
 
-class TestCampaignBGMSelectionAndPropagation:
     def test_resolve_campaign_bgm_none(self, initialised_db):
         vault = BGMVault()
-        for opt in (None, "", "none", "NONE", "null", "false", "no"):
+        # Explicit disable
+        for opt in ("none", "NONE", "null", "false", "no", "disabled"):
             enabled, asset, path = vault.resolve_campaign_bgm(opt)
             assert enabled is False
             assert asset is None
             assert path is None
+
+        # Default (None or "") enables canonical BGM asset if available
+        for opt in (None, ""):
+            enabled, asset, path = vault.resolve_campaign_bgm(opt)
+            assert enabled is True
+            assert asset is not None
+            assert path is not None
 
     def test_resolve_campaign_bgm_valid(self, initialised_db):
         vault = BGMVault()
@@ -369,8 +376,21 @@ class TestBGMAPIEndpoints:
 
         job = store.get_job(job_id)
         assert job is not None
-        assert job.settings["bgm_enabled"] is False
-        assert job.settings.get("bgm_asset_id") is None
+        assert job.settings["bgm_enabled"] is True
+        assert job.settings.get("bgm_asset_id") is not None
+
+        # Explicit disable -> disabled
+        resp_disabled = client.post(
+            "/api/jobs",
+            json={
+                "source_id": source.id,
+                "settings": {"bgm_asset_id": "none"},
+            },
+        )
+        assert resp_disabled.status_code == 201
+        job_disabled = store.get_job(resp_disabled.json()["id"])
+        assert job_disabled is not None
+        assert job_disabled.settings["bgm_enabled"] is False
 
     def test_persistent_storage_db_reconciliation(self, initialised_db):
         """Verify that audio files in persistent storage missing from DB are reconciled idempotently."""
@@ -415,11 +435,12 @@ class TestBGMAPIEndpoints:
             vault.resolve_campaign_bgm(stale_id, allow_fallback=False)
         assert f"Selected BGM asset '{stale_id}' does not exist" in str(exc_info.value)
 
-        # Fallback mode proceeds gracefully with (False, None, None)
+        # Fallback mode proceeds gracefully by recovering with default canonical track
         enabled, asset, path = vault.resolve_campaign_bgm(stale_id, allow_fallback=True)
-        assert enabled is False
-        assert asset is None
-        assert path is None
+        assert enabled is True
+        assert asset is not None
+        assert path is not None
+        assert path.exists()
 
     def test_job_creation_with_stale_bgm_asset_id_recovers_cleanly(
         self, client: TestClient, source: Source
@@ -462,6 +483,6 @@ class TestBGMAPIEndpoints:
         assert resp.status_code == 201, resp.text
         job = store.get_job(resp.json()["id"])
         assert job is not None
-        assert job.settings["bgm_enabled"] is False
+        assert job.settings["bgm_enabled"] is True
         assert job.settings.get("campaign") is None
 

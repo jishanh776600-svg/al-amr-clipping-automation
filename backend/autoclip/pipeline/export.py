@@ -64,6 +64,7 @@ class ExportRequest:
     burn_captions: bool = True
     ass_path: Path | None = None
     audio_path: Path | None = None
+    visual_filter: str = "original"
 
     @property
     def duration_s(self) -> float:
@@ -144,6 +145,15 @@ def build_video_filtergraph(
     else:
         parts.append(f"{''.join(labels)}concat=n={len(segments)}:v=1:a=0[vcat]")
         current = "[vcat]"
+
+    # Apply visual filter before captions without modifying source media
+    filter_id = (request.visual_filter or "original").strip().lower()
+    if filter_id not in ("original", "none", "null", ""):
+        from .filters import get_filter
+        vf = get_filter(filter_id)
+        if vf and vf.ffmpeg_expr and vf.ffmpeg_expr != "null":
+            parts.append(f"{current}{vf.ffmpeg_expr}[vfiltered]")
+            current = "[vfiltered]"
 
     if request.burn_captions and subtitle_name is not None:
         # Bare relative names — ffmpeg runs with its cwd set to the render

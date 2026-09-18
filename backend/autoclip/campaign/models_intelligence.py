@@ -431,4 +431,94 @@ class CampaignSpecification:
             output_count=int(self.output_count.value),
             maximum_silence_seconds=float(self.max_silence_s.value),
             minimum_content_density=float(self.min_speech_density.value),
+            hashtags=[item.value for item in self.hashtags],
+            title_patterns=[item.value for item in self.title_patterns],
+            description_guidelines=[item.value for item in self.description_guidelines],
+            required_mentions=[item.value for item in self.required_mentions],
+            cta_instructions=[item.value for item in self.cta_instructions],
+            branding_rules=[item.value for item in self.branding_rules],
         )
+
+    @classmethod
+    def from_campaign_brief(
+        cls,
+        brief: CampaignBrief | dict[str, Any],
+        filename: str = "",
+    ) -> CampaignSpecification:
+        """Construct a normalized CampaignSpecification from a CampaignBrief or parsed dictionary."""
+        if isinstance(brief, dict):
+            b_data = brief
+        elif hasattr(brief, "model_dump"):
+            b_data = brief.model_dump(mode="json")
+        else:
+            b_data = dict(brief)
+
+        spec = cls(
+            campaign_id=b_data.get("campaign_id") or generate_campaign_id(),
+            title=b_data.get("name", "Normalized Campaign"),
+            description=b_data.get("description", ""),
+            objective=b_data.get("topic_context", ""),
+            target_audience=b_data.get("target_audience", ""),
+        )
+
+        for t in b_data.get("required_topics", []):
+            spec.desired_topics.append(RequirementItem(value=t, confidence="explicit", source_filename=filename))
+        for c in b_data.get("required_concepts", []):
+            spec.required_themes.append(RequirementItem(value=c, confidence="explicit", source_filename=filename))
+        for k in b_data.get("optional_keywords", []):
+            spec.keywords.append(RequirementItem(value=k, confidence="inferred", source_filename=filename))
+        for b in b_data.get("banned_words", []):
+            spec.banned_words.append(RequirementItem(value=b, confidence="explicit", source_filename=filename))
+        for b in b_data.get("banned_topics", []):
+            spec.banned_topics.append(RequirementItem(value=b, confidence="explicit", source_filename=filename))
+
+        if "minimum_duration" in b_data:
+            spec.duration_min_s = RequirementItem(value=float(b_data["minimum_duration"]), confidence="explicit", source_filename=filename)
+        if "maximum_duration" in b_data:
+            spec.duration_max_s = RequirementItem(value=float(b_data["maximum_duration"]), confidence="explicit", source_filename=filename)
+        if b_data.get("preferred_duration"):
+            spec.duration_preferred_s = RequirementItem(value=float(b_data["preferred_duration"]), confidence="inferred", source_filename=filename)
+
+        if "hook_required" in b_data:
+            spec.hook_required = RequirementItem(value=bool(b_data["hook_required"]), confidence="explicit", source_filename=filename)
+        if "hook_window_seconds" in b_data:
+            spec.hook_window_s = RequirementItem(value=float(b_data["hook_window_seconds"]), confidence="inferred", source_filename=filename)
+        if "minimum_hook_score" in b_data:
+            spec.hook_min_score = RequirementItem(value=float(b_data["minimum_hook_score"]), confidence="inferred", source_filename=filename)
+        for ht in b_data.get("hook_types", []):
+            spec.hook_types.append(RequirementItem(value=ht, confidence="inferred", source_filename=filename))
+
+        if "cta_required" in b_data:
+            spec.cta_required = RequirementItem(value=bool(b_data["cta_required"]), confidence="explicit", source_filename=filename)
+        for ct in b_data.get("cta_types", []):
+            spec.cta_types.append(RequirementItem(value=ct, confidence="inferred", source_filename=filename))
+        if "cta_window_seconds" in b_data:
+            spec.cta_window_s = RequirementItem(value=float(b_data["cta_window_seconds"]), confidence="inferred", source_filename=filename)
+        for ci in b_data.get("cta_instructions", []):
+            spec.cta_instructions.append(RequirementItem(value=ci, confidence="explicit", source_filename=filename))
+        if b_data.get("cta_text"):
+            spec.cta_instructions.append(RequirementItem(value=b_data["cta_text"], confidence="explicit", source_filename=filename))
+
+        for h in b_data.get("hashtags", []):
+            spec.hashtags.append(RequirementItem(value=h, confidence="explicit", source_filename=filename))
+        for p in b_data.get("title_patterns", []):
+            spec.title_patterns.append(RequirementItem(value=p, confidence="explicit", source_filename=filename))
+        for g in b_data.get("description_guidelines", []):
+            spec.description_guidelines.append(RequirementItem(value=g, confidence="explicit", source_filename=filename))
+        for m in b_data.get("required_mentions", []):
+            spec.required_mentions.append(RequirementItem(value=m, confidence="explicit", source_filename=filename))
+        for r in b_data.get("branding_rules", []):
+            spec.branding_rules.append(RequirementItem(value=r, confidence="explicit", source_filename=filename))
+
+        if "tone" in b_data:
+            spec.tone = RequirementItem(value=str(b_data["tone"]), confidence="inferred", source_filename=filename)
+        if "pacing" in b_data:
+            spec.pacing = RequirementItem(value=str(b_data["pacing"]), confidence="inferred", source_filename=filename)
+        if "aspect_ratio" in b_data:
+            spec.aspect_ratio = RequirementItem(value=str(b_data["aspect_ratio"]), confidence="inferred", source_filename=filename)
+        if "caption_preset" in b_data:
+            spec.caption_preset = RequirementItem(value=str(b_data["caption_preset"]), confidence="inferred", source_filename=filename)
+        if "output_count" in b_data:
+            spec.output_count = RequirementItem(value=int(b_data["output_count"]), confidence="inferred", source_filename=filename)
+
+        return spec

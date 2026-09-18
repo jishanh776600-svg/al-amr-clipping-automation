@@ -71,6 +71,17 @@ class CampaignBrief(BaseModel):
     caption_preset: str = "bold_pop"
     output_count: int = Field(default=5, ge=1, le=50)
 
+    # SEO & Campaign Metadata Constraints
+    hashtags: list[str] = Field(default_factory=list)
+    title_patterns: list[str] = Field(default_factory=list)
+    description_guidelines: list[str] = Field(default_factory=list)
+    required_mentions: list[str] = Field(default_factory=list)
+    cta_instructions: list[str] = Field(default_factory=list)
+    cta_text: str = ""
+    branding_rules: list[str] = Field(default_factory=list)
+    mandatory_rules: list[str] = Field(default_factory=list)
+    preference_rules: list[str] = Field(default_factory=list)
+
 
 class RuleResult(BaseModel):
     """Detailed result of a single rule check."""

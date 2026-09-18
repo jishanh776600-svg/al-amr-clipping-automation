@@ -1038,6 +1038,12 @@ class PipelineRunner:
         }
         store.update_job(self.job.id, settings=self.job.settings)
 
+        selected_filter = (
+            self.job.settings.get("visual_filter")
+            or (self.job.settings.get("export") or {}).get("visual_filter")
+            or getattr(self.settings.export, "visual_filter", None)
+            or "original"
+        )
         selected_style = (
             self.job.settings.get("caption_style")
             or (self.job.settings.get("export") or {}).get("caption_style")
@@ -1087,6 +1093,7 @@ class PipelineRunner:
                 cancelled=self._is_cancelled,
                 min_duration_s=min_dur,
                 max_duration_s=max_dur,
+                visual_filter=selected_filter,
             )
             final_render_records.append(render_rec)
 

@@ -12,6 +12,8 @@ import {
   type ProviderStatus,
   type CampaignPreset,
   type CampaignSpecification,
+  type CaptionStyleItem,
+  type VisualFilter,
 } from '../api'
 import { ErrorNote } from '../components/ErrorNote'
 
@@ -38,8 +40,13 @@ export function Ingest() {
   // Destinations & Archival
   const [publishDestinations, setPublishDestinations] = useState<string[]>(['telegram', 'drive'])
 
-  // Caption / Subtitle Style Selection (Step 19 Operator Choice)
-  const [captionStyle, setCaptionStyle] = useState<'classic_professional' | 'rich_dynamic'>('classic_professional')
+  // Caption / Subtitle Style Selection (25 Options)
+  const [captionStylesList, setCaptionStylesList] = useState<CaptionStyleItem[]>([])
+  const [captionStyle, setCaptionStyle] = useState<string>('classic_professional')
+
+  // Visual Filter Selection (20+ Options)
+  const [visualFiltersList, setVisualFiltersList] = useState<VisualFilter[]>([])
+  const [visualFilter, setVisualFilter] = useState<string>('original')
 
   // Step 20: BGM Vault & Campaign Background Music (Step 20 Operator Choice)
   const [bgmAssets, setBgmAssets] = useState<BGMAsset[]>([])
@@ -68,6 +75,12 @@ export function Ingest() {
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
     api.providerStatus().then(setProviders).catch(() => undefined)
+    api.listCaptionStyles().then((list) => {
+      if (list && list.length > 0) setCaptionStylesList(list)
+    }).catch(() => undefined)
+    api.listVisualFilters().then((list) => {
+      if (list && list.length > 0) setVisualFiltersList(list)
+    }).catch(() => undefined)
     api.listBGMAssets().then((list) => {
       setBgmAssets(list)
       setSelectedBgmId((current) => {
@@ -309,10 +322,13 @@ export function Ingest() {
       form.append('caption_style', captionStyle)
       jobOverrides.caption_style = captionStyle
 
-      // Step 20 BGM Selection: Only pass BGM asset ID if verified to exist in vault and enabled
-      const effectiveBgmId = bgmAssets.some((a) => a.id === selectedBgmId && a.enabled)
-        ? selectedBgmId
-        : ''
+      form.append('visual_filter', visualFilter)
+      jobOverrides.visual_filter = visualFilter
+
+      // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id -> Exact Track
+      const effectiveBgmId = selectedBgmId === 'none'
+        ? 'none'
+        : (bgmAssets.some((a) => a.id === selectedBgmId && a.enabled) ? selectedBgmId : '')
       form.append('bgm_asset_id', effectiveBgmId)
       jobOverrides.bgm_asset_id = effectiveBgmId || null
 
@@ -823,94 +839,184 @@ export function Ingest() {
         </div>
       </div>
 
-      {/* STEP 19: Operator-Selectable Caption / Subtitle Style */}
+      {/* SUBTITLE TEMPLATE SELECTION (25 STYLES) */}
       <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3">
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
-                CAPTION & SUBTITLE STYLE
+                CAPTION & SUBTITLE TEMPLATES
               </span>
               <span className="text-[10px] rounded bg-sodium-500/10 text-sodium-400 px-2 py-0.5 border border-sodium-500/20 font-medium">
-                Step 19 Operator Choice
+                25 Canonical Styles
               </span>
             </div>
             <p className="text-xs text-ink-400 mt-1">
-              Select the typography and pacing aesthetic for generated vertical clips. AL AMR respects operator intent and never auto-guesses caption styles.
+              Select the typography and pacing aesthetic for generated vertical clips. Every template enforces 9:16 safe margins and word-level timing.
             </p>
+          </div>
+          <div className="flex items-center gap-2 mt-2 sm:mt-0">
+            <label className="text-xs text-ink-300 font-medium whitespace-nowrap">Preset:</label>
+            <select
+              value={captionStyle}
+              onChange={(e) => setCaptionStyle(e.target.value)}
+              className="bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-2.5 py-1.5 focus:border-sodium-500"
+            >
+              {(captionStylesList.length > 0 ? captionStylesList : [
+                { key: 'classic_professional', label: 'Classic Professional' },
+                { key: 'rich_dynamic', label: 'Rich Dynamic' },
+                { key: 'clean_lower', label: 'Clean Lower' },
+                { key: 'bold_pop', label: 'Bold Pop' },
+                { key: 'karaoke_fill', label: 'Karaoke Fill' },
+                { key: 'boxed', label: 'Boxed' },
+                { key: 'neon_glow', label: 'Neon Glow' },
+                { key: 'minimal_luxury', label: 'Minimal Luxury' },
+                { key: 'cyber_glitch', label: 'Cyber Glitch' },
+                { key: 'editorial_serif', label: 'Editorial Serif' },
+                { key: 'fire_punch', label: 'Fire Punch' },
+                { key: 'sunset_warmth', label: 'Sunset Warmth' },
+                { key: 'ocean_breeze', label: 'Ocean Breeze' },
+                { key: 'monochrome_chic', label: 'Monochrome Chic' },
+                { key: 'retro_arcade', label: 'Retro Arcade' },
+                { key: 'podcast_subtle', label: 'Podcast Subtle' },
+                { key: 'headline_impact', label: 'Headline Impact' },
+                { key: 'midnight_blue', label: 'Midnight Blue' },
+                { key: 'pastel_dream', label: 'Pastel Dream' },
+                { key: 'crimson_shadow', label: 'Crimson Shadow' },
+                { key: 'emerald_elite', label: 'Emerald Elite' },
+                { key: 'golden_hour', label: 'Golden Hour' },
+                { key: 'comic_action', label: 'Comic Action' },
+                { key: 'tech_clean', label: 'Tech Clean' },
+                { key: 'slate_modern', label: 'Slate Modern' },
+              ]).map((st) => (
+                <option key={st.key} value={st.key}>
+                  {st.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 mt-3">
-          {/* Option 1: Classic Professional */}
-          <label
-            className={`flex flex-col justify-between p-4 rounded-lg border cursor-pointer transition-all ${
-              captionStyle === 'classic_professional'
-                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
-                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <input
-                    type="radio"
-                    name="caption_style"
-                    value="classic_professional"
-                    checked={captionStyle === 'classic_professional'}
-                    onChange={() => setCaptionStyle('classic_professional')}
-                    className="text-sodium-500 focus:ring-sodium-500"
-                  />
-                  <span className="font-semibold text-sm text-ink-100">Classic Professional</span>
+        <div className="grid gap-3 sm:grid-cols-4 mt-3">
+          {[
+            { key: 'classic_professional', label: 'Classic Professional', tag: 'Default', desc: 'Minimal clean Inter typography with subtle word pop.' },
+            { key: 'rich_dynamic', label: 'Rich Dynamic', tag: 'Kinetic', desc: 'Anton with 116% scale pop, hook punch & climax pop.' },
+            { key: 'minimal_luxury', label: 'Minimal Luxury', tag: 'Luxury', desc: 'Italic serif with champagne & gold active accents.' },
+            { key: 'neon_glow', label: 'Neon Glow', tag: 'Cyberpunk', desc: 'Electric cyan and neon magenta active highlights.' },
+          ].map((item) => (
+            <div
+              key={item.key}
+              onClick={() => setCaptionStyle(item.key)}
+              className={`p-3 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                captionStyle === item.key
+                  ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                  : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-ink-100">{item.label}</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-sodium-400">
+                    {item.tag}
+                  </span>
                 </div>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-ink-800 text-ink-300">
-                  Default
+                <p className="text-[11px] text-ink-400 mt-1.5 leading-relaxed">{item.desc}</p>
+              </div>
+              <div className="mt-2 text-[10px] font-mono text-ink-500 flex items-center gap-1">
+                <span className={captionStyle === item.key ? 'text-sodium-400' : 'text-ink-500'}>
+                  {captionStyle === item.key ? '● Active' : '○ Select'}
                 </span>
               </div>
-              <p className="text-xs text-ink-400 mt-2 leading-relaxed">
-                Clean, modern, and minimal typography (Inter). Features subtle word highlighting, safe lower-third placement, and restrained transitions.
-              </p>
             </div>
-            <div className="mt-3 pt-3 border-t border-ink-800/60 flex items-center justify-between text-[11px] text-ink-400">
-              <span>Best for: Podcasts, Interviews, Talks</span>
-              <span className="font-mono text-ink-300">Inter · 102% pop</span>
-            </div>
-          </label>
+          ))}
+        </div>
+      </div>
 
-          {/* Option 2: Rich Dynamic */}
-          <label
-            className={`flex flex-col justify-between p-4 rounded-lg border cursor-pointer transition-all ${
-              captionStyle === 'rich_dynamic'
-                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
-                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
-            }`}
-          >
-            <div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <input
-                    type="radio"
-                    name="caption_style"
-                    value="rich_dynamic"
-                    checked={captionStyle === 'rich_dynamic'}
-                    onChange={() => setCaptionStyle('rich_dynamic')}
-                    className="text-sodium-500 focus:ring-sodium-500"
-                  />
-                  <span className="font-semibold text-sm text-ink-100">Rich Dynamic</span>
+      {/* VISUAL FILTER SYSTEM (20+ FILTERS) */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                VISUAL FILTER SYSTEM
+              </span>
+              <span className="text-[10px] rounded bg-purple-500/10 text-purple-400 px-2 py-0.5 border border-purple-500/20 font-medium">
+                20+ Grade Profiles
+              </span>
+            </div>
+            <p className="text-xs text-ink-400 mt-1">
+              Applied in FFmpeg before captions without modifying source media. Burned subtitles remain crisp, vibrant, and clean.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 mt-2 sm:mt-0">
+            <label className="text-xs text-ink-300 font-medium whitespace-nowrap">Filter:</label>
+            <select
+              value={visualFilter}
+              onChange={(e) => setVisualFilter(e.target.value)}
+              className="bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-2.5 py-1.5 focus:border-sodium-500"
+            >
+              {(visualFiltersList.length > 0 ? visualFiltersList : [
+                { id: 'original', name: 'Original', description: 'Source colors without grading' },
+                { id: 'black_and_white', name: 'Black & White', description: 'Balanced B&W' },
+                { id: 'grayscale', name: 'Grayscale', description: 'Linear luminance' },
+                { id: 'vintage', name: 'Vintage', description: 'Warm nostalgic tones' },
+                { id: 'warm', name: 'Warm', description: 'Golden sun warm tone' },
+                { id: 'cool', name: 'Cool', description: 'Crisp modern bluish tone' },
+                { id: 'high_contrast', name: 'High Contrast', description: 'Punchy shadows' },
+                { id: 'low_contrast', name: 'Low Contrast', description: 'Soft cinematic shadows' },
+                { id: 'cinematic', name: 'Cinematic', description: 'Teal & orange film grade' },
+                { id: 'faded', name: 'Faded', description: 'Lifted shadows matte look' },
+                { id: 'sepia', name: 'Sepia', description: 'Antique monochrome' },
+                { id: 'noir', name: 'Noir', description: 'Crushed blacks dramatic monochrome' },
+                { id: 'bright', name: 'Bright', description: 'High-key bright lighting boost' },
+                { id: 'dark', name: 'Dark', description: 'Low-key moody shadow depth' },
+                { id: 'muted', name: 'Muted', description: 'Subdued desaturated palette' },
+                { id: 'sharp', name: 'Sharp', description: 'Enhanced edge crispness' },
+                { id: 'soft', name: 'Soft', description: 'Dreamy soft diffusion glow' },
+                { id: 'retro', name: 'Retro', description: 'Saturated 80s videotape' },
+                { id: 'film', name: 'Film', description: 'Analog 35mm grain emulation' },
+                { id: 'monochrome', name: 'Monochrome', description: 'Contemporary studio B&W' },
+              ]).map((vf) => (
+                <option key={vf.id} value={vf.id}>
+                  {vf.name} - {vf.description}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-4 mt-3">
+          {[
+            { id: 'original', name: 'Original', tag: 'Natural', desc: 'Pure source colors without color grading.' },
+            { id: 'cinematic', name: 'Cinematic', tag: 'Teal/Orange', desc: 'Rich cinematic contrast with stylized shadows.' },
+            { id: 'vintage', name: 'Vintage', tag: 'Nostalgic', desc: 'Warm 70s film curve with mellow highlights.' },
+            { id: 'noir', name: 'Noir', tag: 'Monochrome', desc: 'Dramatic deep blacks and high-contrast punch.' },
+          ].map((item) => (
+            <div
+              key={item.id}
+              onClick={() => setVisualFilter(item.id)}
+              className={`p-3 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                visualFilter === item.id
+                  ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                  : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-ink-100">{item.name}</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-purple-400">
+                    {item.tag}
+                  </span>
                 </div>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-sodium-500/20 text-sodium-300 border border-sodium-500/30">
-                  Kinetic
+                <p className="text-[11px] text-ink-400 mt-1.5 leading-relaxed">{item.desc}</p>
+              </div>
+              <div className="mt-2 text-[10px] font-mono text-ink-500 flex items-center gap-1">
+                <span className={visualFilter === item.id ? 'text-sodium-400' : 'text-ink-500'}>
+                  {visualFilter === item.id ? '● Active' : '○ Select'}
                 </span>
               </div>
-              <p className="text-xs text-ink-400 mt-2 leading-relaxed">
-                Visually engaging short-form captions (Anton). Features active-word pop scaling (1.16x), hook emphasis, climax pop, and CTA highlights.
-              </p>
             </div>
-            <div className="mt-3 pt-3 border-t border-ink-800/60 flex items-center justify-between text-[11px] text-ink-400">
-              <span>Best for: High-Energy, Shorts, Reels</span>
-              <span className="font-mono text-sodium-400">Anton · 116% pop</span>
-            </div>
-          </label>
+          ))}
         </div>
       </div>
 
@@ -934,7 +1040,7 @@ export function Ingest() {
               </span>
             </div>
             <p className="text-xs text-ink-400 mt-1">
-              Select one soundtrack from the BGM Vault for this campaign, or choose No BGM. AL AMR never auto-guesses music.
+              Select one soundtrack from the BGM Vault for this campaign, or choose No BGM. AL AMR auto-normalizes loudness to -14.0 LUFS with -1.5 dBTP and 16 dB sidechain voice ducking.
             </p>
           </div>
           <button
@@ -949,7 +1055,7 @@ export function Ingest() {
 
         {/* Selected BGM Indicator */}
         <div className="grid gap-3 sm:grid-cols-3 mt-4">
-          {/* Card 0: No BGM */}
+          {/* Card 1: Default BGM (Canonical Auto) */}
           <label
             className={`flex flex-col justify-between p-3.5 rounded-lg border cursor-pointer transition-all ${
               selectedBgmId === ''
@@ -968,10 +1074,44 @@ export function Ingest() {
                     onChange={() => setSelectedBgmId('')}
                     className="text-sodium-500 focus:ring-sodium-500"
                   />
+                  <span className="font-semibold text-sm text-ink-100">Default BGM</span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-sodium-500/20 text-sodium-300 border border-sodium-500/30">
+                  Default
+                </span>
+              </div>
+              <p className="text-xs text-ink-400 mt-2">
+                Auto-mixes canonical soundtrack with 16 dB voice ducking and -14.0 LUFS master normalization.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-ink-800/60 text-[11px] text-sodium-400 font-mono">
+              Canonical Audio · -14 LUFS
+            </div>
+          </label>
+
+          {/* Card 2: No BGM (Voice Only) */}
+          <label
+            className={`flex flex-col justify-between p-3.5 rounded-lg border cursor-pointer transition-all ${
+              selectedBgmId === 'none'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="bgm_selection"
+                    value="none"
+                    checked={selectedBgmId === 'none'}
+                    onChange={() => setSelectedBgmId('none')}
+                    className="text-sodium-500 focus:ring-sodium-500"
+                  />
                   <span className="font-semibold text-sm text-ink-100">No BGM</span>
                 </div>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-ink-800 text-ink-400">
-                  Default
+                  Voice Only
                 </span>
               </div>
               <p className="text-xs text-ink-400 mt-2">
@@ -979,7 +1119,7 @@ export function Ingest() {
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-ink-800/60 text-[11px] text-ink-500">
-              Original voice only
+              Clean speech master
             </div>
           </label>
 

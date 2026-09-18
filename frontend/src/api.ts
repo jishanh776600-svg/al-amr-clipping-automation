@@ -838,6 +838,19 @@ export interface SystemStatus {
   diarization_available: boolean
 }
 
+export interface VisualFilter {
+  id: string
+  name: string
+  description: string
+}
+
+export interface CaptionStyleItem {
+  key: string
+  label: string
+  description: string
+  preview: Record<string, any>
+}
+
 export interface JobSettingsOverrides {
   provider?: string
   whisper_model?: string
@@ -847,6 +860,8 @@ export interface JobSettingsOverrides {
   max_duration_s?: number
   max_clips?: number
   caption_style?: string
+  visual_filter?: string
+  bgm_asset_id?: string
   ratio?: string
   campaign?: CampaignBrief | null
 }
@@ -1087,6 +1102,9 @@ export const api = {
 
   streamExportUrl: (exportId: string) => resolveUrl(`/api/exports/${exportId}/stream`),
   ready: () => request<{ status: string; ready: boolean; checks: Record<string, any> }>('/ready'),
+
+  listVisualFilters: () => request<VisualFilter[]>('/api/filters'),
+  listCaptionStyles: () => request<CaptionStyleItem[]>('/api/caption-styles'),
 
   getCropPath: (clipId: string) => request<CropPath>(`/api/clips/${clipId}/crop-path`),
   getClipWords: (clipId: string) => request<Word[]>(`/api/clips/${clipId}/words`),

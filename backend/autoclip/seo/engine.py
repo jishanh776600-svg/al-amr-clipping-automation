@@ -65,7 +65,7 @@ class SEOEngine:
         # 5. Generate CTA
         generated_cta = self._synthesize_cta(topic=topic_cue)
 
-        # 6. Evaluate Quality Gate
+        # 6. Evaluate Quality Gate & Deterministic Repair Loop
         gate_res = self.quality_gate.evaluate(
             title=generated_title,
             description=generated_desc,
@@ -73,6 +73,78 @@ class SEOEngine:
             mentions=generated_mentions,
             cta=generated_cta,
         )
+
+        repaired = False
+        if not gate_res.is_compliant:
+            repaired = True
+            log.info("Repairing SEO metadata violations for clip %s: %s", clip.id, gate_res.errors)
+
+            # Repair hashtags: ensure all required campaign hashtags are present at the beginning
+            for rh in self.reqs.required_hashtags:
+                norm_rh = rh if rh.startswith("#") else f"#{rh}"
+                if norm_rh.lower() not in [h.lower() for h in generated_hashtags]:
+                    generated_hashtags.insert(0, norm_rh)
+
+            # Repair mentions: ensure all required mentions are in mentions list and description
+            for rm in self.reqs.required_mentions:
+                norm_rm = rm if rm.startswith("@") else f"@{rm}"
+                if norm_rm.lower() not in [m.lower() for m in generated_mentions]:
+                    generated_mentions.append(norm_rm)
+                if norm_rm.lower() not in generated_desc.lower():
+                    generated_desc += f"\n\nFeaturing {norm_rm}"
+
+            # Repair CTA: ensure mandatory CTA is in CTA and description
+            if self.reqs.cta_required and not gate_res.matched_requirements.get("cta_satisfied"):
+                cta_choice = self.reqs.cta_instructions[0] if self.reqs.cta_instructions else "👉 Follow for more and comment below!"
+                generated_cta = cta_choice
+                if cta_choice.lower() not in generated_desc.lower():
+                    generated_desc += f"\n\n{cta_choice}"
+
+            # Repair required phrases: ensure key campaign phrases appear in description or title
+            for rp in self.reqs.required_phrases:
+                if rp.lower() not in generated_title.lower() and rp.lower() not in generated_desc.lower():
+                    generated_desc += f"\n\nFocus: {rp}"
+
+            # Repair URL: ensure campaign URL is present
+            if self.reqs.campaign_url and not gate_res.matched_requirements.get("url_satisfied"):
+                if self.reqs.campaign_url.lower() not in generated_desc.lower():
+                    generated_desc += f"\n\n🔗 {self.reqs.campaign_url.strip()}"
+
+            # Repair prohibited terms: scrub from title, description, and hashtags
+            for pt in self.reqs.prohibited_terms:
+                pt_clean = pt.strip()
+                if not pt_clean:
+                    continue
+                generated_title = re.sub(rf"\b{re.escape(pt_clean)}\b", "", generated_title, flags=re.IGNORECASE).strip()
+                generated_desc = re.sub(rf"\b{re.escape(pt_clean)}\b", "", generated_desc, flags=re.IGNORECASE).strip()
+                generated_hashtags = [h for h in generated_hashtags if pt_clean.lower() not in h.lower()]
+
+            # Re-evaluate after repair
+            gate_res = self.quality_gate.evaluate(
+                title=generated_title,
+                description=generated_desc,
+                hashtags=generated_hashtags,
+                mentions=generated_mentions,
+                cta=generated_cta,
+            )
+            log.info("After repair loop: status=%s, score=%.1f, errors=%s", gate_res.status.value, gate_res.score, gate_res.errors)
+
+        compliance_record = {
+            "passed": gate_res.is_compliant,
+            "status": gate_res.status.value,
+            "score": gate_res.score,
+            "title": generated_title,
+            "caption": generated_title,
+            "description": generated_desc,
+            "tags": generated_hashtags,
+            "hashtags": generated_hashtags,
+            "cta": generated_cta,
+            "mentions": generated_mentions,
+            "violations": gate_res.errors,
+            "warnings": gate_res.warnings,
+            "matched_requirements": gate_res.matched_requirements,
+            "repaired": repaired,
+        }
 
         record = ClipMetadataRecord(
             id=existing.id if existing else new_id(),
@@ -98,6 +170,7 @@ class SEOEngine:
                 "generated_at": utcnow(),
                 "rank": clip.rank,
                 "score": clip.score,
+                "campaign_compliance": compliance_record,
             },
             created_at=existing.created_at if existing else utcnow(),
             updated_at=utcnow(),
@@ -170,6 +243,12 @@ class SEOEngine:
 
         if self.reqs.required_mentions:
             parts.append("Featuring: " + " ".join(self.reqs.required_mentions))
+
+        if self.reqs.description_guidelines:
+            for dg in self.reqs.description_guidelines:
+                clean_dg = dg.strip()
+                if clean_dg and clean_dg not in parts:
+                    parts.append(clean_dg)
 
         desc = "\n\n".join(parts)
         if len(desc) > self.reqs.max_description_length:

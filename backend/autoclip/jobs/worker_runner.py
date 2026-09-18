@@ -316,6 +316,62 @@ async def async_main() -> None:
     if hasattr(source, "source_acquisition") and source.source_acquisition:
         job_settings["source_acquisition"] = source.source_acquisition
 
+    # 4b. Ensure BGM assets are available and properly referenced on worker filesystem
+    bgm_enabled = bool(job_settings.get("bgm_enabled", False))
+    bgm_asset_id = job_settings.get("bgm_asset_id")
+    from ..bgm.vault import BGMVault
+    vault = BGMVault()
+    vault.reconcile_vault()
+
+    if bgm_enabled:
+        local_asset = vault.get_asset(bgm_asset_id) if bgm_asset_id else None
+        local_path = Path(local_asset.file_path) if local_asset and Path(local_asset.file_path).is_file() else None
+
+        # If missing locally and callback_url available, attempt download from control plane stream
+        if not local_path and bgm_asset_id and args.callback_url:
+            base_url = args.callback_url.split("/api/jobs")[0] if "/api/jobs" in args.callback_url else ""
+            if base_url:
+                stream_url = f"{base_url}/api/bgm/{bgm_asset_id}/stream"
+                log.info("Downloading BGM asset %s from control plane stream %s...", bgm_asset_id, stream_url)
+                dl_dest = vault.base_dir / f"{bgm_asset_id}.wav"
+                try:
+                    dl_headers: dict[str, str] = {}
+                    if args.callback_token:
+                        dl_headers["Authorization"] = f"Bearer {args.callback_token}"
+                        dl_headers["X-API-Key"] = args.callback_token
+                    with httpx.stream("GET", stream_url, headers=dl_headers, timeout=60.0) as r:
+                        if r.status_code == 200:
+                            with open(dl_dest, "wb") as f:
+                                for chunk in r.iter_bytes(1024 * 64):
+                                    f.write(chunk)
+                            vault.reconcile_vault()
+                            local_asset = vault.get_asset(bgm_asset_id)
+                            if dl_dest.is_file():
+                                local_path = dl_dest
+                except Exception as exc:
+                    log.warning("Could not download BGM asset %s: %s", bgm_asset_id, exc)
+
+        # If still missing, check if any local vault asset can serve as fallback
+        if not local_path or not local_path.is_file():
+            assets = vault.list_assets(enabled_only=True)
+            for a in assets:
+                if Path(a.file_path).is_file():
+                    local_asset = a
+                    local_path = Path(a.file_path)
+                    log.info("Worker fallback to local BGM asset %s (%s)", a.name, a.id)
+                    break
+
+        if local_path and local_path.is_file():
+            job_settings["bgm_enabled"] = True
+            job_settings["bgm_asset_id"] = local_asset.id if local_asset else bgm_asset_id
+            job_settings["bgm_asset_name"] = local_asset.name if local_asset else "BGM"
+            job_settings["bgm_asset_path"] = str(local_path.resolve())
+            log.info("Resolved worker BGM asset path: %s", job_settings["bgm_asset_path"])
+        else:
+            log.warning("No BGM asset available on worker; proceeding with bgm_enabled=False")
+            job_settings["bgm_enabled"] = False
+            job_settings["bgm_asset_path"] = None
+
     job = Job(
         id=args.job_id,
         source_id=source.id,

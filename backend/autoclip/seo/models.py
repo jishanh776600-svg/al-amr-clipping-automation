@@ -69,6 +69,10 @@ class ComplianceResult:
     def is_publish_ready(self) -> bool:
         return self.status in (ComplianceStatus.SEO_PASS, ComplianceStatus.SEO_WARN) and len(self.errors) == 0
 
+    @property
+    def is_compliant(self) -> bool:
+        return self.is_publish_ready
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status.value,

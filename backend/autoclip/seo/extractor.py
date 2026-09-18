@@ -28,11 +28,21 @@ def _normalize_hashtag(hashtag: str) -> str:
 
 
 def extract_campaign_seo_requirements(
-    campaign_spec: CampaignSpecification | None,
+    campaign_spec: Any | None,
 ) -> CampaignSEORequirements:
     """Authoritatively extracts SEO requirements without duplicating campaign intelligence."""
     if campaign_spec is None:
         return CampaignSEORequirements()
+
+    from autoclip.campaign.models_intelligence import CampaignSpecification
+
+    if isinstance(campaign_spec, dict):
+        if "desired_topics" in campaign_spec and "campaign_id" in campaign_spec:
+            campaign_spec = CampaignSpecification.from_dict(campaign_spec)
+        else:
+            campaign_spec = CampaignSpecification.from_campaign_brief(campaign_spec)
+    elif hasattr(campaign_spec, "required_topics") and not hasattr(campaign_spec, "desired_topics"):
+        campaign_spec = CampaignSpecification.from_campaign_brief(campaign_spec)
 
     # 1. Required phrases / keywords
     required_phrases = []

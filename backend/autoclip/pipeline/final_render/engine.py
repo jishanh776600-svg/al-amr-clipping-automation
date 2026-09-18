@@ -44,6 +44,7 @@ class FinalRenderEngine:
         cancelled: Callable[[], bool] | None = None,
         min_duration_s: float | None = None,
         max_duration_s: float | None = None,
+        visual_filter: str = "original",
     ) -> tuple[Path, FinalRenderRecord]:
         """Renders, evaluates, and packages one final clip.
 
@@ -151,6 +152,7 @@ class FinalRenderEngine:
             burn_captions=bool(ass_path and Path(ass_path).is_file()),
             ass_path=ass_path,
             audio_path=audio_path,
+            visual_filter=visual_filter,
         )
 
         export_settings = ExportSettings(

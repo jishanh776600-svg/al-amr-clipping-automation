@@ -359,6 +359,13 @@ async def caption_styles() -> list[CaptionStyleOut]:
     ]
 
 
+@router.get("/filters")
+async def list_visual_filters() -> list[dict[str, Any]]:
+    """Style filters, returning 20+ canonical options for the UI and clients."""
+    from autoclip.pipeline.filters import list_filters
+    return [f.to_dict() for f in list_filters()]
+
+
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------

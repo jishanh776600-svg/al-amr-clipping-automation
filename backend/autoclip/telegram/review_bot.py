@@ -318,6 +318,33 @@ async def send_clip_review(
         )
         return None
 
+    # Gate behind campaign compliance if campaign is configured for the job
+    job = store.get_job(job_id)
+    has_campaign = bool(
+        job and (
+            job.settings.get("campaign")
+            or job.settings.get("guideline")
+            or getattr(job, "campaign_spec_id", None)
+            or store.get_guideline_for_job(job_id)
+        )
+    )
+
+    compliance_badge = "PASSED ✅"
+    if clip_meta:
+        comp_data = clip_meta.telemetry.get("campaign_compliance", {})
+        comp_passed = comp_data.get("passed", False) if comp_data else (clip_meta.compliance_status in ("COMPLIANT", "ACCEPTABLE_WITH_WARNINGS"))
+        if has_campaign and not comp_passed:
+            log.warning(
+                "Cannot send Telegram review: clip %s has not passed campaign compliance (%s, violations: %s)",
+                clip_id,
+                clip_meta.compliance_status,
+                clip_meta.validation_errors,
+            )
+            return None
+        compliance_badge = "PASSED ✅" if comp_passed else f"{clip_meta.compliance_status} ⚠️"
+    elif has_campaign:
+        compliance_badge = "PENDING ⏳"
+
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"
     quality_status = final_render.quality_status if final_render else "PENDING"
@@ -335,10 +362,15 @@ async def send_clip_review(
         f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
         f"🎯 *Hook:* {safe_hook}",
         f"✨ *Quality:* {quality_score} ({quality_status})",
+        f"📋 *Campaign Compliance:* {compliance_badge}",
         f"📈 *SEO Score:* {seo_score} ({seo_status})",
         "",
         f"🏷 *Proposed Title:* {safe_title}",
     ]
+    if clip_meta and clip_meta.final_hashtags:
+        caption_lines.append(f"🔖 *Hashtags:* {_escape_md(' '.join(clip_meta.final_hashtags[:6]))}")
+    if clip_meta and clip_meta.final_cta:
+        caption_lines.append(f"📣 *CTA:* {_escape_md(clip_meta.final_cta[:100])}")
     if raw_desc:
         short_desc = raw_desc[:200] + ("..." if len(raw_desc) > 200 else "")
         caption_lines.append(f"📝 *Description:* {_escape_md(short_desc)}")
