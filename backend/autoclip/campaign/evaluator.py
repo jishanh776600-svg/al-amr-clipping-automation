@@ -42,6 +42,7 @@ class CampaignEvaluator:
         self,
         *,
         candidate_id: str,
+        clip_id: str | None = None,
         start_s: float,
         end_s: float,
         words: Sequence[Word],
@@ -311,6 +312,7 @@ class CampaignEvaluator:
 
         return CandidateEvaluation(
             candidate_id=candidate_id,
+            clip_id=clip_id or candidate_id,
             campaign_id=self.campaign.campaign_id,
             approved=approved,
             final_score=final_score if approved else 0.0,

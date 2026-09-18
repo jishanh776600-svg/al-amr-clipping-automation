@@ -570,6 +570,7 @@ class PipelineRunner:
                         cand = next((c for c in selected_candidates if c.id == spec.candidate_id), None)
                         ev = evaluator.evaluate_candidate(
                             candidate_id=clip.id,
+                            clip_id=clip.id,
                             start_s=clip.start_s,
                             end_s=clip.end_s,
                             words=words,
@@ -581,7 +582,7 @@ class PipelineRunner:
                         )
                         store.create_campaign_evaluation(
                             CampaignEvaluationRow(
-                                clip_id=ev.clip_id,
+                                clip_id=clip.id,
                                 campaign_id=ev.campaign_id,
                                 approved=spec.is_approved,
                                 final_score=round(spec.quality_score / 10.0, 2),
@@ -651,6 +652,7 @@ class PipelineRunner:
                 speakers = {w.speaker for w in words if w.speaker}
                 ev = evaluator.evaluate_candidate(
                     candidate_id=clip.id,
+                    clip_id=clip.id,
                     start_s=clip.start_s,
                     end_s=clip.end_s,
                     words=words,
@@ -673,7 +675,7 @@ class PipelineRunner:
             for ev in ranked_evals:
                 store.create_campaign_evaluation(
                     CampaignEvaluationRow(
-                        clip_id=ev.clip_id,
+                        clip_id=ev.clip_id or ev.candidate_id,
                         campaign_id=ev.campaign_id,
                         approved=ev.approved,
                         final_score=ev.final_score,

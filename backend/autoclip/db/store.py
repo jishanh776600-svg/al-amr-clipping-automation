@@ -623,6 +623,8 @@ def delete_export(export_id: str) -> None:
 
 
 def create_campaign_evaluation(evaluation: CampaignEvaluationRow) -> CampaignEvaluationRow:
+    if not evaluation.clip_id or not str(evaluation.clip_id).strip():
+        raise ValueError("Cannot create campaign evaluation: clip_id cannot be empty")
     with connection() as conn:
         conn.execute(
             """
