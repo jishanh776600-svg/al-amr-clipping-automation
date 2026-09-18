@@ -199,13 +199,20 @@ async def async_main() -> None:
 
     # Parse and layer incoming job settings and duration arguments
     incoming_settings: dict[str, Any] = {}
-    raw_job_settings = args.job_settings if (args.job_settings and str(args.job_settings).strip() != "{}") else (os.environ.get("WORKER_JOB_SETTINGS") or os.environ.get("AUTOCLIP_JOB_SETTINGS") or "{}")
-    if raw_job_settings:
+    env_settings = os.environ.get("WORKER_JOB_SETTINGS") or os.environ.get("AUTOCLIP_JOB_SETTINGS")
+    if env_settings and str(env_settings).strip() not in ("", "{}"):
         try:
-            incoming_settings = json.loads(raw_job_settings) if isinstance(raw_job_settings, str) else dict(raw_job_settings)
+            incoming_settings = json.loads(env_settings)
         except Exception as exc:
-            log.warning("Failed parsing raw_job_settings: %s", exc)
-            incoming_settings = {}
+            log.warning("Failed parsing env WORKER_JOB_SETTINGS: %s", exc)
+
+    if not incoming_settings:
+        raw_job_settings = args.job_settings if (args.job_settings and str(args.job_settings).strip() != "{}") else "{}"
+        if raw_job_settings and raw_job_settings.strip() != "{}":
+            try:
+                incoming_settings = json.loads(raw_job_settings) if isinstance(raw_job_settings, str) else dict(raw_job_settings)
+            except Exception as exc:
+                log.warning("Failed parsing args.job_settings: %s", exc)
 
     # Layer explicit CLI arguments over incoming_settings
     cli_filter = getattr(args, "visual_filter", None)

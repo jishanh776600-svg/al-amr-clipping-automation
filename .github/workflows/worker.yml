@@ -197,7 +197,7 @@ jobs:
             --visual-filter "${{ github.event.inputs.visual_filter || 'original' }}" \
             --caption-style "${{ github.event.inputs.caption_style || 'classic_professional' }}" \
             --bgm-asset-id "${{ github.event.inputs.bgm_asset_id || '' }}" \
-            --job-settings "${WORKER_JOB_SETTINGS:-{}}"
+            --job-settings '${{ github.event.inputs.job_settings || "{}" }}'
 
       - name: Container Logs (WARP & POT Provider)
         if: always()
