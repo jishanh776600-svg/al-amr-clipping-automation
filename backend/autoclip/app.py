@@ -103,6 +103,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pub_ticker_task.cancel()
         if worker_enabled:
             await queue.stop()
+        # Flush all pending database writes to durable disk before process exit
+        try:
+            db.checkpoint("TRUNCATE")
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:

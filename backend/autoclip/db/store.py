@@ -2901,10 +2901,6 @@ def save_credential(key: str, ciphertext: str, fingerprint: str = "") -> models.
                 """,
                 (key, ciphertext, fingerprint, now, now),
             )
-            try:
-                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
     except sqlite3.OperationalError:
         from . import init
         init()
@@ -2920,10 +2916,10 @@ def save_credential(key: str, ciphertext: str, fingerprint: str = "") -> models.
                 """,
                 (key, ciphertext, fingerprint, now, now),
             )
-            try:
-                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
+    # Checkpoint after transaction has committed to flush WAL directly into main database file
+    from . import checkpoint
+    checkpoint("TRUNCATE")
+
     record = get_credential(key)
     if record is None:
         raise RuntimeError(f"Failed to retrieve credential {key} after write")
@@ -2948,11 +2944,10 @@ def delete_credential(key: str) -> bool:
     try:
         with connection() as conn:
             cur = conn.execute("DELETE FROM app_credentials WHERE key = ?", (key,))
-            try:
-                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
-        return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+        from . import checkpoint
+        checkpoint("TRUNCATE")
+        return deleted
     except sqlite3.OperationalError:
         return False
 

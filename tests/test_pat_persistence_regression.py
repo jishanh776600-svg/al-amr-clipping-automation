@@ -198,10 +198,110 @@ def test_dispatcher_reads_persisted_pat():
         cleanup_test_env(tmp)
 
 
+def test_wal_checkpoint_guarantees_physical_db_file():
+    """7. TRUNCATE checkpoint flushes data directly into autoclip.db so it survives WAL file loss."""
+    tmp = setup_test_env()
+    try:
+        pat = "ghp_WalDurabilityCheckToken8888"
+        config.set_secret(config.GITHUB_PAT_KEY, pat)
+
+        db_path = paths.db_path()
+        wal_path = Path(str(db_path) + "-wal")
+        shm_path = Path(str(db_path) + "-shm")
+
+        # Verify main database file is populated (> 4096 bytes) and WAL is truncated
+        assert db_path.stat().st_size > 4096
+        if wal_path.exists():
+            assert wal_path.stat().st_size == 0
+
+        # Close all connections and explicitly delete WAL and SHM to simulate abrupt reboot
+        db.reset_connections()
+        wal_path.unlink(missing_ok=True)
+        shm_path.unlink(missing_ok=True)
+
+        # Reopen database without WAL/SHM: data must exist physically in main database
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+        recovered_secret = config.get_secret(config.GITHUB_PAT_KEY)
+        assert recovered_secret == pat
+
+        # Status check must report configured
+        vault = autoclip.security.vault.get_vault()
+        status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+        assert status["configured"] is True
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_env_key_anchoring_to_master_key_file():
+    """8. Environment key is anchored to .master_key; survives environment variable changes."""
+    tmp = setup_test_env()
+    try:
+        initial_env_key = "initial-blueprint-master-key-1111"
+        os.environ["AL_AMR_MASTER_KEY"] = initial_env_key
+
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+        vault = autoclip.security.vault.get_vault()
+
+        # Storing secret under initial key
+        pat = "ghp_KeyAnchoringToken9999"
+        vault.store_secret(config.GITHUB_PAT_KEY, pat)
+
+        # Verify .master_key was anchored on disk
+        key_file = paths.root() / ".master_key"
+        assert key_file.is_file()
+        assert key_file.read_text(encoding="utf-8").strip() == initial_env_key
+
+        # Simulate Render redeploy where generateValue creates a new different key
+        os.environ["AL_AMR_MASTER_KEY"] = "regenerated-blueprint-master-key-2222"
+        autoclip.security.vault._global_vault = None
+        db.reset_connections()
+
+        # Vault must use persistent disk key, NOT new env key, guaranteeing decryption
+        new_vault = autoclip.security.vault.get_vault()
+        decrypted = new_vault.retrieve_secret(config.GITHUB_PAT_KEY)
+        assert decrypted == pat
+        status = new_vault.get_secret_status(config.GITHUB_PAT_KEY)
+        assert status["configured"] is True
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_invalid_master_key_fails_safely_without_destroying_record():
+    """9. Key mismatch fails safely and does NOT destroy or delete the stored record."""
+    tmp = setup_test_env()
+    try:
+        pat = "ghp_SafeFailureToken4444"
+        config.set_secret(config.GITHUB_PAT_KEY, pat)
+
+        # Tamper with .master_key to simulate corrupted/unreadable key
+        key_file = paths.root() / ".master_key"
+        key_file.write_text("corrupted-or-wrong-key-0000", encoding="utf-8")
+        os.environ["AL_AMR_MASTER_KEY"] = "corrupted-or-wrong-key-0000"
+
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+        db.reset_connections()
+
+        vault = autoclip.security.vault.get_vault()
+        # Status should report key mismatch without throwing
+        status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+        assert status["configured"] is False
+        assert "mismatch" in status["masked"].lower()
+
+        # The encrypted record must STILL exist in SQLite
+        rec = store.get_credential(config.GITHUB_PAT_KEY)
+        assert rec is not None
+        assert rec.ciphertext != ""
+    finally:
+        cleanup_test_env(tmp)
+
+
 if __name__ == "__main__":
     print("Running test_save_other_settings_preserves_pat...")
     test_save_other_settings_preserves_pat()
-    print("Running test_reload_does-not_clear_pat...")
+    print("Running test_reload_does_not_clear_pat...")
     test_reload_does_not_clear_pat()
     print("Running test_masked_pat_does_not_overwrite_pat...")
     test_masked_pat_does_not_overwrite_pat()
@@ -211,4 +311,10 @@ if __name__ == "__main__":
     test_explicit_pat_clear()
     print("Running test_dispatcher_reads_persisted_pat...")
     test_dispatcher_reads_persisted_pat()
-    print("ALL 6 PAT PERSISTENCE REGRESSION TESTS PASSED SUCCESSFULLY!")
+    print("Running test_wal_checkpoint_guarantees_physical_db_file...")
+    test_wal_checkpoint_guarantees_physical_db_file()
+    print("Running test_env_key_anchoring_to_master_key_file...")
+    test_env_key_anchoring_to_master_key_file()
+    print("Running test_invalid_master_key_fails_safely_without_destroying_record...")
+    test_invalid_master_key_fails_safely_without_destroying_record()
+    print("ALL 9 PAT PERSISTENCE REGRESSION TESTS PASSED SUCCESSFULLY!")

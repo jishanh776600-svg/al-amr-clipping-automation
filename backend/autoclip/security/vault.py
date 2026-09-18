@@ -46,30 +46,62 @@ class CredentialVault:
         self._cached_key_source: str | None = None
 
     def _resolve_master_key(self) -> str:
-        """Resolve the encryption key from environment or deterministic local fallback."""
+        """Resolve the encryption key, ensuring durable continuity across restarts and redeploys.
+
+        Resolution hierarchy:
+        1. Explicit key if passed into constructor.
+        2. Persistent disk key file at `paths.root() / ".master_key"`:
+           Once a database volume has an established master key, that key is authoritative
+           so that changes to environment variables (e.g. Render Blueprint `generateValue: true`
+           regeneration on redeploy) do not render existing encrypted credentials unreadable.
+        3. Environment secret (`AL_AMR_MASTER_KEY`, `AUTOCLIP_ENCRYPTION_KEY`, `ENCRYPTION_KEY`):
+           Anchored immediately to `paths.root() / ".master_key"` on persistent disk.
+        4. Generated random installation secret:
+           Persisted to `paths.root() / ".master_key"`.
+        5. Deterministic fallback derived from resolved root directory.
+        """
         if self._explicit_key:
             return self._explicit_key
+
+        root_dir = paths.root()
+        key_file = root_dir / ".master_key"
 
         env_key = (
             os.environ.get("AL_AMR_MASTER_KEY")
             or os.environ.get("AUTOCLIP_ENCRYPTION_KEY")
             or os.environ.get("ENCRYPTION_KEY")
         )
-        if env_key and env_key.strip():
-            return env_key.strip()
+        clean_env = env_key.strip() if (env_key and env_key.strip()) else None
 
-        # Check for a persistent master key file in root()
-        root_dir = paths.root()
-        key_file = root_dir / ".master_key"
+        # 1. If persistent volume already has an established master key, use it as authoritative
         try:
             if key_file.is_file():
                 stored_key = key_file.read_text(encoding="utf-8").strip()
                 if stored_key:
+                    if clean_env and stored_key != clean_env:
+                        log.warning(
+                            "Persistent disk master key at %s differs from environment key; "
+                            "preserving persistent disk key for credential decryption continuity.",
+                            key_file,
+                        )
                     return stored_key
         except Exception as exc:
-            log.warning("Could not read master key file %s: %s", key_file, exc)
+            log.warning("Could not read persistent master key file %s: %s", key_file, exc)
 
-        # Generate and persist a stable master key for this installation
+        # 2. If environment secret is configured, anchor it to the persistent disk volume
+        if clean_env:
+            try:
+                root_dir.mkdir(parents=True, exist_ok=True)
+                key_file.write_text(clean_env, encoding="utf-8")
+                import contextlib
+                with contextlib.suppress(OSError):
+                    key_file.chmod(0o600)
+                log.info("Anchored environment master key to persistent disk at %s", key_file)
+            except Exception as exc:
+                log.warning("Could not anchor environment master key to %s: %s", key_file, exc)
+            return clean_env
+
+        # 3. Generate and persist a stable random master key for this installation volume
         import secrets
         new_key = f"autoclip-key-{secrets.token_urlsafe(32)}"
         try:
@@ -83,7 +115,7 @@ class CredentialVault:
         except Exception as exc:
             log.warning("Could not write master key file %s: %s", key_file, exc)
 
-        # Local development fallback derived from the root path
+        # 4. Local development fallback derived from the root path
         fallback = f"autoclip-dev-salt-{root_dir.resolve()}"
         return fallback
 
@@ -172,6 +204,22 @@ class CredentialVault:
                 "masked": "Not configured",
                 "updated_at": "",
             }
+
+        # Verify whether the stored credential is successfully decryptable with active master key
+        decrypted = False
+        try:
+            val = self.retrieve_secret(key)
+            decrypted = bool(val)
+        except Exception:
+            decrypted = False
+
+        if not decrypted:
+            return {
+                "configured": False,
+                "masked": "Encryption key mismatch (Re-enter token)",
+                "updated_at": rec.updated_at,
+            }
+
         return {
             "configured": True,
             "masked": rec.fingerprint or "•••••••• Configured",

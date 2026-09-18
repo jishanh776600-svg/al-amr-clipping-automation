@@ -17,7 +17,7 @@ from pathlib import Path
 from .. import paths
 from .schema import SCHEMA_VERSION, migrate
 
-__all__ = ["SCHEMA_VERSION", "connect", "connection", "init", "migrate", "reset_connections"]
+__all__ = ["SCHEMA_VERSION", "checkpoint", "connect", "connection", "init", "migrate", "reset_connections"]
 
 _local = threading.local()
 
@@ -83,6 +83,20 @@ def init() -> int:
     paths.ensure_layout()
     conn = _thread_connection()
     return migrate(conn)
+
+
+def checkpoint(mode: str = "TRUNCATE") -> None:
+    """Flush all WAL frames into the main database file.
+
+    TRUNCATE mode ensures all committed transactions are merged into the main
+    autoclip.db file and the WAL file is truncated to zero bytes, ensuring
+    maximum durability across container restarts and persistent disk unmounts.
+    """
+    conn = _thread_connection()
+    try:
+        conn.execute(f"PRAGMA wal_checkpoint({mode})")
+    except Exception:
+        pass
 
 
 def reset_connections() -> None:
