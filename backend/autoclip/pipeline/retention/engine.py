@@ -68,12 +68,15 @@ class RetentionEditingEngine:
 
         from autoclip.campaign.duration import resolve_duration_limits
 
-        min_dur, max_dur = resolve_duration_limits(
-            job_settings=self.job_settings,
-            campaign_spec=self.campaign_spec,
-            default_min=20.0,
-            default_max=60.0,
-        )
+        if self.job_settings or self.campaign_spec:
+            min_dur, max_dur = resolve_duration_limits(
+                job_settings=self.job_settings,
+                campaign_spec=self.campaign_spec,
+                default_min=20.0,
+                default_max=30.0,
+            )
+        else:
+            min_dur, max_dur = None, None
 
         for index, clip in enumerate(clips):
             clip_t0 = time.time()

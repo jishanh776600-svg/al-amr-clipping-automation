@@ -48,6 +48,23 @@ def test_custom_operator_duration_preserved():
     assert max_d == 45.0
 
 
+def test_campaign_spec_clamped_to_20_30_unless_explicit():
+    """Verify that campaign specs with >30s (e.g. 75s from PDF) do not bypass 20-30s default unless explicit."""
+    campaign_mock = MagicMock()
+    campaign_mock.duration_min_s = MagicMock(value=20.0)
+    campaign_mock.duration_max_s = MagicMock(value=75.0)
+
+    # Without explicit_duration: clamped to (20.0, 30.0)
+    min_d, max_d = resolve_duration_limits(job_settings={}, campaign_spec=campaign_mock)
+    assert min_d == 20.0
+    assert max_d == 30.0
+
+    # With explicit_duration: preserved (20.0, 75.0)
+    min_d, max_d = resolve_duration_limits(job_settings={"explicit_duration": True}, campaign_spec=campaign_mock)
+    assert min_d == 20.0
+    assert max_d == 75.0
+
+
 @pytest.mark.asyncio
 async def test_highlights_detect_bounds_to_duration():
     """Verify highlights.detect does not generate 68-70s clips when default is 20-30s."""

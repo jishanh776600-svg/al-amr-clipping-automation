@@ -61,12 +61,26 @@ def resolve_duration_limits(
             elif getattr(campaign_spec, "duration_range", None) and campaign_spec.duration_range.value:
                 max_val = float(campaign_spec.duration_range.value[1])
 
+        # Clamp campaign spec duration if not explicitly overridden by operator
+        if not settings.get("explicit_duration"):
+            if min_val is not None:
+                min_val = max(default_min, min_val)
+            if max_val is not None:
+                max_val = min(default_max, max_val)
+
     # 3. Campaign brief
     if campaign_brief:
         if min_val is None and getattr(campaign_brief, "minimum_duration", None) is not None:
             min_val = float(campaign_brief.minimum_duration)
         if max_val is None and getattr(campaign_brief, "maximum_duration", None) is not None:
             max_val = float(campaign_brief.maximum_duration)
+
+        # Clamp campaign brief duration if not explicitly overridden by operator
+        if not settings.get("explicit_duration"):
+            if min_val is not None:
+                min_val = max(default_min, min_val)
+            if max_val is not None:
+                max_val = min(default_max, max_val)
 
     # 4. Nested clips settings (from base settings.json)
     if min_val is None and clips_settings.get("min_duration_s") is not None:

@@ -102,7 +102,7 @@ class DynamicPacingEngine:
         tightened_duration = max(0.1, tightened_end_s - tightened_start_s)
 
         # Ensure boundary tightening does not shorten clip below configured minimum
-        if tightened_duration < min_duration_s and raw_duration >= min_duration_s:
+        if min_duration_s is not None and tightened_duration < min_duration_s and raw_duration >= min_duration_s:
             tightened_start_s = clip_start_s
             tightened_end_s = clip_end_s
             tightened_duration = raw_duration
