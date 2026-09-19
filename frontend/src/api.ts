@@ -638,6 +638,25 @@ export interface PublishingPlatformInfo {
   available: boolean
   configured: boolean
   details: string
+  authenticated?: boolean
+  account_identifier?: string | null
+  account_name?: string | null
+  last_validated_at?: string | null
+  error?: string | null
+}
+
+export interface PlatformValidationResponse {
+  platform: string
+  valid: boolean
+  configured: boolean
+  account_name?: string | null
+  details: string
+  error?: string | null
+}
+
+export interface YouTubeAuthUrlResponse {
+  auth_url: string
+  redirect_uri: string
 }
 
 export interface PublishRequest {
@@ -1230,6 +1249,27 @@ export const api = {
 
   getPublishingPlatforms: () =>
     request<PublishingPlatformInfo[]>('/api/publishing/platforms'),
+
+  getYouTubeAuthUrl: (redirectUri: string) =>
+    request<YouTubeAuthUrlResponse>(`/api/publishing/youtube/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`),
+
+  exchangeYouTubeCode: (code: string, redirectUri: string, state?: string) =>
+    request<PlatformValidationResponse>('/api/publishing/youtube/callback', {
+      method: 'POST',
+      body: JSON.stringify({ code, redirect_uri: redirectUri, state }),
+    }),
+
+  validateYouTube: () =>
+    request<PlatformValidationResponse>('/api/publishing/youtube/validate', { method: 'POST' }),
+
+  disconnectYouTube: () =>
+    request<void>('/api/publishing/youtube/disconnect', { method: 'POST' }),
+
+  validateTelegram: () =>
+    request<PlatformValidationResponse>('/api/publishing/telegram/validate', { method: 'POST' }),
+
+  validateInstagram: () =>
+    request<PlatformValidationResponse>('/api/publishing/instagram/validate', { method: 'POST' }),
 
   getPublishingRecord: (id: string) =>
     request<PublishingRecord>(`/api/publishing/${id}`),

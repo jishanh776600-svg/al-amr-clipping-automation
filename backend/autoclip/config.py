@@ -43,6 +43,25 @@ KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
 HF_TOKEN_KEY = "huggingface_token"
 GITHUB_PAT_KEY = "github_pat"
 
+#: Publishing platform secrets
+TELEGRAM_BOT_TOKEN_KEY = "telegram_bot_token"
+TELEGRAM_CHAT_ID_KEY = "telegram_chat_id"
+YOUTUBE_CLIENT_ID_KEY = "youtube_client_id"
+YOUTUBE_CLIENT_SECRET_KEY = "youtube_client_secret"
+YOUTUBE_REFRESH_TOKEN_KEY = "youtube_refresh_token"
+INSTAGRAM_ACCESS_TOKEN_KEY = "instagram_access_token"
+INSTAGRAM_ACCOUNT_ID_KEY = "instagram_account_id"
+
+PUBLISHING_SECRET_KEYS: tuple[str, ...] = (
+    TELEGRAM_BOT_TOKEN_KEY,
+    TELEGRAM_CHAT_ID_KEY,
+    YOUTUBE_CLIENT_ID_KEY,
+    YOUTUBE_CLIENT_SECRET_KEY,
+    YOUTUBE_REFRESH_TOKEN_KEY,
+    INSTAGRAM_ACCESS_TOKEN_KEY,
+    INSTAGRAM_ACCOUNT_ID_KEY,
+)
+
 
 def canonical_secret_key(key: str) -> str:
     """Normalize secret keys so case differences or naming aliases resolve to a single canonical key."""
@@ -53,6 +72,20 @@ def canonical_secret_key(key: str) -> str:
         return GITHUB_PAT_KEY
     if k in ("hf_token", "huggingface_token", "huggingface", "hf"):
         return HF_TOKEN_KEY
+    if k in ("telegram_bot_token", "telegram_token", "tg_bot_token", "tg_token"):
+        return TELEGRAM_BOT_TOKEN_KEY
+    if k in ("telegram_chat_id", "tg_chat_id", "telegram_chat"):
+        return TELEGRAM_CHAT_ID_KEY
+    if k in ("youtube_client_id", "yt_client_id"):
+        return YOUTUBE_CLIENT_ID_KEY
+    if k in ("youtube_client_secret", "yt_client_secret"):
+        return YOUTUBE_CLIENT_SECRET_KEY
+    if k in ("youtube_refresh_token", "yt_refresh_token", "youtube_token"):
+        return YOUTUBE_REFRESH_TOKEN_KEY
+    if k in ("instagram_access_token", "meta_access_token", "ig_access_token", "instagram_token"):
+        return INSTAGRAM_ACCESS_TOKEN_KEY
+    if k in ("instagram_account_id", "meta_account_id", "ig_account_id", "instagram_account"):
+        return INSTAGRAM_ACCOUNT_ID_KEY
     return k
 
 

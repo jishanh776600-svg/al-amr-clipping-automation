@@ -30,7 +30,11 @@ def _auth_headers() -> dict[str, str]:
 
 
 @pytest.fixture
-def api_client(initialised_db):
+def api_client(initialised_db, monkeypatch):
+    monkeypatch.setenv("OPERATOR_TOKEN", "test-operator-token")
+    monkeypatch.delenv("AUTOCLIP_API_KEY", raising=False)
+    monkeypatch.delenv("AL_AMR_MASTER_KEY", raising=False)
+    monkeypatch.delenv("WORKER_CALLBACK_SECRET", raising=False)
     app = create_app()
     with TestClient(app) as client:
         yield client

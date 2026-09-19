@@ -42,6 +42,25 @@ class TelegramPublisher(BasePublisher):
         self.bot_token = (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
         self.chat_id = (chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
 
+        if not self.bot_token or not self.chat_id:
+            try:
+                from ..security.vault import get_vault
+                vault = get_vault()
+                if not self.bot_token:
+                    self.bot_token = (
+                        vault.retrieve_secret("telegram_bot_token")
+                        or vault.retrieve_secret("TELEGRAM_BOT_TOKEN")
+                        or ""
+                    ).strip()
+                if not self.chat_id:
+                    self.chat_id = (
+                        vault.retrieve_secret("telegram_chat_id")
+                        or vault.retrieve_secret("TELEGRAM_CHAT_ID")
+                        or ""
+                    ).strip()
+            except Exception:
+                pass
+
     def is_configured(self) -> bool:
         return bool(self.bot_token and self.chat_id)
 
@@ -166,4 +185,70 @@ class TelegramPublisher(BasePublisher):
                 error_code=code,
                 retryable=retryable,
             )
+
+
+async def validate_telegram_credentials(
+    bot_token: str | None = None,
+    chat_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate Telegram bot credentials against api.telegram.org."""
+    token = bot_token
+    cid = chat_id
+    if not token or not cid:
+        pub = TelegramPublisher(bot_token=token, chat_id=cid)
+        token = token or pub.bot_token
+        cid = cid or pub.chat_id
+
+    if not token:
+        return {
+            "valid": False,
+            "configured": False,
+            "error": "TELEGRAM_BOT_TOKEN is not configured.",
+            "bot_username": None,
+            "bot_name": None,
+            "chat_title": None,
+        }
+
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {
+                    "valid": False,
+                    "configured": True,
+                    "error": f"Telegram Bot Token invalid ({resp.status_code}): {resp.text}",
+                    "bot_username": None,
+                    "bot_name": None,
+                    "chat_title": None,
+                }
+            me_data = resp.json().get("result", {})
+            bot_username = me_data.get("username")
+            bot_name = me_data.get("first_name")
+
+            chat_title = None
+            if cid:
+                chat_resp = await client.get(f"https://api.telegram.org/bot{token}/getChat", params={"chat_id": cid})
+                if chat_resp.status_code == 200:
+                    chat_data = chat_resp.json().get("result", {})
+                    chat_title = chat_data.get("title") or chat_data.get("username") or str(cid)
+
+            return {
+                "valid": True,
+                "configured": True,
+                "error": None,
+                "bot_username": bot_username,
+                "bot_name": bot_name,
+                "chat_title": chat_title,
+                "chat_id": cid,
+            }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "configured": True,
+            "error": f"Telegram API connection failed: {exc}",
+            "bot_username": None,
+            "bot_name": None,
+            "chat_title": None,
+        }
 

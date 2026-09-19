@@ -233,3 +233,149 @@ class YouTubePublisher(BasePublisher):
                 retryable=retryable,
             )
 
+
+def generate_youtube_auth_url(
+    client_id: str,
+    redirect_uri: str,
+    state: str | None = None,
+) -> str:
+    """Generate the Google OAuth2 consent screen URL for YouTube Shorts upload permissions."""
+    import urllib.parse
+
+    params = {
+        "client_id": client_id.strip(),
+        "redirect_uri": redirect_uri.strip(),
+        "response_type": "code",
+        "scope": " ".join(YOUTUBE_UPLOAD_SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    if state:
+        params["state"] = state
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+
+
+async def exchange_youtube_code(
+    client_id: str,
+    client_secret: str,
+    code: str,
+    redirect_uri: str,
+) -> dict[str, Any]:
+    """Exchange authorization code for permanent refresh token and persist in encrypted vault."""
+    import httpx
+
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "client_id": client_id.strip(),
+        "client_secret": client_secret.strip(),
+        "code": code.strip(),
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri.strip(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(token_url, data=payload)
+        if resp.status_code != 200:
+            return {
+                "success": False,
+                "error": f"Token exchange failed ({resp.status_code}): {resp.text}",
+            }
+        tokens = resp.json()
+        refresh_token = tokens.get("refresh_token")
+        if not refresh_token:
+            return {
+                "success": False,
+                "error": "No refresh_token returned by Google. Re-authorize with prompt=consent.",
+            }
+
+        from ..config import set_secret
+        set_secret("youtube_client_id", client_id.strip())
+        set_secret("youtube_client_secret", client_secret.strip())
+        set_secret("youtube_refresh_token", refresh_token.strip())
+
+        channel_info = await validate_youtube_credentials(client_id, client_secret, refresh_token)
+        return {
+            "success": True,
+            "channel_title": channel_info.get("channel_title"),
+            "channel_id": channel_info.get("channel_id"),
+            "refresh_token_saved": True,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Exception exchanging YouTube code: {exc}",
+        }
+
+
+async def validate_youtube_credentials(
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    refresh_token: str | None = None,
+) -> dict[str, Any]:
+    """Validate YouTube OAuth2 credentials by refreshing access token and querying channel info."""
+    cid = client_id
+    sec = client_secret
+    rt = refresh_token
+    if not cid or not sec or not rt:
+        pub = YouTubePublisher(client_id=cid, client_secret=sec, refresh_token=rt)
+        cid = cid or pub.client_id
+        sec = sec or pub.client_secret
+        rt = rt or pub.refresh_token
+
+    if not rt or not cid or not sec:
+        return {
+            "valid": False,
+            "configured": False,
+            "error": "YouTube credentials (Client ID, Secret, Refresh Token) are not fully configured.",
+            "channel_title": None,
+            "channel_id": None,
+        }
+
+    try:
+        from google.oauth2.credentials import Credentials
+        import google.auth.transport.requests
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=None,
+            refresh_token=rt,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=cid,
+            client_secret=sec,
+            scopes=YOUTUBE_UPLOAD_SCOPES,
+        )
+        await asyncio.to_thread(creds.refresh, google.auth.transport.requests.Request())
+        service = build("youtube", "v3", credentials=creds, cache_discovery=False)
+        req = service.channels().list(part="snippet,statistics", mine=True)
+        res = await asyncio.to_thread(req.execute)
+        items = res.get("items", [])
+        if not items:
+            return {
+                "valid": True,
+                "configured": True,
+                "error": None,
+                "channel_title": "Authenticated (No Channel Found)",
+                "channel_id": None,
+            }
+        item = items[0]
+        snippet = item.get("snippet", {})
+        channel_title = snippet.get("title")
+        custom_url = snippet.get("customUrl")
+        channel_id = item.get("id")
+        return {
+            "valid": True,
+            "configured": True,
+            "error": None,
+            "channel_title": f"{channel_title} ({custom_url})" if custom_url else channel_title,
+            "channel_id": channel_id,
+        }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "configured": True,
+            "error": f"YouTube authentication verification failed: {exc}",
+            "channel_title": None,
+            "channel_id": None,
+        }
+

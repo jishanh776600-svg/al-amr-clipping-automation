@@ -320,3 +320,79 @@ class InstagramPublisher(BasePublisher):
                 details={"container_id": container_id, "media_id": media_id},
             )
 
+
+async def validate_instagram_credentials(
+    access_token: str | None = None,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate Meta Graph API credentials and confirm Instagram Business/Creator Account status."""
+    tok = access_token
+    acc = account_id
+    if not tok or not acc:
+        pub = InstagramPublisher(access_token=tok, account_id=acc)
+        tok = tok or pub.access_token
+        acc = acc or pub.account_id
+
+    if not tok or not acc:
+        return {
+            "valid": False,
+            "configured": False,
+            "error": "Instagram credentials (INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID) are not configured.",
+            "account_name": None,
+            "account_id": None,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # First try directly querying the account ID
+            acc_url = f"{GRAPH_API_BASE}/{acc}"
+            resp = await client.get(
+                acc_url,
+                params={"fields": "id,username,name", "access_token": tok},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                username = data.get("username")
+                name = data.get("name")
+                display = f"@{username}" if username else (name or str(acc))
+                return {
+                    "valid": True,
+                    "configured": True,
+                    "error": None,
+                    "account_name": display,
+                    "account_id": acc,
+                }
+
+            # Fallback to /me validation
+            me_resp = await client.get(
+                f"{GRAPH_API_BASE}/me",
+                params={"access_token": tok},
+            )
+            if me_resp.status_code == 200:
+                me_data = me_resp.json()
+                me_name = me_data.get("name", "Meta Account")
+                return {
+                    "valid": True,
+                    "configured": True,
+                    "error": None,
+                    "account_name": f"{me_name} (ID: {acc})",
+                    "account_id": acc,
+                }
+            else:
+                code, _ = classify_meta_error(resp.status_code, resp.text)
+                return {
+                    "valid": False,
+                    "configured": True,
+                    "error": f"Meta Graph API error ({resp.status_code}): {resp.text}",
+                    "account_name": None,
+                    "account_id": acc,
+                }
+    except Exception as exc:
+        return {
+            "valid": False,
+            "configured": True,
+            "error": f"Meta Graph API connection error: {exc}",
+            "account_name": None,
+            "account_id": acc,
+        }
+

@@ -656,6 +656,31 @@ class PublishingPlatformInfo(BaseModel):
     available: bool
     configured: bool
     details: str = ""
+    authenticated: bool = False
+    account_identifier: str | None = None
+    account_name: str | None = None
+    last_validated_at: str | None = None
+    error: str | None = None
+
+
+class YouTubeAuthUrlResponse(BaseModel):
+    auth_url: str
+    redirect_uri: str
+
+
+class YouTubeCallbackRequest(BaseModel):
+    code: str
+    redirect_uri: str
+    state: str | None = None
+
+
+class PlatformValidationResponse(BaseModel):
+    platform: str
+    valid: bool
+    configured: bool
+    account_name: str | None = None
+    details: str = ""
+    error: str | None = None
 
 
 class ClipCandidateOut(BaseModel):

@@ -89,7 +89,99 @@ export function Settings() {
     }
   }
 
+  const [tgTesting, setTgTesting] = useState(false)
+  const [tgResult, setTgResult] = useState<{ valid: boolean; account_name?: string | null; details?: string; error?: string | null } | null>(null)
+
+  const [ytConnecting, setYtConnecting] = useState(false)
+  const [ytTesting, setYtTesting] = useState(false)
+  const [ytResult, setYtResult] = useState<{ valid: boolean; account_name?: string | null; details?: string; error?: string | null } | null>(null)
+  const [ytNotice, setYtNotice] = useState<string | null>(null)
+
+  const [igTesting, setIgTesting] = useState(false)
+  const [igResult, setIgResult] = useState<{ valid: boolean; account_name?: string | null; details?: string; error?: string | null } | null>(null)
+
+  const handleTestTelegram = async () => {
+    setTgTesting(true)
+    setTgResult(null)
+    try {
+      const res = await api.validateTelegram()
+      setTgResult(res)
+    } catch (err: any) {
+      setTgResult({ valid: false, error: err.message || 'Validation request failed' })
+    } finally {
+      setTgTesting(false)
+    }
+  }
+
+  const handleConnectYouTube = async () => {
+    setYtConnecting(true)
+    setYtNotice(null)
+    try {
+      const redirectUri = window.location.origin + window.location.pathname
+      const { auth_url } = await api.getYouTubeAuthUrl(redirectUri)
+      window.location.href = auth_url
+    } catch (err: any) {
+      setError(new Error(`Failed to generate YouTube authorization URL: ${err.message}`))
+      setYtConnecting(false)
+    }
+  }
+
+  const handleTestYouTube = async () => {
+    setYtTesting(true)
+    setYtResult(null)
+    try {
+      const res = await api.validateYouTube()
+      setYtResult(res)
+    } catch (err: any) {
+      setYtResult({ valid: false, error: err.message || 'Validation request failed' })
+    } finally {
+      setYtTesting(false)
+    }
+  }
+
+  const handleDisconnectYouTube = async () => {
+    try {
+      await api.disconnectYouTube()
+      setYtNotice('YouTube account disconnected.')
+      setYtResult(null)
+      await reload()
+    } catch (err: any) {
+      setError(new Error(`Failed to disconnect YouTube: ${err.message}`))
+    }
+  }
+
+  const handleTestInstagram = async () => {
+    setIgTesting(true)
+    setIgResult(null)
+    try {
+      const res = await api.validateInstagram()
+      setIgResult(res)
+    } catch (err: any) {
+      setIgResult({ valid: false, error: err.message || 'Validation request failed' })
+    } finally {
+      setIgTesting(false)
+    }
+  }
+
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+      if (code) {
+        window.history.replaceState({}, document.title, window.location.pathname)
+        const redirectUri = window.location.origin + window.location.pathname
+        setYtNotice('Exchanging authorization code with Google OAuth...')
+        api
+          .exchangeYouTubeCode(code, redirectUri)
+          .then((res) => {
+            setYtNotice(`✓ Connected YouTube Channel: ${res.account_name || 'Account Linked'}`)
+            reload()
+          })
+          .catch((err) => {
+            setError(new Error(`YouTube authorization failed: ${err.message}`))
+          })
+      }
+    }
     reload()
   }, [])
 
@@ -344,6 +436,177 @@ export function Settings() {
               onError={setError}
             />
           ))}
+        </div>
+      </Section>
+
+      <Section
+        title="Publishing Channels & Social Integrations"
+        note="Configure human review on Telegram, and automated Shorts/Reels distribution to YouTube and Instagram."
+      >
+        <div className="space-y-6">
+          {/* Telegram Bot */}
+          <div className="rounded-lg border border-ink-800 bg-ink-850/60 p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-sm text-ink-100 font-semibold">1. Telegram Review & Publishing Bot</h3>
+                <p className="text-xs text-ink-500 mt-0.5">Sends rendered clips for review with interactive Approve / Request Changes buttons.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleTestTelegram}
+                disabled={tgTesting}
+                className="btn btn-quiet text-xs shrink-0"
+              >
+                {tgTesting ? 'Testing...' : 'Test Bot Connection'}
+              </button>
+            </div>
+
+            {tgResult && (
+              <div className={`rounded p-2.5 text-xs ${tgResult.valid ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'}`}>
+                {tgResult.valid ? `✓ Connected to ${tgResult.account_name} (${tgResult.details})` : `✗ ${tgResult.error || 'Connection failed'}`}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SecretField
+                secretKey="telegram_bot_token"
+                label="Telegram Bot Token"
+                present={settings.keys_present?.telegram_bot_token ?? false}
+                status={settings.credentials_status?.telegram_bot_token}
+                onChanged={reload}
+                onError={setError}
+              />
+              <SecretField
+                secretKey="telegram_chat_id"
+                label="Telegram Chat / Channel ID"
+                present={settings.keys_present?.telegram_chat_id ?? false}
+                status={settings.credentials_status?.telegram_chat_id}
+                onChanged={reload}
+                onError={setError}
+              />
+            </div>
+          </div>
+
+          {/* YouTube Shorts */}
+          <div className="rounded-lg border border-ink-800 bg-ink-850/60 p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-sm text-ink-100 font-semibold">2. YouTube Shorts (OAuth2 Integration)</h3>
+                <p className="text-xs text-ink-500 mt-0.5">Automatic upload and publishing of approved 9:16 vertical Shorts.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleConnectYouTube}
+                  disabled={ytConnecting || !settings.keys_present?.youtube_client_id}
+                  className="btn btn-primary text-xs shrink-0"
+                >
+                  {ytConnecting ? 'Opening OAuth...' : settings.keys_present?.youtube_refresh_token ? 'Reconnect YouTube' : 'Connect YouTube Account'}
+                </button>
+                {settings.keys_present?.youtube_refresh_token && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleTestYouTube}
+                      disabled={ytTesting}
+                      className="btn btn-quiet text-xs shrink-0"
+                    >
+                      {ytTesting ? 'Testing...' : 'Test Connection'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDisconnectYouTube}
+                      className="btn btn-quiet text-xs text-rose-400 hover:text-rose-300 shrink-0"
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {ytNotice && (
+              <div className="rounded p-2.5 text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                {ytNotice}
+              </div>
+            )}
+
+            {ytResult && (
+              <div className={`rounded p-2.5 text-xs ${ytResult.valid ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'}`}>
+                {ytResult.valid ? `✓ Connected Channel: ${ytResult.account_name}` : `✗ ${ytResult.error || 'Connection failed'}`}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SecretField
+                secretKey="youtube_client_id"
+                label="OAuth Client ID"
+                present={settings.keys_present?.youtube_client_id ?? false}
+                status={settings.credentials_status?.youtube_client_id}
+                onChanged={reload}
+                onError={setError}
+              />
+              <SecretField
+                secretKey="youtube_client_secret"
+                label="OAuth Client Secret"
+                present={settings.keys_present?.youtube_client_secret ?? false}
+                status={settings.credentials_status?.youtube_client_secret}
+                onChanged={reload}
+                onError={setError}
+              />
+            </div>
+            {settings.keys_present?.youtube_refresh_token && (
+              <div className="rounded border border-ink-800/80 bg-ink-900/60 p-3 flex items-center justify-between text-xs">
+                <span className="text-ink-400">OAuth Refresh Token:</span>
+                <span className="text-emerald-400 font-mono">
+                  {settings.credentials_status?.youtube_refresh_token?.masked || '•••••••• Configured'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Instagram Reels */}
+          <div className="rounded-lg border border-ink-800 bg-ink-850/60 p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-sm text-ink-100 font-semibold">3. Instagram Reels (Meta Graph API)</h3>
+                <p className="text-xs text-ink-500 mt-0.5">Automated upload, container processing, and publishing of Reels.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleTestInstagram}
+                disabled={igTesting}
+                className="btn btn-quiet text-xs shrink-0"
+              >
+                {igTesting ? 'Testing...' : 'Test Connection'}
+              </button>
+            </div>
+
+            {igResult && (
+              <div className={`rounded p-2.5 text-xs ${igResult.valid ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'}`}>
+                {igResult.valid ? `✓ Connected to ${igResult.account_name}` : `✗ ${igResult.error || 'Connection failed'}`}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SecretField
+                secretKey="instagram_access_token"
+                label="Meta Graph API Access Token"
+                present={settings.keys_present?.instagram_access_token ?? false}
+                status={settings.credentials_status?.instagram_access_token}
+                onChanged={reload}
+                onError={setError}
+              />
+              <SecretField
+                secretKey="instagram_account_id"
+                label="Instagram Professional Account ID"
+                present={settings.keys_present?.instagram_account_id ?? false}
+                status={settings.credentials_status?.instagram_account_id}
+                onChanged={reload}
+                onError={setError}
+              />
+            </div>
+          </div>
         </div>
       </Section>
 

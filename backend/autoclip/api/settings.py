@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 def _settings_out(settings: config.Settings) -> SettingsOut:
     payload = settings.model_dump(mode="json")
-    all_keys = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
+    all_keys = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY, *config.PUBLISHING_SECRET_KEYS)
     
     from ..security.vault import get_vault
     vault = get_vault()
@@ -57,6 +57,9 @@ def _settings_out(settings: config.Settings) -> SettingsOut:
             config.HF_TOKEN_KEY: config.get_secret(config.HF_TOKEN_KEY, settings) is not None,
             config.GITHUB_PAT_KEY: config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
             "GITHUB_PAT": config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
+        }
+        | {
+            pk: config.get_secret(pk, settings) is not None for pk in config.PUBLISHING_SECRET_KEYS
         },
         credentials_status=cred_status,
     )
@@ -135,7 +138,7 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
 
 def _handle_secret_save(key: str, raw_value: str | None) -> None:
     canon = config.canonical_secret_key(key) or key
-    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
+    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY, *config.PUBLISHING_SECRET_KEYS)
     if canon not in valid:
         raise HTTPException(
             status_code=400, detail=f"Unknown secret '{key}'. Expected one of: {', '.join(valid)}"

@@ -18,6 +18,7 @@ from .schemas import (
     DestinationIn,
     DestinationOut,
     DestinationUpdateIn,
+    PlatformValidationResponse,
     PublicationOut,
     PublishAllClipsIn,
     PublishClipIn,
@@ -29,6 +30,8 @@ from .schemas import (
     QueueTelemetryOut,
     RescheduleQueueIn,
     SchedulePublicationIn,
+    YouTubeAuthUrlResponse,
+    YouTubeCallbackRequest,
 )
 
 log = logging.getLogger(__name__)
@@ -61,43 +64,243 @@ async def list_publishing(
 
 @router.get("/publishing/platforms", response_model=list[PublishingPlatformInfo])
 async def get_publishing_platforms() -> list[PublishingPlatformInfo]:
-    """Check configuration and availability of publishing platforms."""
-    # Telegram
-    has_tg_token = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
-    has_tg_chat = bool(os.getenv("TELEGRAM_CHAT_ID"))
-    tg_configured = has_tg_token and has_tg_chat
+    """Check configuration, authentication, and live status of all publishing platforms."""
+    from datetime import datetime, timezone
+    from ..security.vault import get_vault
+    from ..publishing.telegram import TelegramPublisher, validate_telegram_credentials
+    from ..publishing.youtube import YouTubePublisher, validate_youtube_credentials
+    from ..publishing.instagram import InstagramPublisher, validate_instagram_credentials
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    vault = get_vault()
+
+    # 1. Telegram Bot
+    tg_pub = TelegramPublisher()
+    tg_configured = tg_pub.is_configured()
+    tg_auth = False
+    tg_name = None
+    tg_ident = tg_pub.chat_id if tg_configured else None
+    tg_err = None
+    tg_details = "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID"
+
+    if tg_configured:
+        try:
+            tg_val = await asyncio.wait_for(
+                validate_telegram_credentials(tg_pub.bot_token, tg_pub.chat_id),
+                timeout=4.0,
+            )
+            if tg_val.get("valid"):
+                tg_auth = True
+                tg_name = f"@{tg_val.get('bot_username')}" if tg_val.get("bot_username") else tg_val.get("bot_name")
+                tg_details = f"Connected: {tg_name} (Chat: {tg_val.get('chat_title') or tg_ident})"
+            else:
+                tg_err = tg_val.get("error")
+                tg_details = f"Configured (Auth failed: {tg_err})"
+        except Exception as exc:
+            tg_auth = False
+            tg_err = str(exc)
+            tg_details = "Configured (Validation timed out or unreachable)"
+
     tg_info = PublishingPlatformInfo(
         platform="telegram",
         available=True,
         configured=tg_configured,
-        details="Bot token and Chat ID present" if tg_configured else "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID",
+        authenticated=tg_auth,
+        account_identifier=tg_ident,
+        account_name=tg_name,
+        last_validated_at=now_iso if tg_configured else None,
+        details=tg_details,
+        error=tg_err,
     )
 
-    # YouTube
-    has_yt_id = bool(os.getenv("YOUTUBE_CLIENT_ID"))
-    has_yt_sec = bool(os.getenv("YOUTUBE_CLIENT_SECRET"))
-    has_yt_tok = bool(os.getenv("YOUTUBE_REFRESH_TOKEN"))
-    yt_configured = has_yt_id and has_yt_sec and has_yt_tok
-    yt_live = os.getenv("YOUTUBE_PUBLISH_LIVE", "false").lower() in ("true", "1", "yes")
+    # 2. YouTube Shorts
+    yt_pub = YouTubePublisher()
+    yt_configured = yt_pub.is_configured() and bool(yt_pub.client_id and yt_pub.client_secret)
+    yt_auth = False
+    yt_name = None
+    yt_ident = None
+    yt_err = None
+    yt_details = "Missing YouTube OAuth2 credentials (Client ID, Secret, or Refresh Token)"
+
+    if yt_configured:
+        try:
+            yt_val = await asyncio.wait_for(
+                validate_youtube_credentials(yt_pub.client_id, yt_pub.client_secret, yt_pub.refresh_token),
+                timeout=5.0,
+            )
+            if yt_val.get("valid"):
+                yt_auth = True
+                yt_name = yt_val.get("channel_title")
+                yt_ident = yt_val.get("channel_id")
+                yt_details = f"Connected: {yt_name}"
+            else:
+                yt_err = yt_val.get("error")
+                yt_details = f"Configured (Auth failed: {yt_err})"
+        except Exception as exc:
+            yt_auth = False
+            yt_err = str(exc)
+            yt_details = "Configured (Validation timed out or unreachable)"
+
     yt_info = PublishingPlatformInfo(
         platform="youtube",
         available=True,
         configured=yt_configured,
-        details=f"OAuth2 configured (Live: {yt_live})" if yt_configured else "Missing YouTube OAuth2 credentials",
+        authenticated=yt_auth,
+        account_identifier=yt_ident,
+        account_name=yt_name,
+        last_validated_at=now_iso if yt_configured else None,
+        details=yt_details,
+        error=yt_err,
     )
 
-    # Instagram
-    has_ig_tok = bool(os.getenv("INSTAGRAM_ACCESS_TOKEN"))
-    has_ig_acc = bool(os.getenv("INSTAGRAM_ACCOUNT_ID"))
-    ig_configured = has_ig_tok and has_ig_acc
+    # 3. Instagram Reels
+    ig_pub = InstagramPublisher()
+    ig_configured = ig_pub.is_configured()
+    ig_auth = False
+    ig_name = None
+    ig_ident = ig_pub.account_id if ig_configured else None
+    ig_err = None
+    ig_details = "Missing INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID"
+
+    if ig_configured:
+        try:
+            ig_val = await asyncio.wait_for(
+                validate_instagram_credentials(ig_pub.access_token, ig_pub.account_id),
+                timeout=5.0,
+            )
+            if ig_val.get("valid"):
+                ig_auth = True
+                ig_name = ig_val.get("account_name")
+                ig_ident = ig_val.get("account_id")
+                ig_details = f"Connected: {ig_name}"
+            else:
+                ig_err = ig_val.get("error")
+                ig_details = f"Configured (Auth failed: {ig_err})"
+        except Exception as exc:
+            ig_auth = False
+            ig_err = str(exc)
+            ig_details = "Configured (Validation timed out or unreachable)"
+
     ig_info = PublishingPlatformInfo(
         platform="instagram",
         available=True,
         configured=ig_configured,
-        details="Meta Graph API configured" if ig_configured else "Missing INSTAGRAM_ACCESS_TOKEN or INSTAGRAM_ACCOUNT_ID",
+        authenticated=ig_auth,
+        account_identifier=ig_ident,
+        account_name=ig_name,
+        last_validated_at=now_iso if ig_configured else None,
+        details=ig_details,
+        error=ig_err,
     )
 
     return [tg_info, yt_info, ig_info]
+
+
+@router.get("/publishing/youtube/auth-url", response_model=YouTubeAuthUrlResponse)
+async def get_youtube_auth_url(redirect_uri: str = Query(...)) -> YouTubeAuthUrlResponse:
+    """Generate the Google OAuth consent URL using configured client_id."""
+    from ..publishing.youtube import YouTubePublisher, generate_youtube_auth_url
+
+    pub = YouTubePublisher()
+    if not pub.client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube Client ID is not configured. Please save it in Settings first.",
+        )
+    url = generate_youtube_auth_url(client_id=pub.client_id, redirect_uri=redirect_uri)
+    return YouTubeAuthUrlResponse(auth_url=url, redirect_uri=redirect_uri)
+
+
+@router.post("/publishing/youtube/callback", response_model=PlatformValidationResponse)
+async def handle_youtube_callback(payload: YouTubeCallbackRequest) -> PlatformValidationResponse:
+    """Exchange authorization code for refresh token, save in vault, and validate channel."""
+    from ..publishing.youtube import YouTubePublisher, exchange_youtube_code
+
+    pub = YouTubePublisher()
+    if not pub.client_id or not pub.client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube Client ID and Client Secret must be configured in Settings before completing OAuth.",
+        )
+
+    res = await exchange_youtube_code(
+        client_id=pub.client_id,
+        client_secret=pub.client_secret,
+        code=payload.code,
+        redirect_uri=payload.redirect_uri,
+    )
+
+    if not res.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=res.get("error", "Failed to exchange YouTube authorization code."),
+        )
+
+    return PlatformValidationResponse(
+        platform="youtube",
+        valid=True,
+        configured=True,
+        account_name=res.get("channel_title"),
+        details=f"Connected YouTube channel: {res.get('channel_title')}",
+        error=None,
+    )
+
+
+@router.post("/publishing/youtube/validate", response_model=PlatformValidationResponse)
+async def validate_youtube() -> PlatformValidationResponse:
+    """Validate current YouTube credentials from vault."""
+    from ..publishing.youtube import validate_youtube_credentials
+
+    res = await validate_youtube_credentials()
+    return PlatformValidationResponse(
+        platform="youtube",
+        valid=res.get("valid", False),
+        configured=res.get("configured", False),
+        account_name=res.get("channel_title"),
+        details=res.get("channel_title") or res.get("error") or "",
+        error=res.get("error"),
+    )
+
+
+@router.post("/publishing/youtube/disconnect", status_code=204)
+async def disconnect_youtube() -> None:
+    """Remove YouTube refresh token from encrypted vault."""
+    from ..config import delete_secret
+
+    delete_secret("youtube_refresh_token")
+    log.info("YouTube account successfully disconnected by operator.")
+
+
+@router.post("/publishing/telegram/validate", response_model=PlatformValidationResponse)
+async def validate_telegram() -> PlatformValidationResponse:
+    """Validate current Telegram credentials from vault."""
+    from ..publishing.telegram import validate_telegram_credentials
+
+    res = await validate_telegram_credentials()
+    return PlatformValidationResponse(
+        platform="telegram",
+        valid=res.get("valid", False),
+        configured=res.get("configured", False),
+        account_name=res.get("bot_username") or res.get("bot_name"),
+        details=f"Bot @{res.get('bot_username')}" if res.get("bot_username") else (res.get("error") or ""),
+        error=res.get("error"),
+    )
+
+
+@router.post("/publishing/instagram/validate", response_model=PlatformValidationResponse)
+async def validate_instagram() -> PlatformValidationResponse:
+    """Validate current Instagram credentials from vault."""
+    from ..publishing.instagram import validate_instagram_credentials
+
+    res = await validate_instagram_credentials()
+    return PlatformValidationResponse(
+        platform="instagram",
+        valid=res.get("valid", False),
+        configured=res.get("configured", False),
+        account_name=res.get("account_name"),
+        details=res.get("account_name") or res.get("error") or "",
+        error=res.get("error"),
+    )
 
 
 @router.get("/publishing/{record_id}", response_model=PublishingRecordOut)

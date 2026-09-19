@@ -157,29 +157,66 @@ export function Publishing() {
       {/* Integration Channels Status */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {platforms.length > 0 ? (
-          platforms.map((p) => (
-            <div key={p.platform} className="rounded-lg border border-ink-800 bg-ink-850/60 p-4">
-              <div className="flex items-center justify-between">
-                <span className="font-display text-sm text-ink-100 capitalize">
-                  {p.platform === 'youtube'
-                    ? 'YouTube Shorts'
-                    : p.platform === 'instagram'
-                    ? 'Instagram Reels'
-                    : 'Telegram Bot'}
-                </span>
-                <span
-                  className={`rounded border px-2 py-0.5 text-[10px] ${
-                    p.configured
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                      : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                  }`}
-                >
-                  {p.configured ? 'Configured' : 'Needs Config'}
-                </span>
+          platforms.map((p) => {
+            const isAuth = p.authenticated
+            const isConf = p.configured
+
+            return (
+              <div key={p.platform} className="rounded-lg border border-ink-800 bg-ink-850/60 p-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-display text-sm text-ink-100 font-semibold capitalize">
+                      {p.platform === 'youtube'
+                        ? 'YouTube Shorts'
+                        : p.platform === 'instagram'
+                        ? 'Instagram Reels'
+                        : 'Telegram Bot'}
+                    </span>
+                    <span
+                      className={`rounded border px-2 py-0.5 text-[10px] font-medium shrink-0 ${
+                        isAuth
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                          : isConf
+                          ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                          : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                      }`}
+                    >
+                      {isAuth ? 'Connected' : isConf ? 'Auth Failed' : 'Needs Config'}
+                    </span>
+                  </div>
+
+                  {p.account_name && (
+                    <p className="mt-1.5 font-mono text-xs text-sodium-400 truncate">
+                      {p.account_name}
+                    </p>
+                  )}
+
+                  <p className="mt-2 text-xs text-ink-400 leading-relaxed">
+                    {p.details}
+                  </p>
+
+                  {p.error && (
+                    <p className="mt-1.5 text-[11px] text-rose-400/90 leading-tight">
+                      {p.error}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-3 pt-2 border-t border-ink-800/60 flex items-center justify-between text-[11px]">
+                  {p.last_validated_at ? (
+                    <span className="text-ink-500">
+                      Checked {new Date(p.last_validated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  ) : (
+                    <span className="text-ink-600">Not verified</span>
+                  )}
+                  <Link to="/settings" className="text-sodium-500 hover:text-sodium-400 underline font-medium">
+                    {isAuth ? 'Settings →' : 'Configure →'}
+                  </Link>
+                </div>
               </div>
-              <p className="mt-2 text-xs text-ink-500">{p.details}</p>
-            </div>
-          ))
+            )
+          })
         ) : (
           <div className="col-span-3 text-xs text-ink-500">Loading channel configs…</div>
         )}
