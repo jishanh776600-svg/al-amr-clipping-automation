@@ -112,32 +112,38 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
             raw = str(pat_val).strip()
             if raw == "__CLEAR__":
                 config.delete_secret(config.GITHUB_PAT_KEY)
-                log.info("GitHub PAT explicitly cleared via Settings PUT.")
+                log.info("GitHub PAT explicitly cleared via Settings PUT __CLEAR__.")
             elif raw and not config.is_masked_secret(raw):
-                config.set_secret(config.GITHUB_PAT_KEY, raw)
-                log.info("GitHub PAT explicitly updated via Settings PUT.")
+                saved = config.set_secret(config.GITHUB_PAT_KEY, raw)
+                if saved:
+                    log.info("GitHub PAT explicitly updated via Settings PUT.")
+                else:
+                    log.info("GitHub PAT update rejected (masked or placeholder value); preserving existing stored PAT.")
             else:
-                log.debug("GitHub PAT in Settings PUT is empty or masked; preserving existing stored PAT.")
+                log.info("GitHub PAT in Settings PUT is empty, null, undefined, or masked; preserving existing stored PAT.")
+        else:
+            log.info("GitHub PAT in Settings PUT is None; preserving existing stored PAT.")
 
     config.save(settings)
     return _settings_out(settings)
 
 
-def _handle_secret_save(key: str, raw_value: str) -> None:
+def _handle_secret_save(key: str, raw_value: str | None) -> None:
     valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
     if key not in valid:
         raise HTTPException(
             status_code=400, detail=f"Unknown secret '{key}'. Expected one of: {', '.join(valid)}"
         )
-    val = (raw_value or "").strip()
-    if not val:
-        raise HTTPException(status_code=400, detail="The value cannot be empty.")
+    if raw_value is None:
+        log.warning("Ignoring attempt to set None for secret '%s'. Stored secret preserved.", key)
+        return
 
-    if config.is_masked_secret(val):
+    val = str(raw_value).strip()
+    if not val or config.is_masked_secret(val):
         log.warning(
-            "Ignoring attempt to overwrite secret '%s' with masked placeholder (%s). Stored secret preserved.",
+            "Ignoring attempt to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Stored secret preserved.",
             key,
-            val[:12],
+            val[:12] if val else "empty",
         )
         return
 
@@ -146,8 +152,11 @@ def _handle_secret_save(key: str, raw_value: str) -> None:
         log.info("Secret '%s' explicitly deleted via __CLEAR__ marker.", key)
         return
 
-    config.set_secret(key, val)
-    log.info("Secret '%s' successfully encrypted and saved to durable vault.", key)
+    saved = config.set_secret(key, val)
+    if saved:
+        log.info("Secret '%s' successfully encrypted and saved to durable vault.", key)
+    else:
+        log.warning("Secret '%s' could not be saved (rejected as invalid/placeholder). Stored secret preserved.", key)
 
 
 @router.put("/settings/secrets", status_code=204)

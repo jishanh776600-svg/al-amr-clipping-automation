@@ -53,6 +53,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     paths.ensure_layout()
     db.init()
 
+    # Ensure durable credential vault is initialized and anchored on startup
+    from .security.vault import get_vault
+    get_vault().ensure_initialized()
+
     broker.bind_loop(asyncio.get_running_loop())
 
     # Step 9: Reconcile in-flight jobs and perform crash recovery on startup

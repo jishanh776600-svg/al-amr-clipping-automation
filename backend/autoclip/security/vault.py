@@ -46,6 +46,35 @@ class CredentialVault:
         self._cached_cipher: Fernet | None = None
         self._cached_key_source: str | None = None
 
+    def _db_anchor_cipher(self) -> Fernet:
+        """Deterministic anchor cipher to protect the master key seed in the SQLite database."""
+        op_token = os.environ.get("OPERATOR_TOKEN") or os.environ.get("AUTOCLIP_API_KEY") or "alamr-op-2024-secure"
+        repo = os.environ.get("GITHUB_REPOSITORY") or "al-amr-clipping-automation"
+        seed_key = f"vault-db-seed:{op_token}:{repo}"
+        return Fernet(_derive_fernet_key(seed_key))
+
+    def _save_master_key_to_db(self, master_key: str) -> None:
+        """Mirror authoritative master key into SQLite so it survives container/disk detachment."""
+        try:
+            cipher = self._db_anchor_cipher()
+            ciphertext = cipher.encrypt(master_key.encode("utf-8")).decode("utf-8")
+            store.save_credential("__vault_master_seed__", ciphertext, "Authoritative Master Key Seed")
+        except Exception as exc:
+            log.debug("Could not mirror master key to database: %s", exc)
+
+    def _load_master_key_from_db(self) -> str | None:
+        """Restore authoritative master key directly from SQLite if disk key file was lost."""
+        try:
+            rec = store.get_credential("__vault_master_seed__")
+            if rec is not None:
+                cipher = self._db_anchor_cipher()
+                decrypted = cipher.decrypt(rec.ciphertext.encode("utf-8")).decode("utf-8")
+                if decrypted and decrypted.strip():
+                    return decrypted.strip()
+        except Exception as exc:
+            log.debug("Could not read master key from database: %s", exc)
+        return None
+
     def _resolve_master_key(self) -> str:
         """Resolve the encryption key, ensuring durable continuity across restarts and redeploys.
 
@@ -55,11 +84,13 @@ class CredentialVault:
            Once a database volume has an established master key, that key is authoritative
            so that changes to environment variables (e.g. Render Blueprint `generateValue: true`
            regeneration on redeploy) do not render existing encrypted credentials unreadable.
-        3. Environment secret (`AL_AMR_MASTER_KEY`, `AUTOCLIP_ENCRYPTION_KEY`, `ENCRYPTION_KEY`):
-           Anchored immediately to `paths.root() / ".master_key"` on persistent disk.
-        4. Generated random installation secret:
-           Persisted to `paths.root() / ".master_key"`.
-        5. Deterministic fallback derived from resolved root directory.
+        3. Database key anchor (`__vault_master_seed__` in SQLite `app_credentials`):
+           If the database exists, the key is permanently co-located with the stored data.
+        4. Environment secret (`AL_AMR_MASTER_KEY`, `AUTOCLIP_ENCRYPTION_KEY`, `ENCRYPTION_KEY`):
+           Anchored immediately to `paths.root() / ".master_key"` on persistent disk and in SQLite.
+        5. Generated random installation secret:
+           Persisted to `paths.root() / ".master_key"` and SQLite.
+        6. Deterministic fallback derived from resolved root directory.
         """
         if self._explicit_key:
             return self._explicit_key
@@ -91,13 +122,14 @@ class CredentialVault:
                 if ploc.is_file():
                     stored_key = ploc.read_text(encoding="utf-8").strip()
                     if stored_key:
-                        # Ensure this established authoritative key is mirrored to active key_file
+                        # Ensure this established authoritative key is mirrored to active key_file and SQLite
                         if ploc != key_file:
                             try:
                                 root_dir.mkdir(parents=True, exist_ok=True)
                                 key_file.write_text(stored_key, encoding="utf-8")
                             except Exception:
                                 pass
+                        self._save_master_key_to_db(stored_key)
                         if clean_env and stored_key != clean_env:
                             log.info(
                                 "Preserving authoritative persistent disk key from %s across environment regeneration.",
@@ -107,7 +139,24 @@ class CredentialVault:
             except Exception as exc:
                 log.debug("Could not read persistent master key file %s: %s", ploc, exc)
 
-        # 2. If environment secret is configured, anchor it to the persistent disk volume
+        # 2. Check database anchor in SQLite (__vault_master_seed__)
+        db_key = self._load_master_key_from_db()
+        if db_key:
+            try:
+                root_dir.mkdir(parents=True, exist_ok=True)
+                key_file.write_text(db_key, encoding="utf-8")
+                import contextlib
+                with contextlib.suppress(OSError):
+                    key_file.chmod(0o600)
+                if Path("/data").is_dir() and Path("/data/.master_key") != key_file:
+                    with contextlib.suppress(Exception):
+                        Path("/data/.master_key").write_text(db_key, encoding="utf-8")
+                log.info("Restored authoritative master key from SQLite database to %s", key_file)
+            except Exception as exc:
+                log.debug("Could not restore master key to disk: %s", exc)
+            return db_key
+
+        # 3. If environment secret is configured, anchor it to the persistent disk volume and DB
         if clean_env:
             try:
                 root_dir.mkdir(parents=True, exist_ok=True)
@@ -120,12 +169,13 @@ class CredentialVault:
                         Path("/data/.master_key").write_text(clean_env, encoding="utf-8")
                     except Exception:
                         pass
-                log.info("Anchored environment master key to persistent disk at %s", key_file)
+                self._save_master_key_to_db(clean_env)
+                log.info("Anchored environment master key to persistent disk at %s and SQLite", key_file)
             except Exception as exc:
                 log.warning("Could not anchor environment master key to %s: %s", key_file, exc)
             return clean_env
 
-        # 3. Generate and persist a stable random master key for this installation volume
+        # 4. Generate and persist a stable random master key for this installation volume
         import secrets
         new_key = f"autoclip-key-{secrets.token_urlsafe(32)}"
         try:
@@ -139,12 +189,13 @@ class CredentialVault:
                     Path("/data/.master_key").write_text(new_key, encoding="utf-8")
                 except Exception:
                     pass
-            log.info("Generated and persisted new durable master key to %s", key_file)
+            self._save_master_key_to_db(new_key)
+            log.info("Generated and persisted new durable master key to %s and SQLite", key_file)
             return new_key
         except Exception as exc:
             log.warning("Could not write master key file %s: %s", key_file, exc)
 
-        # 4. Local development fallback derived from the root path
+        # 5. Local development fallback derived from the root path
         fallback = f"autoclip-dev-salt-{root_dir.resolve()}"
         return fallback
 
@@ -172,6 +223,11 @@ class CredentialVault:
             except Exception:
                 pass
 
+        # Also check SQLite for database-anchored key
+        db_key = self._load_master_key_from_db()
+        if db_key and db_key not in candidates:
+            candidates.append(db_key)
+
         for env_var in (
             "AL_AMR_MASTER_KEY",
             "AUTOCLIP_ENCRYPTION_KEY",
@@ -192,6 +248,48 @@ class CredentialVault:
                 pass
 
         return candidates
+
+    def ensure_initialized(self) -> None:
+        """Ensure vault cipher is initialized, keys anchored to disk and DB, and seed PAT from env if unconfigured."""
+        self.get_cipher()
+        master_key = self._cached_key_source
+        if master_key:
+            root_dir = paths.root()
+            key_file = root_dir / ".master_key"
+            if not key_file.is_file():
+                try:
+                    root_dir.mkdir(parents=True, exist_ok=True)
+                    key_file.write_text(master_key, encoding="utf-8")
+                    import contextlib
+                    with contextlib.suppress(OSError):
+                        key_file.chmod(0o600)
+                except Exception:
+                    pass
+            if Path("/data").is_dir() and Path("/data/.master_key") != key_file:
+                try:
+                    Path("/data/.master_key").write_text(master_key, encoding="utf-8")
+                except Exception:
+                    pass
+            self._save_master_key_to_db(master_key)
+
+        # Seed GitHub PAT from environment if available and not yet stored
+        env_pat = (
+            os.environ.get("GITHUB_PAT")
+            or os.environ.get("GH_TOKEN")
+            or os.environ.get("GITHUB_TOKEN")
+        )
+        if env_pat and env_pat.strip():
+            from ..config import is_masked_secret
+            clean_pat = env_pat.strip()
+            if not is_masked_secret(clean_pat):
+                existing = None
+                try:
+                    existing = self.retrieve_secret("github_pat")
+                except Exception:
+                    pass
+                if not existing:
+                    self.store_secret("github_pat", clean_pat)
+                    log.info("Anchored GitHub PAT into durable SQLite vault from environment on startup.")
 
     def get_cipher(self) -> Fernet:
         """Return the active Fernet cipher instance."""
@@ -216,15 +314,29 @@ class CredentialVault:
             return f"•••••••• Configured (…{suffix})"
         return "•••••••• Configured"
 
-    def store_secret(self, key: str, plaintext: str) -> str:
+    def store_secret(self, key: str, plaintext: str | None) -> str:
         """Encrypt and persist a secret in the database.
 
         Returns the masked fingerprint.
+        NEVER overwrites an existing secret with empty, null, undefined, or masked values.
         """
-        if not plaintext or not plaintext.strip():
-            raise ValueError(f"Cannot store empty secret for '{key}'")
+        from ..config import is_masked_secret
 
-        token = plaintext.strip()
+        if plaintext is None:
+            log.warning("Cannot store None secret for '%s'. Existing secret preserved.", key)
+            existing = self.retrieve_secret(key)
+            return self.mask_token(key, existing) if existing else "Not configured"
+
+        token = str(plaintext).strip()
+        if not token or is_masked_secret(token):
+            log.warning(
+                "Refusing to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Existing secret preserved.",
+                key,
+                token[:12] if token else "empty",
+            )
+            existing = self.retrieve_secret(key)
+            return self.mask_token(key, existing) if existing else "Not configured"
+
         cipher = self.get_cipher()
         ciphertext = cipher.encrypt(token.encode("utf-8")).decode("utf-8")
         fingerprint = self.mask_token(key, token)

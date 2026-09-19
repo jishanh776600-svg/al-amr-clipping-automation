@@ -313,6 +313,226 @@ def test_invalid_master_key_fails_safely_without_destroying_record():
         cleanup_test_env(tmp)
 
 
+def test_save_pat_restart_pat_still_exists():
+    """Requirement test: save PAT → restart → PAT still exists."""
+    tmp = setup_test_env()
+    try:
+        real_pat = "ghp_SaveRestartToken11111111111111111111"
+        config.set_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        # Simulate restart: close DB connections and wipe in-memory vault singleton
+        db.reset_connections()
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+
+        # Reopen and verify PAT exists and decrypts
+        reloaded_pat = config.get_secret(config.GITHUB_PAT_KEY)
+        assert reloaded_pat == real_pat
+        vault = autoclip.security.vault.get_vault()
+        status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+        assert status["configured"] is True
+        assert "1111" in status["masked"]
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_save_pat_refresh_update_unrelated_setting_pat_still_exists():
+    """Requirement test: save PAT → refresh/update unrelated setting → PAT still exists."""
+    tmp = setup_test_env()
+    try:
+        real_pat = "ghp_SaveRefreshUpdateToken222222222222222"
+        config.set_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        import asyncio
+        # Step 1: Frontend refresh (calls get_settings)
+        s1 = asyncio.run(get_settings())
+        assert s1.keys_present[config.GITHUB_PAT_KEY] is True
+        assert s1.credentials_status[config.GITHUB_PAT_KEY].configured is True
+
+        # Step 2: User updates unrelated settings (e.g. caption_style, visual_filter, bgm_asset_id, whisper)
+        for update in (
+            SettingsIn(export={"caption_style": "kyle_kirshner"}),
+            SettingsIn(export={"visual_filter": "high_contrast"}),
+            SettingsIn(export={"bgm_asset_id": "bgm_corporate_01"}),
+            SettingsIn(whisper={"model": "small", "language": "en"}),
+            SettingsIn(active_provider="gemini"),
+        ):
+            res = asyncio.run(put_settings(update))
+            assert res.keys_present[config.GITHUB_PAT_KEY] is True
+            assert res.credentials_status[config.GITHUB_PAT_KEY].configured is True
+
+        # Step 3: Verify PAT is completely intact
+        assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_save_pat_recreate_application_process_pat_still_decrypts():
+    """Requirement test: save PAT → recreate application process → PAT still decrypts."""
+    tmp = setup_test_env()
+    try:
+        real_pat = "ghp_ProcessRecreateToken3333333333333333"
+        config.set_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        # Simulate complete application process recreation
+        db.reset_connections()
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+
+        # Simulate startup lifecycle in app.py
+        from autoclip.app import lifespan, create_app
+        import asyncio
+        from fastapi import FastAPI
+
+        test_app = create_app()
+        # Trigger startup ensure_initialized
+        vault = autoclip.security.vault.get_vault()
+        vault.ensure_initialized()
+
+        decrypted = config.get_secret(config.GITHUB_PAT_KEY)
+        assert decrypted == real_pat
+        assert vault.get_secret_status(config.GITHUB_PAT_KEY)["configured"] is True
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_save_pat_workflow_dispatch_pat_remains_stored():
+    """Requirement test: save PAT → workflow dispatch → PAT remains stored."""
+    tmp = setup_test_env()
+    try:
+        real_pat = "ghp_WorkflowDispatchToken4444444444444444"
+        config.set_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        # Dispatcher retrieves token for GitHub Actions API
+        token_for_dispatch = get_github_token()
+        assert token_for_dispatch == real_pat
+
+        # Verify PAT remains stored after dispatch token read
+        vault = get_vault()
+        status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+        assert status["configured"] is True
+        assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_masked_frontend_value_cannot_overwrite_real_pat():
+    """Requirement test: masked/null/undefined frontend values CANNOT overwrite the real PAT."""
+    tmp = setup_test_env()
+    try:
+        real_pat = "ghp_BulletProofProtectedPAT55555555555555"
+        config.set_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        import asyncio
+        invalid_overwrites = [
+            "",
+            "   ",
+            "null",
+            "NULL",
+            "None",
+            "none",
+            "undefined",
+            "UNDEFINED",
+            "••••••",
+            "••••••••",
+            "•••••••• Configured (…5555)",
+            "***",
+            "******",
+            "Not configured",
+            "[REDACTED]",
+            "masked",
+            "...",
+        ]
+
+        for bad_val in invalid_overwrites:
+            # Via put_settings
+            asyncio.run(put_settings(SettingsIn(github_pat=bad_val)))
+            assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat, f"Overwritten by {bad_val!r} in put_settings"
+
+            # Via put_secret
+            asyncio.run(put_secret(SecretIn(key=config.GITHUB_PAT_KEY, value=bad_val)))
+            assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat, f"Overwritten by {bad_val!r} in put_secret"
+
+            # Via direct config.set_secret
+            ret = config.set_secret(config.GITHUB_PAT_KEY, bad_val)
+            assert ret is False, f"set_secret did not reject {bad_val!r}"
+            assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat, f"Overwritten by direct set_secret({bad_val!r})"
+
+        # None value in put_settings
+        asyncio.run(put_settings(SettingsIn(github_pat=None)))
+        assert config.get_secret(config.GITHUB_PAT_KEY) == real_pat
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_persistent_master_key_is_reused_instead_of_regenerated():
+    """Requirement test: persistent master key is reused instead of regenerated."""
+    tmp = setup_test_env()
+    try:
+        # Establish initial key
+        initial_key = "initial-authoritative-key-66666666"
+        os.environ["AL_AMR_MASTER_KEY"] = initial_key
+
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+        vault1 = autoclip.security.vault.get_vault()
+        resolved_1 = vault1._resolve_master_key()
+        assert resolved_1 == initial_key
+
+        real_pat = "ghp_DurableMasterKeyPAT666666666666666"
+        vault1.store_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        # Simulate Render restart/redeploy where AL_AMR_MASTER_KEY regenerates to a new random value
+        os.environ["AL_AMR_MASTER_KEY"] = "regenerated-new-key-77777777"
+        autoclip.security.vault._global_vault = None
+        db.reset_connections()
+
+        vault2 = autoclip.security.vault.get_vault()
+        resolved_2 = vault2._resolve_master_key()
+        # Must reuse the authoritative established persistent key, NOT the regenerated env key
+        assert resolved_2 == initial_key
+        assert resolved_2 != os.environ["AL_AMR_MASTER_KEY"]
+
+        # Decryption must succeed flawlessly
+        assert vault2.retrieve_secret(config.GITHUB_PAT_KEY) == real_pat
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_database_anchored_master_key_survives_master_key_file_deletion():
+    """Bonus durability: master key mirrored in SQLite survives accidental .master_key file deletion."""
+    tmp = setup_test_env()
+    try:
+        initial_key = "db-anchored-key-88888888"
+        os.environ["AL_AMR_MASTER_KEY"] = initial_key
+
+        import autoclip.security.vault
+        autoclip.security.vault._global_vault = None
+        vault = autoclip.security.vault.get_vault()
+
+        real_pat = "ghp_DatabaseAnchoredPAT88888888888888"
+        vault.store_secret(config.GITHUB_PAT_KEY, real_pat)
+
+        # Delete .master_key file on disk and change env key to simulate container replacement
+        key_file = paths.root() / ".master_key"
+        key_file.unlink()
+        assert not key_file.exists()
+        os.environ.pop("AL_AMR_MASTER_KEY", None)
+
+        autoclip.security.vault._global_vault = None
+        db.reset_connections()
+
+        # New vault must restore key from SQLite __vault_master_seed__ and restore .master_key on disk
+        new_vault = autoclip.security.vault.get_vault()
+        restored_key = new_vault._resolve_master_key()
+        assert restored_key == initial_key
+        assert key_file.is_file()
+        assert key_file.read_text(encoding="utf-8").strip() == initial_key
+        assert new_vault.retrieve_secret(config.GITHUB_PAT_KEY) == real_pat
+    finally:
+        cleanup_test_env(tmp)
+
+
 if __name__ == "__main__":
     print("Running test_save_other_settings_preserves_pat...")
     test_save_other_settings_preserves_pat()
@@ -332,4 +552,18 @@ if __name__ == "__main__":
     test_env_key_anchoring_to_master_key_file()
     print("Running test_invalid_master_key_fails_safely_without_destroying_record...")
     test_invalid_master_key_fails_safely_without_destroying_record()
-    print("ALL 9 PAT PERSISTENCE REGRESSION TESTS PASSED SUCCESSFULLY!")
+    print("Running test_save_pat_restart_pat_still_exists...")
+    test_save_pat_restart_pat_still_exists()
+    print("Running test_save_pat_refresh_update_unrelated_setting_pat_still_exists...")
+    test_save_pat_refresh_update_unrelated_setting_pat_still_exists()
+    print("Running test_save_pat_recreate_application_process_pat_still_decrypts...")
+    test_save_pat_recreate_application_process_pat_still_decrypts()
+    print("Running test_save_pat_workflow_dispatch_pat_remains_stored...")
+    test_save_pat_workflow_dispatch_pat_remains_stored()
+    print("Running test_masked_frontend_value_cannot_overwrite_real_pat...")
+    test_masked_frontend_value_cannot_overwrite_real_pat()
+    print("Running test_persistent_master_key_is_reused_instead_of_regenerated...")
+    test_persistent_master_key_is_reused_instead_of_regenerated()
+    print("Running test_database_anchored_master_key_survives_master_key_file_deletion...")
+    test_database_anchored_master_key_survives_master_key_file_deletion()
+    print("ALL 16 PAT PERSISTENCE REGRESSION TESTS PASSED SUCCESSFULLY!")

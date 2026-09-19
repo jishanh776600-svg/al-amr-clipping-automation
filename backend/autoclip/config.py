@@ -295,33 +295,65 @@ def get_secret(key: str, settings: Settings | None = None) -> str | None:
 
 
 def is_masked_secret(val: str | None) -> bool:
-    """True if string represents a masked fingerprint or placeholder rather than a real secret."""
+    """True if string represents a masked fingerprint, placeholder, or invalid secret token."""
     if not val:
         return False
     s = val.strip()
-    return (
-        "••••" in s
-        or "Configured" in s
-        or s.startswith("***")
-        or s == "Not configured"
-        or (s.startswith("••••") and s.endswith(")"))
-    )
+    if not s:
+        return False
+    lower = s.lower()
+    # Common literal representations of empty / null / placeholder values
+    if lower in (
+        "null",
+        "none",
+        "undefined",
+        "nil",
+        "empty",
+        "unset",
+        "masked",
+        "(masked)",
+        "[masked]",
+        "[redacted]",
+        "redacted",
+        "placeholder",
+        "not configured",
+        "configured",
+        "re-enter token",
+        "encryption key mismatch",
+    ):
+        return True
+
+    # Any string containing bullet characters or mask markers
+    if "••••" in s or "•" in s or "Configured" in s or s.startswith("***") or "(…" in s:
+        return True
+
+    # Any string composed entirely of masking / placeholder characters (bullets, asterisks, dots, dashes, spaces)
+    if set(s).issubset({"•", "*", ".", "-", "_", " "}):
+        return True
+
+    # Fingerprint format: "•••••••• Configured (…XXXX)"
+    if s.startswith("••••") and (s.endswith(")") or "Configured" in s):
+        return True
+
+    return False
 
 
-def set_secret(key: str, value: str, settings: Settings | None = None) -> bool:
+def set_secret(key: str, value: str | None, settings: Settings | None = None) -> bool:
     """Store a secret encrypted in the durable database vault and synced with keyring.
 
     Returns True if stored in durable encrypted storage or keyring.
+    NEVER overwrites an existing secret with an empty, null, undefined, or masked value.
     """
-    token = value.strip()
-    if not token:
-        raise ValueError(f"Cannot set empty secret for {key}")
+    if value is None:
+        log.warning("Rejected attempt to set None secret for '%s'. Existing secret preserved.", key)
+        return False
 
-    if is_masked_secret(token):
+    token = str(value).strip()
+    if not token or is_masked_secret(token):
         log.warning(
-            "Rejected attempt to overwrite secret '%s' with masked placeholder value (%s). Existing secret preserved.",
+            "Rejected attempt to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Existing secret preserved.",
             key,
-            token[:12],
+            token[:12] if token else "empty",
         )
         return False
 
