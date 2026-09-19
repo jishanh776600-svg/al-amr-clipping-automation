@@ -541,19 +541,46 @@ async def create_autonomous_job(
 
     # Step 20: Resolve Campaign BGM Selection
     vault = BGMVault()
-    try:
-        bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
-            vault.resolve_campaign_bgm, bgm_asset_id, allow_fallback=True
-        )
-    except BGMUnavailableError as exc:
-        log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_asset_id, exc)
+    cleaned_bgm = str(bgm_asset_id).strip() if bgm_asset_id is not None else ""
+    if cleaned_bgm.lower() in ("none", "null", "false", "no", "off", "disabled", "__none__"):
+        bgm_selection_mode = "none"
+        bgm_requested_id = "none"
         bgm_enabled, bgm_asset, bgm_path = False, None, None
-        job_settings["bgm_warning"] = str(exc)
+    elif cleaned_bgm:
+        bgm_selection_mode = "explicit"
+        bgm_requested_id = cleaned_bgm
+        try:
+            bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+                vault.resolve_campaign_bgm, bgm_requested_id, allow_fallback=True
+            )
+            if bgm_asset and bgm_asset.id != bgm_requested_id:
+                job_settings["bgm_fallback_reason"] = f"Requested BGM '{bgm_requested_id}' was unavailable; fell back to '{bgm_asset.id}'."
+        except BGMUnavailableError as exc:
+            log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_requested_id, exc)
+            bgm_enabled, bgm_asset, bgm_path = False, None, None
+            job_settings["bgm_warning"] = str(exc)
+            job_settings["bgm_fallback_reason"] = str(exc)
+    else:
+        bgm_selection_mode = "default"
+        bgm_requested_id = None
+        try:
+            bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+                vault.resolve_campaign_bgm, None, allow_fallback=True
+            )
+        except BGMUnavailableError as exc:
+            bgm_enabled, bgm_asset, bgm_path = False, None, None
+            job_settings["bgm_warning"] = str(exc)
 
     job_settings["bgm_enabled"] = bgm_enabled
+    job_settings["bgm_selection_mode"] = bgm_selection_mode
+    job_settings["bgm_requested_id"] = bgm_requested_id
     job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None
     job_settings["bgm_asset_name"] = bgm_asset.name if bgm_asset else None
     job_settings["bgm_asset_path"] = str(bgm_path) if bgm_path else None
+    if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+        job_settings["export"] = {}
+    job_settings["export"]["bgm_asset_id"] = job_settings["bgm_asset_id"]
+    job_settings["export"]["bgm_enabled"] = bgm_enabled
 
     # 2e. Generate Normalized CampaignSpecification and bridge to CampaignBrief
     campaign_spec_rec: CampaignSpecificationRecord | None = None
@@ -713,19 +740,46 @@ async def create_job(
     # Step 20: Resolve Campaign BGM Selection
     bgm_asset_id = getattr(overrides, "bgm_asset_id", None)
     vault = BGMVault()
-    try:
-        bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
-            vault.resolve_campaign_bgm, bgm_asset_id
-        )
-    except BGMUnavailableError as exc:
-        log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_asset_id, exc)
+    cleaned_bgm = str(bgm_asset_id).strip() if bgm_asset_id is not None else ""
+    if cleaned_bgm.lower() in ("none", "null", "false", "no", "off", "disabled", "__none__"):
+        bgm_selection_mode = "none"
+        bgm_requested_id = "none"
         bgm_enabled, bgm_asset, bgm_path = False, None, None
-        job_settings["bgm_warning"] = str(exc)
+    elif cleaned_bgm:
+        bgm_selection_mode = "explicit"
+        bgm_requested_id = cleaned_bgm
+        try:
+            bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+                vault.resolve_campaign_bgm, bgm_requested_id, allow_fallback=True
+            )
+            if bgm_asset and bgm_asset.id != bgm_requested_id:
+                job_settings["bgm_fallback_reason"] = f"Requested BGM '{bgm_requested_id}' was unavailable; fell back to '{bgm_asset.id}'."
+        except BGMUnavailableError as exc:
+            log.warning("Campaign BGM '%s' unavailable (%s). Falling back to No BGM.", bgm_requested_id, exc)
+            bgm_enabled, bgm_asset, bgm_path = False, None, None
+            job_settings["bgm_warning"] = str(exc)
+            job_settings["bgm_fallback_reason"] = str(exc)
+    else:
+        bgm_selection_mode = "default"
+        bgm_requested_id = None
+        try:
+            bgm_enabled, bgm_asset, bgm_path = await asyncio.to_thread(
+                vault.resolve_campaign_bgm, None, allow_fallback=True
+            )
+        except BGMUnavailableError as exc:
+            bgm_enabled, bgm_asset, bgm_path = False, None, None
+            job_settings["bgm_warning"] = str(exc)
 
     job_settings["bgm_enabled"] = bgm_enabled
+    job_settings["bgm_selection_mode"] = bgm_selection_mode
+    job_settings["bgm_requested_id"] = bgm_requested_id
     job_settings["bgm_asset_id"] = bgm_asset.id if bgm_asset else None
     job_settings["bgm_asset_name"] = bgm_asset.name if bgm_asset else None
     job_settings["bgm_asset_path"] = str(bgm_path) if bgm_path else None
+    if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+        job_settings["export"] = {}
+    job_settings["export"]["bgm_asset_id"] = job_settings["bgm_asset_id"]
+    job_settings["export"]["bgm_enabled"] = bgm_enabled
 
     if payload and payload.campaign is not None:
         job_settings["campaign"] = payload.campaign.model_dump(mode="json")

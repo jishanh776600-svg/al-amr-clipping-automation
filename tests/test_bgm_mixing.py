@@ -67,16 +67,17 @@ def synth_audio_fixture(tmp_path: Path):
 def test_ducking_config_defaults():
     """Validates default ducking parameters align with production-grade standards."""
     cfg = DuckingConfig()
-    assert cfg.duck_attenuation_db == 16.0
-    assert cfg.attack_ms == 150.0
-    assert cfg.release_ms == 450.0
+    assert cfg.duck_attenuation_db == 17.0
+    assert cfg.attack_ms == 80.0
+    assert cfg.release_ms == 250.0
     assert cfg.target_lufs == -14.0
     assert cfg.true_peak_limit == -1.5
     assert cfg.limiter_limit == 0.95
 
     d = cfg.to_dict()
-    assert d["duck_attenuation_db"] == 16.0
-    assert d["attack_ms"] == 150.0
+    assert d["duck_attenuation_db"] == 17.0
+    assert d["attack_ms"] == 80.0
+    assert d["release_ms"] == 250.0
     assert d["target_lufs"] == -14.0
 
 

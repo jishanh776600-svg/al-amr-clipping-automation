@@ -74,20 +74,38 @@ class CredentialVault:
         )
         clean_env = env_key.strip() if (env_key and env_key.strip()) else None
 
-        # 1. If persistent volume already has an established master key, use it as authoritative
-        try:
-            if key_file.is_file():
-                stored_key = key_file.read_text(encoding="utf-8").strip()
-                if stored_key:
-                    if clean_env and stored_key != clean_env:
-                        log.warning(
-                            "Persistent disk master key at %s differs from environment key; "
-                            "preserving persistent disk key for credential decryption continuity.",
-                            key_file,
-                        )
-                    return stored_key
-        except Exception as exc:
-            log.warning("Could not read persistent master key file %s: %s", key_file, exc)
+        # 1. Search persistent disk locations for an existing established master key
+        persistent_locations = [key_file]
+        if Path("/data/.master_key") != key_file:
+            persistent_locations.append(Path("/data/.master_key"))
+        if root_dir == Path.home() / ".autoclip":
+            for alt_loc in (
+                Path.home() / ".autoclip" / ".master_key",
+                Path.home() / ".clipforge" / ".master_key",
+            ):
+                if alt_loc not in persistent_locations:
+                    persistent_locations.append(alt_loc)
+
+        for ploc in persistent_locations:
+            try:
+                if ploc.is_file():
+                    stored_key = ploc.read_text(encoding="utf-8").strip()
+                    if stored_key:
+                        # Ensure this established authoritative key is mirrored to active key_file
+                        if ploc != key_file:
+                            try:
+                                root_dir.mkdir(parents=True, exist_ok=True)
+                                key_file.write_text(stored_key, encoding="utf-8")
+                            except Exception:
+                                pass
+                        if clean_env and stored_key != clean_env:
+                            log.info(
+                                "Preserving authoritative persistent disk key from %s across environment regeneration.",
+                                ploc,
+                            )
+                        return stored_key
+            except Exception as exc:
+                log.debug("Could not read persistent master key file %s: %s", ploc, exc)
 
         # 2. If environment secret is configured, anchor it to the persistent disk volume
         if clean_env:
@@ -97,25 +115,15 @@ class CredentialVault:
                 import contextlib
                 with contextlib.suppress(OSError):
                     key_file.chmod(0o600)
+                if Path("/data").is_dir() and Path("/data/.master_key") != key_file:
+                    try:
+                        Path("/data/.master_key").write_text(clean_env, encoding="utf-8")
+                    except Exception:
+                        pass
                 log.info("Anchored environment master key to persistent disk at %s", key_file)
             except Exception as exc:
                 log.warning("Could not anchor environment master key to %s: %s", key_file, exc)
             return clean_env
-
-        # 3. Check alternative persistent location (/data/.master_key) if clean_env was not set
-        if Path("/data/.master_key") != key_file and Path("/data/.master_key").is_file():
-            try:
-                alt_key = Path("/data/.master_key").read_text(encoding="utf-8").strip()
-                if alt_key:
-                    log.info("Adopting existing persistent master key from /data/.master_key")
-                    try:
-                        root_dir.mkdir(parents=True, exist_ok=True)
-                        key_file.write_text(alt_key, encoding="utf-8")
-                    except Exception:
-                        pass
-                    return alt_key
-            except Exception:
-                pass
 
         # 3. Generate and persist a stable random master key for this installation volume
         import secrets
@@ -126,6 +134,11 @@ class CredentialVault:
             import contextlib
             with contextlib.suppress(OSError):
                 key_file.chmod(0o600)
+            if Path("/data").is_dir() and Path("/data/.master_key") != key_file:
+                try:
+                    Path("/data/.master_key").write_text(new_key, encoding="utf-8")
+                except Exception:
+                    pass
             log.info("Generated and persisted new durable master key to %s", key_file)
             return new_key
         except Exception as exc:
@@ -141,9 +154,15 @@ class CredentialVault:
         if self._explicit_key:
             candidates.append(self._explicit_key)
 
-        key_locations = [paths.root() / ".master_key"]
-        if Path("/data/.master_key") != paths.root() / ".master_key":
-            key_locations.append(Path("/data/.master_key"))
+        key_locations = [
+            paths.root() / ".master_key",
+            Path("/data/.master_key"),
+        ]
+        if paths.root() == Path.home() / ".autoclip":
+            key_locations.extend([
+                Path.home() / ".autoclip" / ".master_key",
+                Path.home() / ".clipforge" / ".master_key",
+            ])
         for kf in key_locations:
             try:
                 if kf.is_file():
@@ -164,12 +183,13 @@ class CredentialVault:
             if val and val.strip() and val.strip() not in candidates:
                 candidates.append(val.strip())
 
-        try:
-            salt1 = f"autoclip-dev-salt-{paths.root().resolve()}"
-            if salt1 not in candidates:
-                candidates.append(salt1)
-        except Exception:
-            pass
+        for p in (paths.root(), Path("/data"), Path.home() / ".autoclip"):
+            try:
+                salt = f"autoclip-dev-salt-{p.resolve()}"
+                if salt not in candidates:
+                    candidates.append(salt)
+            except Exception:
+                pass
 
         return candidates
 

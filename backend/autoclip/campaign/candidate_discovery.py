@@ -52,6 +52,28 @@ CTA_PATTERNS = [
     (r"\b(?:dm me|message me|send me a message)\b", "dm"),
 ]
 
+INTRO_GREETING_PATTERNS = [
+    r"\b(?:hey\s+(?:guys|everyone|there|all|everybody|y'all))\b",
+    r"\b(?:welcome\s+(?:back|to\s+the\s+channel|to\s+my\s+channel|to\s+another\s+video|everyone))\b",
+    r"\b(?:in\s+this\s+video\s+(?:we\s+are|we're|i'm|i\s+am|today))\b",
+    r"\b(?:today\s+(?:we\s+are|we're|i'm|i\s+am)\s+(?:going\s+to|gonna|talking\s+about|discussing))\b",
+    r"\b(?:what's\s+up\s+(?:guys|everyone|everybody|y'all))\b",
+    r"\b(?:what\s+is\s+up\s+(?:guys|everyone|everybody))\b",
+    r"\b(?:hi\s+(?:everyone|guys|there|all|everybody))\b",
+    r"\b(?:hello\s+(?:everyone|guys|there|all|everybody))\b",
+    r"\b(?:first\s+of\s+all\s+welcome)\b",
+    r"\b(?:thanks\s+for\s+(?:tuning\s+in|watching|coming\s+back))\b",
+    r"\b(?:before\s+we\s+(?:get\s+started|jump\s+in|dive\s+in|begin))\b",
+    r"\b(?:make\s+sure\s+to\s+like\s+and\s+subscribe)\b",
+]
+
+SUBSTANTIVE_HOOK_PATTERNS = [
+    r"\b(?:\$\d+|\d+\s*(?:k|m|million|billion|thousand|hundred|dollars|bucks)|revenue|profit|sales|cash|generated)\b",
+    r"\b(?:the\s+secret|nobody\s+talks\s+about|never\s+do\s+this|why\s+you\s+should|stop\s+doing|the\s+truth\s+about)\b",
+    r"\b(?:most\s+people\s+don't\s+know|what\s+happens\s+when|this\s+changes\s+everything|i\s+was\s+wrong|the\s+real\s+reason)\b",
+    r"\b(?:biggest\s+mistake|we\s+literally|how\s+to\s+actually|how\s+we\s+scaled|why\s+did|did\s+you\s+know)\b",
+]
+
 
 @dataclass
 class NarrativeMilestones:
@@ -176,7 +198,7 @@ class CandidateDiscoveryEngine:
             campaign_spec=self.spec,
             campaign_brief=self.brief,
             default_min=20.0,
-            default_max=60.0,
+            default_max=30.0,
         )
         self.preferred_duration_s: float | None = None
         self.max_silence_s = 2.0
@@ -238,12 +260,29 @@ class CandidateDiscoveryEngine:
             # Sentence ending punctuation
             if any(text.endswith(p) for p in (".", "!", "?", "...", ";")):
                 boundaries.append(min(i + 1, total_words - 1))
+            # Clause ending punctuation
+            elif any(text.endswith(p) for p in (",", ":", "-", "—")):
+                boundaries.append(min(i + 1, total_words - 1))
             # Pauses between words
-            elif i + 1 < total_words and (words[i + 1].start - w.end) >= 0.4:
+            elif i + 1 < total_words and (words[i + 1].start - w.end) >= 0.25:
                 boundaries.append(i + 1)
         if (total_words - 1) not in boundaries:
             boundaries.append(total_words - 1)
         boundaries = sorted(list(set(boundaries)))
+
+        # Insert intermediate cadence points if distance between consecutive boundaries exceeds 7.0s
+        dense_boundaries: list[int] = []
+        for idx, b in enumerate(boundaries):
+            dense_boundaries.append(b)
+            if idx + 1 < len(boundaries):
+                next_b = boundaries[idx + 1]
+                t_gap = words[min(next_b, total_words - 1)].start - words[min(b, total_words - 1)].start
+                if t_gap > 7.0:
+                    step = max(10, (next_b - b) // 3)
+                    for mid in range(b + step, next_b, step):
+                        if mid < total_words - 1:
+                            dense_boundaries.append(mid)
+        boundaries = sorted(list(set(dense_boundaries)))
 
         candidate_spans: list[tuple[int, int, float, float]] = []
         dangling_openers = {"and", "but", "or", "so", "because", "yet", "however"}
@@ -278,12 +317,27 @@ class CandidateDiscoveryEngine:
         filtered_spans: list[tuple[int, int, float, float]] = []
         for span in candidate_spans:
             s_w, e_w, s_s, e_s = span
-            # Don't add if nearly identical (<1.5s difference) to last span
+            # Don't add if nearly identical (<1.0s difference) to last span
             if filtered_spans:
                 prev_s_w, prev_e_w, prev_s_s, prev_e_s = filtered_spans[-1]
-                if abs(s_s - prev_s_s) < 1.0 and abs(e_s - prev_e_s) < 2.0:
+                if abs(s_s - prev_s_s) < 0.8 and abs(e_s - prev_e_s) < 1.2:
                     continue
             filtered_spans.append(span)
+
+        # If spans are sparse on a long video, perform a sliding window pass
+        if len(filtered_spans) < 15 and total_duration >= min_dur * 2:
+            step_words = max(5, int(total_words / max(1, total_duration / 4.0)))
+            for s_idx in range(0, total_words - 10, step_words):
+                s_s = words[s_idx].start
+                for e_idx in range(s_idx + 10, total_words):
+                    e_s = words[e_idx].end
+                    dur = e_s - s_s
+                    if dur < min_dur:
+                        continue
+                    if dur > max_dur:
+                        break
+                    filtered_spans.append((s_idx, e_idx, s_s, e_s))
+                    break
 
         log.info(
             "CandidateDiscoveryEngine: Discovered %d candidate window(s) across %.1fs transcript.",
@@ -615,6 +669,21 @@ class CandidateDiscoveryEngine:
                         penalties += 10.0
                     elif conflict.rule_category == "topics" and conflict.document_a in full_text_lower:
                         penalties += 15.0
+
+        # Intro/greeting penalty vs substantive hook disambiguation
+        opening_words = words[:min(18, len(words))]
+        opening_text = " ".join(w.text for w in opening_words).lower()
+        has_intro_greeting = any(re.search(pat, opening_text) for pat in INTRO_GREETING_PATTERNS)
+        has_substantive_hook = any(re.search(pat, opening_text) for pat in SUBSTANTIVE_HOOK_PATTERNS)
+
+        if has_intro_greeting:
+            if not has_substantive_hook:
+                intro_pen = 45.0
+                penalties += intro_pen
+                score_res.rejection_reasons.append("Opening dominated by intro/greeting filler without substantive claim")
+            else:
+                penalties += 5.0
+
         score_res.penalties = penalties
 
         # ------------------------------------------------------------------

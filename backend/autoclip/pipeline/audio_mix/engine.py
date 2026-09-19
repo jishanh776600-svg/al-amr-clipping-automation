@@ -147,10 +147,13 @@ class BGMMixingEngine:
         else:
             cmd.extend(["-i", str(bgm_path)])
 
+        # Pre-attenuate BGM bed so that during speech it ducks to -28 to -31 dBFS (~16-18 dB below voice)
+        bed_pre_att = max(0.0, float(self.config.duck_attenuation_db) - 12.0)
         filter_complex = (
             f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
             f"afade=t=in:st=0:d={self.config.fade_in_s},"
-            f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s}[bgm_faded];"
+            f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
+            f"volume=-{bed_pre_att:.1f}dB[bgm_faded];"
             f"[0:a]asplit=2[speech_main][speech_sc];"
             f"[bgm_faded][speech_sc]sidechaincompress="
             f"threshold={self.config.threshold}:"

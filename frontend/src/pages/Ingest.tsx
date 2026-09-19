@@ -249,11 +249,6 @@ export function Ingest() {
     try {
       const list = await api.listBGMAssets()
       setBgmAssets(list)
-      setSelectedBgmId((prev) => {
-        if (!prev || prev === 'none') return prev
-        const exists = list.some((a) => a.id === prev && a.enabled)
-        return exists ? prev : ''
-      })
     } catch {
       // ignore
     }

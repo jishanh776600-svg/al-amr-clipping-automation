@@ -14,7 +14,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from autoclip.campaign.candidate_discovery import compute_iou, compute_text_similarity
+from autoclip.campaign.candidate_discovery import (
+    INTRO_GREETING_PATTERNS,
+    SUBSTANTIVE_HOOK_PATTERNS,
+    compute_iou,
+    compute_text_similarity,
+)
 from autoclip.campaign.models_intelligence import CampaignSpecification, RequirementItem
 from autoclip.campaign.models import CampaignBrief
 from autoclip.db.models import Clip, ClipCandidateRecord, ClipSpecificationRecord, new_id, utcnow
@@ -547,6 +552,27 @@ class PreRenderQualityGate:
                 hard_rejections.append(f"contains_banned_content({banned})")
                 rule_checks.append({"rule": "banned_check", "passed": False, "term": banned, "weight": 2.0})
 
+        # 8b. Intro/Greeting Dominance & Substantive Hook Disambiguation
+        opening_words = clip_words[:min(18, len(clip_words))]
+        opening_text = " ".join(w.text for w in opening_words).lower()
+        has_intro_greeting = any(re.search(pat, opening_text) for pat in INTRO_GREETING_PATTERNS)
+        has_substantive_hook = any(re.search(pat, opening_text) for pat in SUBSTANTIVE_HOOK_PATTERNS)
+
+        if has_intro_greeting and not has_substantive_hook and optimization.optimized_start_s < 20.0:
+            hard_rejections.append("dominated_by_intro_greeting_filler")
+            rule_checks.append({"rule": "no_intro_greeting", "passed": False, "weight": 2.5})
+        else:
+            rule_checks.append({"rule": "no_intro_greeting", "passed": True, "weight": 1.0})
+
+        # 8c. Semantic Completeness Check
+        last_word_text = clip_words[-1].text.strip().lower() if clip_words else ""
+        last_clean = re.sub(r"[^\w]", "", last_word_text)
+        if last_clean in DANGLING_END_TOKENS:
+            hard_rejections.append(f"dangling_sentence_ending({last_clean})")
+            rule_checks.append({"rule": "complete_thought_ending", "passed": False, "weight": 1.5})
+        else:
+            rule_checks.append({"rule": "complete_thought_ending", "passed": True, "weight": 1.0})
+
         # 9. Deduplication against Already Approved Specifications
         if existing_approved_specs:
             for prev_spec in existing_approved_specs:
@@ -637,6 +663,7 @@ class ClipAssemblyEngine:
         source_id: str,
         silences: list[Silence] | None = None,
         on_progress: Callable[[str, float, dict[str, Any]], None] | None = None,
+        target_count: int | None = None,
     ) -> tuple[list[ClipSpecificationRecord], list[ClipSpecificationRecord], dict[str, Any]]:
         """Assembles production-grade ClipSpecification records from Step 15 candidates."""
         start_time = time.time()
@@ -755,6 +782,13 @@ class ClipAssemblyEngine:
                     approved_specs.append(spec)
                     if on_progress:
                         on_progress("CLIPS_APPROVED", (rank) / total_candidates, meta)
+                    if target_count is not None and len(approved_specs) >= target_count:
+                        log.info(
+                            "ClipAssemblyEngine: Target count %d reached after evaluating %d candidate(s).",
+                            target_count,
+                            rank,
+                        )
+                        break
                 else:
                     if on_progress:
                         on_progress("CLIPS_REJECTED", (rank) / total_candidates, meta)

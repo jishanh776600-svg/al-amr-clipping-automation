@@ -34,7 +34,15 @@ from autoclip.jobs.dispatcher import get_github_token
 from autoclip.security.vault import get_vault, CredentialVault
 
 
+_orig_env: dict[str, str | None] = {}
+
+
 def setup_test_env():
+    global _orig_env
+    _orig_env = {
+        "AUTOCLIP_HOME": os.environ.get("AUTOCLIP_HOME"),
+        "AL_AMR_MASTER_KEY": os.environ.get("AL_AMR_MASTER_KEY"),
+    }
     tmp_home = Path(tempfile.mkdtemp(prefix="autoclip_pat_test_"))
     os.environ["AUTOCLIP_HOME"] = str(tmp_home)
     os.environ["AL_AMR_MASTER_KEY"] = "alamr-test-master-key-persistence-9876"
@@ -53,6 +61,13 @@ def setup_test_env():
 def cleanup_test_env(tmp_home: Path):
     db.reset_connections()
     shutil.rmtree(tmp_home, ignore_errors=True)
+    for k, v in _orig_env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    import autoclip.security.vault
+    autoclip.security.vault._global_vault = None
 
 
 def test_save_other_settings_preserves_pat():

@@ -502,18 +502,31 @@ class PipelineRunner:
         if all_candidates:
             store.replace_clip_candidates(self.job.id, all_candidates)
 
-        if selected_candidates:
-            # Step 16: Campaign-Aware Clip Assembly, Smart Boundaries & Quality Gate
+        if all_candidates:
+            # Step 16: Campaign-Aware Clip Assembly, Smart Boundaries & Quality Gate with Candidate Replenishment
             assembly_engine = ClipAssemblyEngine(
                 campaign_spec=campaign_spec,
                 campaign_brief=campaign,
                 job_settings=self.job.settings,
             )
 
+            # Determine target clip count and maximum possible based on source duration
+            target_clip_count = discovery_engine.target_clip_count or 5
+            total_duration = transcript.words[-1].end - transcript.words[0].start if transcript.words else 0.0
+            min_dur = discovery_engine.min_duration_s or 20.0
+            max_possible_clips = max(1, int(total_duration // min_dur)) if min_dur > 0 else target_clip_count
+            required_final_clips = min(target_clip_count, max_possible_clips)
+
+            # Candidate replenishment pool: prioritized by score and non-rejection status
+            approved_pool = [c for c in all_candidates if c.status != "rejected" and c.score > 0]
+            approved_pool.sort(key=lambda c: c.score, reverse=True)
+            other_pool = [c for c in all_candidates if c not in approved_pool]
+            candidate_pool = approved_pool + other_pool
+
             def on_assembly_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
                 if meta:
                     curr = meta.get("current", 1)
-                    total = meta.get("total", len(selected_candidates))
+                    total = meta.get("total", len(candidate_pool))
                     if substage == "OPTIMIZING_BOUNDARIES":
                         msg = f"Optimizing boundaries ({curr}/{total})"
                     elif substage == "ANALYZING_HOOK":
@@ -535,28 +548,54 @@ class PipelineRunner:
                 self._emit(stage, frac, msg)
 
             approved_specs, all_specs, assembly_telemetry = assembly_engine.assemble(
-                candidates=selected_candidates,
+                candidates=candidate_pool,
                 transcript=transcript,
                 job_id=self.job.id,
                 source_id=self.source.id,
                 silences=silences,
                 on_progress=on_assembly_progress,
+                target_count=required_final_clips,
             )
 
-            # Store assembly telemetry in job settings
+            # Sync selected candidates with approved specifications
+            approved_cand_ids = {spec.candidate_id for spec in approved_specs}
+            for cand in all_candidates:
+                if cand.id in approved_cand_ids:
+                    cand.selected = True
+                    cand.status = "selected"
+                else:
+                    cand.selected = False
+                    if cand.status == "selected":
+                        cand.status = "scored"
+
+            selected_candidates = [c for c in all_candidates if c.selected]
+            telemetry["selected_count"] = len(selected_candidates)
+            self.job.settings["candidate_telemetry"] = telemetry
             self.job.settings["assembly_telemetry"] = assembly_telemetry
             store.update_job(self.job.id, settings=self.job.settings)
+            store.replace_clip_candidates(self.job.id, all_candidates)
 
             # Persist ALL clip specifications in SQLite
             if all_specs:
                 store.replace_clip_specifications(self.job.id, all_specs)
 
+            if len(approved_specs) < required_final_clips:
+                from collections import Counter
+                rejection_summary = Counter([r for s in all_specs for r in s.rejection_reasons])
+                log.warning(
+                    "Pipeline produced %d/%d requested clips (out of %d candidates evaluated). Rejection diagnostics: %s",
+                    len(approved_specs),
+                    required_final_clips,
+                    len(all_specs),
+                    dict(rejection_summary),
+                )
+
             if approved_specs:
-                clips = specifications_to_clips(approved_specs, selected_candidates)
+                clips = specifications_to_clips(approved_specs, all_candidates)
                 store.replace_clips(self.job.id, clips)
                 log.info(
                     "CANDIDATE_PIPELINE_METRICS: configured_max_clips=%d raw_candidate_count=%d post_quality_candidate_count=%d selected_clip_count=%d exported_clip_count=0 (stage_candidates)",
-                    discovery_engine.target_clip_count,
+                    required_final_clips,
                     len(all_candidates),
                     len(approved_specs),
                     len(clips),
@@ -567,7 +606,7 @@ class PipelineRunner:
                     evaluator = CampaignEvaluator(campaign)
                     for clip, spec in zip(clips, approved_specs):
                         words = transcript.slice(clip.start_word, clip.end_word)
-                        cand = next((c for c in selected_candidates if c.id == spec.candidate_id), None)
+                        cand = next((c for c in all_candidates if c.id == spec.candidate_id), None)
                         ev = evaluator.evaluate_candidate(
                             candidate_id=clip.id,
                             clip_id=clip.id,

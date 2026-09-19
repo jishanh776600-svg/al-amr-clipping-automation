@@ -365,6 +365,7 @@ async def async_main() -> None:
     # 4c. Ensure BGM assets are available and properly referenced on worker filesystem
     bgm_setting = job_settings.get("bgm_enabled")
     bgm_asset_id = job_settings.get("bgm_asset_id") or (job_settings.get("export") or {}).get("bgm_asset_id")
+    bgm_req_id = job_settings.get("bgm_requested_id") or bgm_asset_id
     if str(bgm_asset_id).lower() in ("none", "null", "false", "no", "disabled", "__none__"):
         bgm_enabled = False
     elif bgm_setting is not None:
@@ -387,7 +388,6 @@ async def async_main() -> None:
             if base_url:
                 stream_url = f"{base_url}/api/bgm/{bgm_asset_id}/stream"
                 log.info("Downloading BGM asset %s from control plane stream %s...", bgm_asset_id, stream_url)
-                dl_dest = vault.base_dir / f"{bgm_asset_id}.wav"
                 try:
                     dl_headers: dict[str, str] = {}
                     if args.callback_token:
@@ -395,6 +395,18 @@ async def async_main() -> None:
                         dl_headers["X-API-Key"] = args.callback_token
                     with httpx.stream("GET", stream_url, headers=dl_headers, timeout=60.0) as r:
                         if r.status_code == 200:
+                            ct = r.headers.get("content-type", "").lower()
+                            if "audio/mpeg" in ct or "mp3" in ct:
+                                ext = ".mp3"
+                            elif "audio/mp4" in ct or "m4a" in ct:
+                                ext = ".m4a"
+                            elif "audio/ogg" in ct:
+                                ext = ".ogg"
+                            elif "audio/flac" in ct:
+                                ext = ".flac"
+                            else:
+                                ext = ".wav"
+                            dl_dest = vault.base_dir / f"{bgm_asset_id}{ext}"
                             with open(dl_dest, "wb") as f:
                                 for chunk in r.iter_bytes(1024 * 64):
                                     f.write(chunk)
@@ -413,6 +425,9 @@ async def async_main() -> None:
                     local_asset = a
                     local_path = Path(a.file_path)
                     log.info("Worker fallback to local BGM asset %s (%s)", a.name, a.id)
+                    if bgm_req_id and bgm_req_id != a.id:
+                        job_settings["bgm_requested_id"] = bgm_req_id
+                        job_settings["bgm_fallback_reason"] = f"Requested BGM '{bgm_req_id}' unavailable on worker; fell back to '{a.id}'."
                     break
 
         if local_path and local_path.is_file():
@@ -420,11 +435,21 @@ async def async_main() -> None:
             job_settings["bgm_asset_id"] = local_asset.id if local_asset else bgm_asset_id
             job_settings["bgm_asset_name"] = local_asset.name if local_asset else "BGM"
             job_settings["bgm_asset_path"] = str(local_path.resolve())
+            if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+                job_settings["export"] = {}
+            job_settings["export"]["bgm_asset_id"] = job_settings["bgm_asset_id"]
+            job_settings["export"]["bgm_enabled"] = True
             log.info("Resolved worker BGM asset path: %s", job_settings["bgm_asset_path"])
         else:
             log.warning("No BGM asset available on worker; proceeding with bgm_enabled=False")
             job_settings["bgm_enabled"] = False
             job_settings["bgm_asset_path"] = None
+            if bgm_req_id:
+                job_settings["bgm_requested_id"] = bgm_req_id
+                job_settings["bgm_fallback_reason"] = f"Requested BGM '{bgm_req_id}' unavailable on worker and no fallback found."
+            if "export" not in job_settings or not isinstance(job_settings["export"], dict):
+                job_settings["export"] = {}
+            job_settings["export"]["bgm_enabled"] = False
 
     job = Job(
         id=args.job_id,

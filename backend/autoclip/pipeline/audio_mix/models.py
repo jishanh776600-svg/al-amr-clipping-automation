@@ -10,13 +10,13 @@ from typing import Any
 class DuckingConfig:
     """Configuration parameters for speech-aware ducking and loudness control."""
 
-    duck_attenuation_db: float = 16.0
-    attack_ms: float = 150.0
-    release_ms: float = 450.0
-    threshold: float = 0.08
-    ratio: float = 5.0
+    duck_attenuation_db: float = 17.0
+    attack_ms: float = 80.0
+    release_ms: float = 250.0
+    threshold: float = 0.05
+    ratio: float = 6.0
     speech_weight: float = 1.0
-    bgm_weight: float = 0.40
+    bgm_weight: float = 1.0
     fade_in_s: float = 0.3
     fade_out_s: float = 0.5
     target_lufs: float = -14.0
