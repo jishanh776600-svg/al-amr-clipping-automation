@@ -1613,12 +1613,14 @@ async def post_clip_approval_action(
             ),
         )
 
-    # Note required for REJECT / REQUEST_CHANGES
-    if action_upper in ("REJECT", "REQUEST_CHANGES") and not payload.operator_note.strip():
+    effective_note = payload.operator_note.strip()
+    if action_upper == "REJECT" and not effective_note:
         raise HTTPException(
             status_code=422,
             detail=f"operator_note is required when action is '{payload.action}'.",
         )
+    if action_upper == "REQUEST_CHANGES" and not effective_note:
+        effective_note = "Changes requested by operator"
 
     # Get or auto-init the approval record
     record = await asyncio.to_thread(store.get_clip_approval, clip_id)
@@ -1646,7 +1648,8 @@ async def post_clip_approval_action(
 
     # Idempotency: already in the target state
     if record.current_status == new_status:
-        return ClipApprovalOut.of(record)
+        pubs = await asyncio.to_thread(store.list_publications_for_clip, clip_id)
+        return ClipApprovalOut.of(record, publications=pubs)
 
     # State transition validation
     if not record.can_transition_to(new_status):
@@ -1664,7 +1667,6 @@ async def post_clip_approval_action(
         record.publish_eligible = eligible
         record.blocking_reasons = blocking
         if not eligible:
-            # Don't block approval, but note the gate issues
             log.warning(
                 "Approving clip %s despite %d blocking reasons: %s",
                 clip_id,
@@ -1677,7 +1679,7 @@ async def post_clip_approval_action(
         record.apply_action(
             new_status=new_status,
             operator_action=action_upper,
-            operator_note=payload.operator_note.strip(),
+            operator_note=effective_note,
             actor="operator",
         )
     except ValueError as exc:
@@ -1686,22 +1688,55 @@ async def post_clip_approval_action(
     await asyncio.to_thread(store.update_clip_approval, record)
 
     # Step 27: Auto-trigger Step 25 & 26 publishing upon approval
+    current_pubs: list[models.PublicationRecord] = []
     if new_status == "APPROVED":
         from ..publishing.service import PublishingService
         from ..publishing.orchestrator import PublishingOrchestrator
 
+        svc = PublishingService()
+        orch = PublishingOrchestrator(service=svc)
+        dests = orch.ensure_default_destinations()
+
+        # Seed initial publication records immediately so frontend gets live status
+        now_ts = models.utcnow()
+        for plat, dest_id in (("youtube", "dest-youtube-main"), ("instagram", "dest-instagram-main")):
+            key = f"{job_id}:{clip_id}:{plat}:{dest_id}"
+            existing_p = store.get_publication_by_idempotency_key(key)
+            if not existing_p:
+                p_rec = models.PublicationRecord(
+                    id=models.new_id(),
+                    job_id=job_id,
+                    clip_id=clip_id,
+                    platform=plat,
+                    destination_id=dest_id,
+                    status="UPLOADING",
+                    attempt_number=1,
+                    idempotency_key=key,
+                    upload_started_at=now_ts,
+                    created_at=now_ts,
+                    updated_at=now_ts,
+                )
+                store.create_publication(p_rec)
+                current_pubs.append(p_rec)
+            else:
+                current_pubs.append(existing_p)
+
+        # Enqueue in orchestrator for audit tracking
+        for d in dests:
+            if d.enabled and d.platform in ("youtube", "instagram"):
+                try:
+                    orch.enqueue_publication(job_id=job_id, clip_id=clip_id, destination_id=d.id)
+                except Exception:
+                    pass
+
         async def _auto_publish():
             try:
-                svc = PublishingService()
-                orch = PublishingOrchestrator(service=svc)
-                dests = orch.ensure_default_destinations()
-                for d in dests:
-                    if d.enabled and d.platform in ("youtube", "instagram"):
-                        try:
-                            orch.enqueue_publication(job_id=job_id, clip_id=clip_id, destination_id=d.id)
-                        except Exception:
-                            pass
-                await svc.publish_clip_all_destinations(job_id, clip_id, ["youtube", "instagram"], dry_run=False)
+                await svc.publish_clip_all_destinations(
+                    job_id=job_id,
+                    clip_id=clip_id,
+                    platforms=["youtube", "instagram"],
+                    dry_run=False,
+                )
             except Exception as exc:
                 log.exception("Auto-publishing failed for approved clip %s: %s", clip_id, exc)
 
@@ -1714,20 +1749,34 @@ async def post_clip_approval_action(
             await asyncio.to_thread(
                 PublishingOrchestrator().cancel_items_for_clip,
                 clip_id,
-                f"Approval status changed to {new_status} by operator: {payload.operator_note.strip()}",
+                f"Approval status changed to {new_status} by operator: {effective_note}",
             )
         except Exception as cancel_exc:
             log.warning("Could not cancel publishing queue items for clip %s: %s", clip_id, cancel_exc)
+
+        # Publish event for revision listeners
+        try:
+            broker.publish(
+                Event(
+                    type="clip_changes_requested" if new_status == "CHANGES_REQUESTED" else "clip_rejected",
+                    job_id=job_id,
+                    data={"clip_id": clip_id, "note": effective_note, "status": new_status},
+                )
+            )
+        except Exception:
+            pass
 
     log.info(
         "Clip %s approval → %s (v%d) note=%r",
         clip_id,
         new_status,
         record.version,
-        payload.operator_note[:80],
+        effective_note[:80],
     )
 
-    return ClipApprovalOut.of(record)
+    # Fetch latest publications for response
+    latest_pubs = await asyncio.to_thread(store.list_publications_for_clip, clip_id)
+    return ClipApprovalOut.of(record, publications=latest_pubs or current_pubs)
 
 
 @router.post("/{job_id}/clips/{clip_id}/approval/reset", response_model=ClipApprovalOut)

@@ -158,6 +158,37 @@ export function Review() {
     }
   }, [selected?.id, jobId])
 
+  const selectedClipPubs = useMemo(
+    () => publications.filter((p) => p.clip_id === selected?.id),
+    [publications, selected?.id]
+  )
+  const ytPub = selectedClipPubs.find((p) => p.platform.toLowerCase() === 'youtube')
+  const igPub = selectedClipPubs.find((p) => p.platform.toLowerCase() === 'instagram')
+  const isPublishingActive = selectedClipPubs.some(
+    (p) => p.status === 'UPLOADING' || p.status === 'PENDING'
+  )
+
+  const startPublishingPoll = (currentJobId: string, currentClipId: string) => {
+    let attempts = 0
+    const maxAttempts = 20
+    const interval = setInterval(async () => {
+      attempts++
+      try {
+        const pubs = await api.getJobPublications(currentJobId)
+        setPublications(pubs)
+        const clipPubs = pubs.filter((p) => p.clip_id === currentClipId)
+        const stillUploading = clipPubs.some(
+          (p) => p.status === 'UPLOADING' || p.status === 'PENDING'
+        )
+        if (!stillUploading || attempts >= maxAttempts) {
+          clearInterval(interval)
+        }
+      } catch {
+        if (attempts >= maxAttempts) clearInterval(interval)
+      }
+    }, 1500)
+  }
+
   const saveMetadata = async () => {
     if (!jobId || !selected || !metadata) return
     setSavingMetadata(true)
@@ -218,6 +249,22 @@ export function Review() {
       setApproval(updated)
       setApprovalNote('')
       setApprovalNotice(`Clip ${action.toLowerCase().replace('_', ' ')} — status: ${updated.current_status}`)
+
+      if (action === 'APPROVE') {
+        if (updated.publications && updated.publications.length > 0) {
+          setPublications((prev) => {
+            const map = new Map(prev.map((p) => [p.id, p]))
+            for (const pub of updated.publications || []) {
+              map.set(pub.id, pub)
+            }
+            return Array.from(map.values())
+          })
+        }
+        startPublishingPoll(jobId, selected.id)
+      } else if (action === 'REQUEST_CHANGES') {
+        void api.listQueue({ job_id: jobId, clip_id: selected.id }).then(setQueueItems).catch(() => {})
+        void api.getJobPublications(jobId).then(setPublications).catch(() => {})
+      }
     } catch (err) {
       setError(err as Error)
     } finally {
@@ -874,12 +921,159 @@ export function Review() {
                   </div>
                 )}
 
+                {/* Changes requested banner */}
+                {approval?.current_status === 'CHANGES_REQUESTED' && (
+                  <div className="p-3 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2">
+                    <div className="flex items-center gap-2 font-semibold text-amber-300">
+                      <span>🔄 Changes Requested by Operator</span>
+                    </div>
+                    {approval.operator_note && (
+                      <p className="bg-ink-950/60 p-2 rounded text-ink-200 italic border border-ink-800">
+                        "{approval.operator_note}"
+                      </p>
+                    )}
+                    <div className="text-[11px] text-amber-300/90 space-y-1">
+                      <p className="font-semibold text-amber-200">Next revision steps:</p>
+                      <ul className="list-disc pl-4 space-y-0.5 text-ink-300">
+                        <li>Adjust video start/end boundaries using the Trim Bar above.</li>
+                        <li>Edit caption wording or switch subtitle templates.</li>
+                        <li>Update SEO title, description, or hashtags under Step 23.</li>
+                        <li>Click <strong>Reset to Pending</strong> to re-evaluate or <strong>✓ Approve & Publish</strong> to finalize.</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Real-time Publishing Status Cards */}
+                {(approval?.current_status === 'APPROVED' || selectedClipPubs.length > 0) && (
+                  <div className="space-y-2 pt-2 border-t border-ink-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-ink-300">
+                        Automated Publishing Status:
+                      </span>
+                      {isPublishingActive && (
+                        <span className="text-[10px] text-sky-400 font-mono flex items-center gap-1.5 animate-pulse">
+                          <span className="inline-block w-2 h-2 rounded-full bg-sky-400"></span>
+                          Publishing in progress...
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {/* YouTube Shorts Status Card */}
+                      <div className="p-2.5 rounded bg-ink-900 border border-ink-750 flex flex-col justify-between space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-xs text-ink-100 flex items-center gap-1">
+                            <span>▶</span> YouTube Shorts
+                          </span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-mono font-semibold uppercase ${
+                              ytPub?.status === 'PUBLISHED'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : ytPub?.status === 'UPLOADING' || ytPub?.status === 'PENDING'
+                                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                : ytPub
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : 'bg-ink-800 text-ink-400'
+                            }`}
+                          >
+                            {ytPub?.status || (approval?.current_status === 'APPROVED' ? 'QUEUED' : 'NOT STARTED')}
+                          </span>
+                        </div>
+                        {ytPub?.permalink && (
+                          <a
+                            href={ytPub.permalink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-sky-400 hover:underline inline-flex items-center gap-1"
+                          >
+                            Watch Video ↗
+                          </a>
+                        )}
+                        {ytPub?.error_message && (
+                          <div className="text-[10px] text-rose-300 break-words line-clamp-2" title={ytPub.error_message}>
+                            {ytPub.error_message}
+                          </div>
+                        )}
+                        {ytPub && (ytPub.status === 'FAILED_PERMANENT' || ytPub.status === 'FAILED_RETRYABLE') && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetryPublication(ytPub.id)}
+                            disabled={publishingLoading}
+                            className="mt-1 text-[10px] text-amber-300 hover:text-amber-200 underline text-left"
+                          >
+                            ⟳ Retry YouTube Upload
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Instagram Reels Status Card */}
+                      <div className="p-2.5 rounded bg-ink-900 border border-ink-750 flex flex-col justify-between space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-xs text-ink-100 flex items-center gap-1">
+                            <span>📷</span> Instagram Reels
+                          </span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-mono font-semibold uppercase ${
+                              igPub?.status === 'PUBLISHED'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : igPub?.status === 'UPLOADING' || igPub?.status === 'PENDING'
+                                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                : igPub
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : 'bg-ink-800 text-ink-400'
+                            }`}
+                          >
+                            {igPub?.status || (approval?.current_status === 'APPROVED' ? 'QUEUED' : 'NOT STARTED')}
+                          </span>
+                        </div>
+                        {igPub?.permalink && (
+                          <a
+                            href={igPub.permalink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-sky-400 hover:underline inline-flex items-center gap-1"
+                          >
+                            View Reel ↗
+                          </a>
+                        )}
+                        {igPub?.error_message && (
+                          <div className="text-[10px] text-rose-300 break-words line-clamp-2" title={igPub.error_message}>
+                            {igPub.error_message}
+                          </div>
+                        )}
+                        {igPub && (igPub.status === 'FAILED_PERMANENT' || igPub.status === 'FAILED_RETRYABLE') && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetryPublication(igPub.id)}
+                            disabled={publishingLoading}
+                            className="mt-1 text-[10px] text-amber-300 hover:text-amber-200 underline text-left"
+                          >
+                            ⟳ Retry Instagram Upload
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Partial failure notice */}
+                    {ytPub && igPub && (
+                      ((ytPub.status === 'PUBLISHED' && igPub.status.includes('FAILED')) ||
+                       (igPub.status === 'PUBLISHED' && ytPub.status.includes('FAILED'))) && (
+                        <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+                          ⚠️ Partial publishing: {ytPub.status === 'PUBLISHED' ? 'YouTube Shorts published successfully' : 'Instagram Reels published successfully'}. Use the retry button above for the failed platform.
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+
                 {/* Operator note input */}
                 <div>
                   <span className="text-[11px] text-ink-400 block mb-1">
                     Operator Note <span className="text-ink-600">(required for Reject / Request Changes)</span>
                   </span>
                   <textarea
+                    id="approval-operator-note"
                     rows={2}
                     value={approvalNote}
                     onChange={(e) => setApprovalNote(e.target.value)}
@@ -890,28 +1084,44 @@ export function Review() {
                 </div>
 
                 {/* Action buttons */}
-                <div className="flex flex-wrap gap-2 pt-1 border-t border-ink-800">
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-ink-800">
                   <button
                     type="button"
                     onClick={() => doApprovalAction('APPROVE', approvalNote)}
-                    disabled={approvalLoading || approval?.current_status === 'APPROVED'}
-                    className="btn btn-primary text-xs py-1 px-3 disabled:opacity-40"
+                    disabled={approvalLoading}
+                    className="btn btn-primary text-xs py-1.5 px-3.5 disabled:opacity-40 font-semibold"
                   >
-                    ✓ Approve
+                    {approvalLoading ? 'Processing...' : '✓ Approve & Publish'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => doApprovalAction('REJECT', approvalNote)}
-                    disabled={approvalLoading || !approvalNote.trim()}
-                    className="rounded border border-rose-700 bg-rose-950/60 px-3 py-1 text-xs text-rose-300 hover:bg-rose-900/60 disabled:opacity-40"
+                    onClick={() => {
+                      if (!approvalNote.trim()) {
+                        setApprovalNotice('Please enter a note describing why this clip is being rejected.')
+                        const ta = document.getElementById('approval-operator-note')
+                        if (ta) ta.focus()
+                        return
+                      }
+                      doApprovalAction('REJECT', approvalNote)
+                    }}
+                    disabled={approvalLoading}
+                    className="rounded border border-rose-700 bg-rose-950/60 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-900/60 disabled:opacity-40 font-medium"
                   >
                     ✕ Reject
                   </button>
                   <button
                     type="button"
-                    onClick={() => doApprovalAction('REQUEST_CHANGES', approvalNote)}
-                    disabled={approvalLoading || !approvalNote.trim()}
-                    className="rounded border border-amber-700 bg-amber-950/60 px-3 py-1 text-xs text-amber-300 hover:bg-amber-900/60 disabled:opacity-40"
+                    onClick={() => {
+                      if (!approvalNote.trim()) {
+                        setApprovalNotice('Please describe revision instructions in the Operator Note before requesting changes.')
+                        const ta = document.getElementById('approval-operator-note')
+                        if (ta) ta.focus()
+                        return
+                      }
+                      doApprovalAction('REQUEST_CHANGES', approvalNote)
+                    }}
+                    disabled={approvalLoading}
+                    className="rounded border border-amber-700 bg-amber-950/60 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-900/60 disabled:opacity-40 font-medium"
                   >
                     ⟳ Request Changes
                   </button>

@@ -34,14 +34,16 @@ class PublishingService:
     ) -> BasePublisher | None:
         """Resolve platform adapter, supporting dynamic multi-account credentials per destination."""
         norm_platform = platform.strip().lower()
-        if destination is None:
-            return self.adapters.get(norm_platform)
-
         dest: models.DestinationRecord | None = None
+
         if isinstance(destination, models.DestinationRecord):
             dest = destination
         elif isinstance(destination, str) and destination.strip() and destination != "default":
             dest = store.get_destination(destination.strip())
+
+        if not dest:
+            # Fall back to canonical destination if registered
+            dest = store.get_destination(f"dest-{norm_platform}-main")
 
         if not dest:
             return self.adapters.get(norm_platform)
@@ -57,8 +59,7 @@ class PublishingService:
             client_id = (os.getenv(cid_env) if cid_env else None) or os.getenv(f"YOUTUBE_CLIENT_ID_{clean_id}") or os.getenv("YOUTUBE_CLIENT_ID")
             sec_env = cfg.get("client_secret_env")
             client_secret = (os.getenv(sec_env) if sec_env else None) or os.getenv(f"YOUTUBE_CLIENT_SECRET_{clean_id}") or os.getenv("YOUTUBE_CLIENT_SECRET")
-            if refresh_token:
-                return YouTubePublisher(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
+            return YouTubePublisher(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
 
         # Multi-Account Resolution: Instagram
         elif norm_platform == "instagram":
@@ -66,8 +67,7 @@ class PublishingService:
             access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"META_ACCESS_TOKEN_{clean_id}") or os.getenv("META_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
             acc_env = cfg.get("account_id_env")
             account_id = (os.getenv(acc_env) if acc_env else None) or cfg.get("account_id") or os.getenv(f"INSTAGRAM_ACCOUNT_ID_{clean_id}") or dest.account_identifier or os.getenv("INSTAGRAM_ACCOUNT_ID")
-            if access_token and account_id:
-                return InstagramPublisher(access_token=access_token, account_id=account_id)
+            return InstagramPublisher(access_token=access_token, account_id=account_id)
 
         # Multi-Account Resolution: Telegram
         elif norm_platform == "telegram":
@@ -91,7 +91,7 @@ class PublishingService:
 
         Checks:
         - Final render exists and status is RENDER_PASS or RENDER_WARN
-        - Render output video file is accessible on disk
+        - Render output video file is accessible on disk or via Google Drive backup
         - SEO metadata exists and compliance is SEO_PASS / publish-ready
         - Operator approval exists and status is APPROVED
         - Clip is not REJECTED or PUBLISHING_LOCKED
@@ -102,9 +102,10 @@ class PublishingService:
         final_render = store.get_final_render(clip_id)
         exports = store.list_exports(clip_id)
         has_drive_backup = any(bool(exp.drive_file_id) for exp in exports)
+        has_local_media = any(bool(exp.path and Path(exp.path).is_file()) for exp in exports)
 
         if final_render is None:
-            if not has_drive_backup:
+            if not has_drive_backup and not has_local_media:
                 reasons.append("Final render record not found (Step 22 not completed).")
         else:
             if final_render.quality_status not in ("RENDER_PASS", "RENDER_WARN"):
@@ -114,7 +115,7 @@ class PublishingService:
                 )
             if final_render.output_path:
                 render_file = Path(final_render.output_path)
-                if not render_file.exists() and not has_drive_backup:
+                if not render_file.exists() and not has_drive_backup and not has_local_media:
                     reasons.append(f"Render output file not found on disk: {final_render.output_path} and no Google Drive backup found.")
 
         # 2. Step 23: SEO & Metadata Gate
@@ -163,8 +164,8 @@ class PublishingService:
         if not clip or clip.job_id != job_id:
             raise ValueError(f"Clip '{clip_id}' not found in job '{job_id}'.")
 
-        dest = destination.strip() or "default"
         norm_platform = platform.strip().lower()
+        dest = destination.strip() or f"dest-{norm_platform}-main"
         idempotency_key = f"{job_id}:{clip_id}:{norm_platform}:{dest}"
 
         adapter = self.get_adapter(norm_platform, destination=dest)
@@ -381,17 +382,23 @@ class PublishingService:
         """Publish a clip across multiple platforms independently (one failure does not block others)."""
         records: list[models.PublicationRecord] = []
         for plat in platforms:
+            norm_plat = plat.strip().lower()
+            target_dest = destination.strip() or f"dest-{norm_plat}-main"
             try:
                 rec = await self.publish_clip(
                     job_id=job_id,
                     clip_id=clip_id,
-                    platform=plat,
-                    destination=destination,
+                    platform=norm_plat,
+                    destination=target_dest,
                     dry_run=dry_run,
                 )
                 records.append(rec)
             except Exception as exc:
                 log.warning("Platform %s publication failed for clip %s: %s", plat, clip_id, exc)
+                key = f"{job_id}:{clip_id}:{norm_plat}:{target_dest}"
+                failed_rec = store.get_publication_by_idempotency_key(key)
+                if failed_rec:
+                    records.append(failed_rec)
         return records
 
     async def retry_publication(

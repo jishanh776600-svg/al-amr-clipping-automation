@@ -43,6 +43,21 @@ class GoogleDriveStorage:
         self.root_folder_id = root_folder_id or os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "")
         self.scopes = scopes
 
+        if not self.client_id or not self.client_secret or not self.refresh_token:
+            try:
+                from ..security.vault import get_vault
+                vault = get_vault()
+                if not self.client_id:
+                    self.client_id = (vault.retrieve_secret("google_drive_client_id") or vault.retrieve_secret("GOOGLE_DRIVE_CLIENT_ID") or "").strip()
+                if not self.client_secret:
+                    self.client_secret = (vault.retrieve_secret("google_drive_client_secret") or vault.retrieve_secret("GOOGLE_DRIVE_CLIENT_SECRET") or "").strip()
+                if not self.refresh_token:
+                    self.refresh_token = (vault.retrieve_secret("google_drive_refresh_token") or vault.retrieve_secret("GOOGLE_DRIVE_REFRESH_TOKEN") or "").strip()
+                if not self.root_folder_id:
+                    self.root_folder_id = (vault.retrieve_secret("google_drive_root_folder_id") or vault.retrieve_secret("GOOGLE_DRIVE_ROOT_FOLDER_ID") or "").strip()
+            except Exception:
+                pass
+
         self._folder_cache: Dict[str, str] = {}
         self._service: Any = None
         self._creds: Any = None

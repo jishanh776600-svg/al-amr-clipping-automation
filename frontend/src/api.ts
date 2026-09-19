@@ -428,6 +428,7 @@ export interface ClipApproval {
   is_approved_for_publishing: boolean
   history: ClipApprovalHistoryEntry[]
   telemetry: Record<string, any>
+  publications?: Publication[]
   created_at: string
   updated_at: string
 }

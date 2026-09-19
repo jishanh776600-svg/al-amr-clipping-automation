@@ -49,6 +49,19 @@ class YouTubePublisher(BasePublisher):
         self.client_secret = (client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
         self.refresh_token = (refresh_token or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
 
+        if not self.refresh_token or not self.client_id or not self.client_secret:
+            try:
+                from ..security.vault import get_vault
+                vault = get_vault()
+                if not self.refresh_token:
+                    self.refresh_token = (vault.retrieve_secret("youtube_refresh_token") or vault.retrieve_secret("YOUTUBE_REFRESH_TOKEN") or "").strip()
+                if not self.client_id:
+                    self.client_id = (vault.retrieve_secret("youtube_client_id") or vault.retrieve_secret("YOUTUBE_CLIENT_ID") or "").strip()
+                if not self.client_secret:
+                    self.client_secret = (vault.retrieve_secret("youtube_client_secret") or vault.retrieve_secret("YOUTUBE_CLIENT_SECRET") or "").strip()
+            except Exception:
+                pass
+
     def is_configured(self) -> bool:
         return bool(self.refresh_token)
 

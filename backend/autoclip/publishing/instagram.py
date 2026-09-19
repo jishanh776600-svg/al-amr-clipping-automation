@@ -62,6 +62,29 @@ class InstagramPublisher(BasePublisher):
             or os.getenv("RENDER_EXTERNAL_URL", "")
         ).strip().rstrip("/")
 
+        if not self.access_token or not self.account_id:
+            try:
+                from ..security.vault import get_vault
+                vault = get_vault()
+                if not self.access_token:
+                    self.access_token = (
+                        vault.retrieve_secret("meta_access_token")
+                        or vault.retrieve_secret("META_ACCESS_TOKEN")
+                        or vault.retrieve_secret("instagram_access_token")
+                        or vault.retrieve_secret("INSTAGRAM_ACCESS_TOKEN")
+                        or ""
+                    ).strip()
+                if not self.account_id:
+                    self.account_id = (
+                        vault.retrieve_secret("instagram_account_id")
+                        or vault.retrieve_secret("INSTAGRAM_ACCOUNT_ID")
+                        or vault.retrieve_secret("meta_account_id")
+                        or vault.retrieve_secret("META_ACCOUNT_ID")
+                        or ""
+                    ).strip()
+            except Exception:
+                pass
+
     def is_configured(self) -> bool:
         return bool(self.access_token and self.account_id)
 
