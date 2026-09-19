@@ -155,6 +155,13 @@ class FinalRenderEngine:
                     clip_start_s=clip.start_s,
                     clip_end_s=clip.end_s,
                 )
+                log.info(
+                    "Clip %s EDL generated: %d visual overlay events, %d fallbacks. FINAL MP4 VISUAL EVENTS: %d",
+                    clip.id,
+                    len(edl.entries),
+                    len(edl.fallbacks),
+                    len(edl.entries),
+                )
             except Exception as e:
                 log.warning("Semantic B-roll generation failed for clip %s: %s; falling back to clean A-roll.", clip.id, e)
                 edl = None
@@ -314,9 +321,14 @@ class FinalRenderEngine:
             quality_score=gate_res.quality_score,
             quality_status=gate_res.status,
             render_status="completed",
-            render_attempt=attempt,
             error_details=gate_res.rejection_reasons,
-            telemetry={"elapsed_s": elapsed_s, "warnings": gate_res.warnings, "gate": gate_res.to_dict()},
+            telemetry={
+                "elapsed_s": elapsed_s,
+                "warnings": gate_res.warnings,
+                "gate": gate_res.to_dict(),
+                "visual_events_count": len(edl.entries) if edl else 0,
+                "edl_entries": [e.to_dict() for e in edl.entries] if edl else [],
+            },
             created_at=utcnow(),
             updated_at=utcnow(),
         )

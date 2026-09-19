@@ -1039,9 +1039,11 @@ class PipelineRunner:
             if bgm_asset_id:
                 bgm_asset = vault.get_asset(bgm_asset_id)
             if not bgm_asset or not Path(bgm_asset.file_path).is_file():
-                _, res_asset, res_path = vault.resolve_campaign_bgm(bgm_asset_id, allow_fallback=True)
-                if res_asset and res_path and res_path.is_file():
-                    bgm_asset = res_asset
+                allow_fb = self.job.settings.get("bgm_selection_mode") != "explicit"
+                if allow_fb:
+                    _, res_asset, res_path = vault.resolve_campaign_bgm(bgm_asset_id, allow_fallback=True)
+                    if res_asset and res_path and res_path.is_file():
+                        bgm_asset = res_asset
             if not bgm_asset or not Path(bgm_asset.file_path).is_file():
                 asset_name = self.job.settings.get("bgm_asset_name", bgm_asset_id or "Unknown")
                 raise RuntimeError(

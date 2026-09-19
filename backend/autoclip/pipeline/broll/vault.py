@@ -93,42 +93,43 @@ class VisualAssetVault:
                 cue.concept, exc,
             )
 
-        # 4. Fallback bundled starter asset if no specific file exists in subfolder
-        fallback_file = self.vault_dir / f"starter_{cue.concept}.mp4"
-        if fallback_file.is_file():
-            candidates.append(
-                VisualAsset(
-                    asset_id=f"starter_{cue.concept}",
-                    file_path=fallback_file,
-                    visual_type=VisualType.STOCK_VIDEO,
-                    concept=cue.concept,
-                    presentation_mode=cue.preferred_mode,
-                    width=1080,
-                    height=1920,
-                    duration_s=5.0,
-                    tags=[cue.concept, "starter"],
-                    source_provider="local_vault",
-                    is_video=True,
+        # 4. Fallback bundled starter asset ONLY if no specific candidate exists from vault or Pexels
+        if not candidates:
+            fallback_file = self.vault_dir / f"starter_{cue.concept}.mp4"
+            if fallback_file.is_file():
+                candidates.append(
+                    VisualAsset(
+                        asset_id=f"starter_{cue.concept}",
+                        file_path=fallback_file,
+                        visual_type=VisualType.STOCK_VIDEO,
+                        concept=cue.concept,
+                        presentation_mode=cue.preferred_mode,
+                        width=1080,
+                        height=1920,
+                        duration_s=5.0,
+                        tags=[cue.concept, "starter"],
+                        source_provider="local_vault",
+                        is_video=True,
+                    )
                 )
-            )
 
-        fallback_img = self.vault_dir / f"starter_{cue.concept}.jpg"
-        if fallback_img.is_file():
-            candidates.append(
-                VisualAsset(
-                    asset_id=f"starter_img_{cue.concept}",
-                    file_path=fallback_img,
-                    visual_type=VisualType.STOCK_PHOTO,
-                    concept=cue.concept,
-                    presentation_mode=cue.preferred_mode,
-                    width=1080,
-                    height=1920,
-                    duration_s=cue.duration_s,
-                    tags=[cue.concept, "starter_image"],
-                    source_provider="local_vault",
-                    is_video=False,
+            fallback_img = self.vault_dir / f"starter_{cue.concept}.jpg"
+            if fallback_img.is_file():
+                candidates.append(
+                    VisualAsset(
+                        asset_id=f"starter_img_{cue.concept}",
+                        file_path=fallback_img,
+                        visual_type=VisualType.STOCK_PHOTO,
+                        concept=cue.concept,
+                        presentation_mode=cue.preferred_mode,
+                        width=1080,
+                        height=1920,
+                        duration_s=cue.duration_s,
+                        tags=[cue.concept, "starter_image"],
+                        source_provider="local_vault",
+                        is_video=False,
+                    )
                 )
-            )
 
         return candidates
 

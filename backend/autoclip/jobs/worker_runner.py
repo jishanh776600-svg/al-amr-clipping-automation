@@ -417,17 +417,15 @@ async def async_main() -> None:
                 except Exception as exc:
                     log.warning("Could not download BGM asset %s: %s", bgm_asset_id, exc)
 
-        # If still missing, check if any local vault asset can serve as fallback
-        if not local_path or not local_path.is_file():
+        # If still missing: only allow fallback if user did NOT make an explicit track selection
+        selection_mode = job_settings.get("bgm_selection_mode")
+        if (not local_path or not local_path.is_file()) and selection_mode != "explicit":
             assets = vault.list_assets(enabled_only=True)
             for a in assets:
                 if Path(a.file_path).is_file():
                     local_asset = a
                     local_path = Path(a.file_path)
-                    log.info("Worker fallback to local BGM asset %s (%s)", a.name, a.id)
-                    if bgm_req_id and bgm_req_id != a.id:
-                        job_settings["bgm_requested_id"] = bgm_req_id
-                        job_settings["bgm_fallback_reason"] = f"Requested BGM '{bgm_req_id}' unavailable on worker; fell back to '{a.id}'."
+                    log.info("Worker fallback to default BGM asset %s (%s)", a.name, a.id)
                     break
 
         if local_path and local_path.is_file():

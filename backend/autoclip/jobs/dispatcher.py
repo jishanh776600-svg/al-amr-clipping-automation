@@ -166,10 +166,19 @@ async def dispatch_job_to_github(
             or (job.settings.get("export") or {}).get("caption_style")
             or "classic_professional"
         ),
-        "bgm_asset_id": str(
-            job.settings.get("bgm_asset_id")
-            or (job.settings.get("export") or {}).get("bgm_asset_id")
-            or ""
+        "bgm_asset_id": (
+            "none"
+            if (
+                job.settings.get("bgm_enabled") is False
+                or job.settings.get("bgm_selection_mode") == "none"
+                or str(job.settings.get("bgm_asset_id") or "").strip().lower() in ("none", "null", "false", "no", "disabled", "off")
+            )
+            else str(
+                job.settings.get("bgm_requested_id")
+                or job.settings.get("bgm_asset_id")
+                or (job.settings.get("export") or {}).get("bgm_asset_id")
+                or ""
+            )
         ),
         "job_settings": json.dumps(job.settings),
     }

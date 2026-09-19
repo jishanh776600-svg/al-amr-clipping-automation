@@ -13,10 +13,10 @@ class DuckingConfig:
     duck_attenuation_db: float = 17.0
     attack_ms: float = 80.0
     release_ms: float = 250.0
-    threshold: float = 0.05
+    threshold: float = 0.04
     ratio: float = 6.0
     speech_weight: float = 1.0
-    bgm_weight: float = 0.3   # 0.3 keeps BGM clearly subordinate after sidechain ducking
+    bgm_weight: float = 0.25   # Conservative weight keeps BGM clearly subordinate to voice
     fade_in_s: float = 0.3
     fade_out_s: float = 0.5
     target_lufs: float = -14.0

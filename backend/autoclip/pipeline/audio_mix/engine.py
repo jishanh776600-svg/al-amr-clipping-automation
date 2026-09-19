@@ -147,24 +147,27 @@ class BGMMixingEngine:
         else:
             cmd.extend(["-i", str(bgm_path)])
 
-        # Pre-attenuate BGM bed so that during speech it ducks to -28 to -31 dBFS (~16-18 dB below voice)
-        bed_pre_att = max(0.0, float(self.config.duck_attenuation_db) - 12.0)
+        # Build calibrated speech-dominant filtergraph:
+        # 1. Normalize speech first so vocal presence is authoritative and consistent (-14.0 LUFS)
+        # 2. Pre-attenuate BGM bed so it naturally sits ~18 dB below speech
+        # 3. Sidechain ducking aggressively ducks BGM further when speech is active
+        # 4. Mix with speech authoritative and BGM subtle background
+        # 5. Limit peaks to protect against clipping without boosting the bed
         filter_complex = (
+            f"[0:a]loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
+            f"asplit=2[speech_main][speech_sc];"
             f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
             f"afade=t=in:st=0:d={self.config.fade_in_s},"
             f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
-            f"volume=-{bed_pre_att:.1f}dB[bgm_faded];"
-            f"[0:a]asplit=2[speech_main][speech_sc];"
+            f"volume=-{self.config.duck_attenuation_db:.1f}dB[bgm_faded];"
             f"[bgm_faded][speech_sc]sidechaincompress="
             f"threshold={self.config.threshold}:"
             f"ratio={self.config.ratio}:"
             f"attack={self.config.attack_ms}:"
             f"release={self.config.release_ms}[bgm_ducked];"
             f"[speech_main][bgm_ducked]amix="
-            f"inputs=2:duration=first:dropout_transition=2:"
-            f"weights={self.config.speech_weight} {self.config.bgm_weight},"
-            f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1,"
-            f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra}[out_a]"
+            f"inputs=2:duration=first:dropout_transition=2:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight},"
+            f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
         )
 
         cmd.extend([

@@ -72,14 +72,14 @@ PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 
 # Acceptable video clip duration window (seconds) for B-roll segments
 MIN_VIDEO_DURATION_S: float = 1.5
-MAX_VIDEO_DURATION_S: float = 10.0   # We'll trim to cue duration in ffmpeg
+MAX_VIDEO_DURATION_S: float = 120.0   # We trim to cue duration in ffmpeg
 
 # Minimum resolution width/height for portrait mode
 MIN_WIDTH: int = 720
 MIN_HEIGHT: int = 1080
 
 # Confidence threshold (must match broll/scorer.py DEFAULT_CONFIDENCE_THRESHOLD)
-CONFIDENCE_THRESHOLD: float = 0.75
+CONFIDENCE_THRESHOLD: float = 0.70
 
 
 def _relevance_score(video: dict[str, Any], query: str, concept: str) -> float:
@@ -87,7 +87,7 @@ def _relevance_score(video: dict[str, Any], query: str, concept: str) -> float:
 
     Factors:
     - Orientation: portrait gets 1.0, landscape 0.3
-    - Duration: ideal 3-7s gets 1.0, outside range degrades
+    - Duration: ideal 2-60s gets 1.0, outside range degrades
     - Resolution quality: >=1080 wide gets full score
     - Tags/description keyword overlap with query
     """
@@ -102,14 +102,14 @@ def _relevance_score(video: dict[str, Any], query: str, concept: str) -> float:
     else:
         orientation_score = 0.5
 
-    # Duration score
+    # Duration score: Pexels stock clips are trimmed to cue duration during ffmpeg reframe
     dur = video.get("duration", 0)
-    if 3.0 <= dur <= 7.0:
+    if 2.0 <= dur <= 60.0:
         dur_score = 1.0
-    elif 1.5 <= dur <= 10.0:
-        dur_score = 0.7
+    elif 1.0 <= dur <= 120.0:
+        dur_score = 0.8
     else:
-        dur_score = 0.3
+        dur_score = 0.4
 
     # Quality score
     quality_score = 1.0 if (min(w, h) >= 1080) else (0.7 if (min(w, h) >= 720) else 0.4)

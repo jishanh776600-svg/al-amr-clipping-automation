@@ -172,17 +172,30 @@ def build_video_filtergraph(
         for idx, (in_idx, entry) in enumerate(broll_input_map):
             prep_label = f"broll_prep_{idx}"
             out_label = f"v_broll_{idx}"
+
+            # Align entry timings relative to the rendered clip timeline [0.0, duration_s]
+            if entry.start_s >= request.start_s and request.start_s > 0:
+                rel_start = entry.start_s - request.start_s
+                rel_end = entry.end_s - request.start_s
+            else:
+                rel_start = entry.start_s
+                rel_end = entry.end_s
+            rel_start = max(0.0, rel_start)
+            rel_end = min(request.duration_s, rel_end)
+            if rel_end <= rel_start:
+                continue
+
             if entry.presentation_mode == PresentationMode.PARTIAL_OVERLAY:
                 parts.append(
-                    f"[{in_idx}:v]scale={out_w}:{out_h},setpts=PTS-STARTPTS+{entry.start_s:.4f}/TB[{prep_label}]"
+                    f"[{in_idx}:v]scale={out_w}:{out_h},setpts=PTS-STARTPTS+{rel_start:.4f}/TB[{prep_label}]"
                 )
             else:
                 parts.append(
                     f"[{in_idx}:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
-                    f"crop={out_w}:{out_h},setsar=1,setpts=PTS-STARTPTS+{entry.start_s:.4f}/TB[{prep_label}]"
+                    f"crop={out_w}:{out_h},setsar=1,setpts=PTS-STARTPTS+{rel_start:.4f}/TB[{prep_label}]"
                 )
             parts.append(
-                f"{current}[{prep_label}]overlay=x=0:y=0:enable='between(t,{entry.start_s:.4f},{entry.end_s:.4f})'[{out_label}]"
+                f"{current}[{prep_label}]overlay=x=0:y=0:enable='between(t,{rel_start:.4f},{rel_end:.4f})':eof_action=pass[{out_label}]"
             )
             current = f"[{out_label}]"
 
