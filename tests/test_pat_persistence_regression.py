@@ -673,18 +673,13 @@ def test_ephemeral_disk_reproduction_and_diagnostics_forensics():
         fresh_vault = get_vault()
         fresh_vault.ensure_initialized()
 
-        # 4. Now diagnostics reproduces the exact bug: DB is fresh, only __vault_master_seed__ exists
+        # 4. Diagnostics proves that even after DB wipe, ensure_initialized restores github_pat from encrypted envelope!
         diag2 = asyncio.run(get_settings_diagnostics())
         assert diag2["database_exists"] is True
-        assert "github_pat" not in diag2["stored_credential_keys"]
+        assert "github_pat" in diag2["stored_credential_keys"]
         assert "__vault_master_seed__" in diag2["stored_credential_keys"]
-        assert diag2["github_pat"]["configured"] is False
-
-        # 5. Client-side durable auto-recovery restores the PAT seamlessly
-        config.set_secret("github_pat", pat)
-        diag3 = asyncio.run(get_settings_diagnostics())
-        assert diag3["github_pat"]["configured"] is True
-        assert diag3["github_pat"]["decryption_verified"] is True
+        assert diag2["github_pat"]["configured"] is True
+        assert diag2["github_pat"]["decryption_verified"] is True
         assert config.get_secret("github_pat") == pat
     finally:
         cleanup_test_env(tmp)

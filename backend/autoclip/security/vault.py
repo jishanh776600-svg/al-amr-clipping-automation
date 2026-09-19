@@ -296,18 +296,46 @@ class CredentialVault:
             or os.environ.get("GH_TOKEN")
             or os.environ.get("GITHUB_TOKEN")
         )
+        existing = None
+        try:
+            existing = self.retrieve_secret("github_pat")
+        except Exception:
+            pass
+
         if env_pat and env_pat.strip():
             from ..config import is_masked_secret
             clean_pat = env_pat.strip()
-            if not is_masked_secret(clean_pat):
-                existing = None
+            if not is_masked_secret(clean_pat) and not existing:
+                self.store_secret("github_pat", clean_pat)
+                log.info("Anchored GitHub PAT into durable SQLite vault from environment on startup.")
+                existing = clean_pat
+
+        # Seed from encrypted vault envelope if database was recreated without persistent disk
+        if not existing:
+            envelope_file = Path(__file__).parent / ".vault_envelope"
+            if envelope_file.is_file():
                 try:
-                    existing = self.retrieve_secret("github_pat")
-                except Exception:
-                    pass
-                if not existing:
-                    self.store_secret("github_pat", clean_pat)
-                    log.info("Anchored GitHub PAT into durable SQLite vault from environment on startup.")
+                    envelope_ciphertext = envelope_file.read_text(encoding="utf-8").strip()
+                    if envelope_ciphertext:
+                        cipher = self.get_cipher()
+                        decrypted = None
+                        try:
+                            decrypted = cipher.decrypt(envelope_ciphertext.encode("utf-8")).decode("utf-8")
+                        except Exception:
+                            for ck in self._candidate_keys():
+                                try:
+                                    decrypted = Fernet(_derive_fernet_key(ck)).decrypt(envelope_ciphertext.encode("utf-8")).decode("utf-8")
+                                    if decrypted:
+                                        break
+                                except Exception:
+                                    pass
+                        if decrypted and decrypted.strip():
+                            from ..config import is_masked_secret
+                            if not is_masked_secret(decrypted.strip()):
+                                self.store_secret("github_pat", decrypted.strip())
+                                log.info("Restored GitHub PAT into durable SQLite vault from encrypted envelope on startup.")
+                except Exception as exc:
+                    log.debug("Could not restore PAT from encrypted envelope: %s", exc)
 
     def get_cipher(self) -> Fernet:
         """Return the active Fernet cipher instance."""
@@ -367,6 +395,14 @@ class CredentialVault:
             canon,
             fingerprint,
         )
+
+        if canon == "github_pat" and token and not is_masked_secret(token):
+            try:
+                envelope_file = Path(__file__).parent / ".vault_envelope"
+                envelope_file.write_text(ciphertext, encoding="utf-8")
+            except Exception as exc:
+                log.debug("Could not write encrypted vault envelope: %s", exc)
+
         return fingerprint
 
     def retrieve_secret(self, key: str) -> str | None:
