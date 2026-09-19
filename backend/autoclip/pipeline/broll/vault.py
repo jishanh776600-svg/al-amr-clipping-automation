@@ -83,7 +83,17 @@ class VisualAssetVault:
                         )
                     )
 
-        # 3. Fallback bundled starter asset if no specific file exists in subfolder
+        # 3. Pexels Dynamic Stock Video Acquisition (portrait, 9:16, cached locally)
+        try:
+            pexels_assets = self._discover_pexels_candidates(cue)
+            candidates.extend(pexels_assets)
+        except Exception as exc:
+            log.warning(
+                "Pexels discovery failed non-fatally for concept '%s': %s",
+                cue.concept, exc,
+            )
+
+        # 4. Fallback bundled starter asset if no specific file exists in subfolder
         fallback_file = self.vault_dir / f"starter_{cue.concept}.mp4"
         if fallback_file.is_file():
             candidates.append(
@@ -121,6 +131,47 @@ class VisualAssetVault:
             )
 
         return candidates
+
+    def _discover_pexels_candidates(self, cue: SemanticVisualCue) -> list[VisualAsset]:
+        """Attempts to acquire portrait stock video clips from Pexels matching the cue.
+
+        Returns an empty list if PEXELS_API_KEY is not configured or on any failure.
+        Results are cached locally; downloaded videos are reframed to 9:16.
+        """
+        try:
+            from .pexels_client import PexelsVideoClient
+            client = PexelsVideoClient()
+            if not client.is_available():
+                return []
+
+            # Build contextual search query from cue
+            concept_def = None
+            try:
+                from .semantic_parser import CONCEPT_DEFINITIONS
+                concept_def = CONCEPT_DEFINITIONS.get(cue.concept)
+            except Exception:
+                pass
+
+            if concept_def and concept_def.search_queries:
+                query = concept_def.search_queries[0]
+            elif cue.trigger_phrase:
+                # Derive a contextual query from trigger phrase + concept
+                query = f"{cue.trigger_phrase} {cue.concept.replace('_', ' ')}"
+            else:
+                query = cue.concept.replace("_", " ")
+
+            return client.search_and_acquire(
+                query=query,
+                concept=cue.concept,
+                cue_duration_s=cue.duration_s,
+                per_page=5,
+            )
+        except Exception as exc:
+            log.warning(
+                "Pexels acquisition failed for concept '%s' (non-fatal): %s",
+                cue.concept, exc,
+            )
+            return []
 
     def _ensure_starter_assets(self) -> None:
         """Ensures bundled visual starter assets exist on disk for the core reference concepts."""

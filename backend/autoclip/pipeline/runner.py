@@ -581,13 +581,35 @@ class PipelineRunner:
 
             if len(approved_specs) < required_final_clips:
                 from collections import Counter
+                from .highlights import HighlightError
                 rejection_summary = Counter([r for s in all_specs for r in s.rejection_reasons])
-                log.warning(
-                    "Pipeline produced %d/%d requested clips (out of %d candidates evaluated). Rejection diagnostics: %s",
-                    len(approved_specs),
+                diagnosed_count = len(all_specs)
+                approved_count = len(approved_specs)
+                all_cand_count = len(all_candidates)
+                diag_str = "; ".join(f"{k}: {v}" for k, v in rejection_summary.most_common(5))
+
+                log.error(
+                    "INSUFFICIENT_VALID_CLIPS: produced %d/%d clips from %d candidates "
+                    "(%d evaluated by assembly). Rejections: [%s]",
+                    approved_count,
                     required_final_clips,
-                    len(all_specs),
-                    dict(rejection_summary),
+                    all_cand_count,
+                    diagnosed_count,
+                    diag_str,
+                )
+
+                # Persist partial results for diagnostics before raising
+                if approved_specs:
+                    clips = specifications_to_clips(approved_specs, all_candidates)
+                    store.replace_clips(self.job.id, clips)
+
+                raise HighlightError(
+                    f"INSUFFICIENT_VALID_CLIPS: pipeline produced {approved_count}/{required_final_clips} "
+                    f"valid clips from {all_cand_count} discovered candidates "
+                    f"({diagnosed_count} evaluated by assembly gate). "
+                    f"Rejection breakdown: [{diag_str}]. "
+                    f"Pipeline requires exactly {required_final_clips} clips; "
+                    f"check source quality, campaign rules, and duration constraints."
                 )
 
             if approved_specs:
@@ -637,10 +659,14 @@ class PipelineRunner:
                 self._finish_stage(stage)
                 return clips
             else:
-                log.warning("All candidate clips were rejected by PreRenderQualityGate.")
+                from .highlights import HighlightError
+                log.error("All %d candidate clips were rejected by PreRenderQualityGate.", len(all_specs))
                 store.replace_clips(self.job.id, [])
-                self._finish_stage(stage)
-                return []
+                raise HighlightError(
+                    f"INSUFFICIENT_VALID_CLIPS: all {len(all_specs)} evaluated candidates "
+                    f"were rejected by the PreRenderQualityGate. "
+                    f"Pipeline requires {required_final_clips} clips but produced 0."
+                )
 
         # Fallback to highlights.detect if discovery yielded no candidates
         log.warning("Autonomous discovery yielded no candidates, falling back to highlight detection.")

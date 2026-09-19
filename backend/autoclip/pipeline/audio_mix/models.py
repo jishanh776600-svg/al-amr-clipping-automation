@@ -16,7 +16,7 @@ class DuckingConfig:
     threshold: float = 0.05
     ratio: float = 6.0
     speech_weight: float = 1.0
-    bgm_weight: float = 1.0
+    bgm_weight: float = 0.3   # 0.3 keeps BGM clearly subordinate after sidechain ducking
     fade_in_s: float = 0.3
     fade_out_s: float = 0.5
     target_lufs: float = -14.0
