@@ -52,6 +52,19 @@ YOUTUBE_REFRESH_TOKEN_KEY = "youtube_refresh_token"
 INSTAGRAM_ACCESS_TOKEN_KEY = "instagram_access_token"
 INSTAGRAM_ACCOUNT_ID_KEY = "instagram_account_id"
 
+#: Google Drive persistent storage secrets
+GOOGLE_DRIVE_CLIENT_ID_KEY = "google_drive_client_id"
+GOOGLE_DRIVE_CLIENT_SECRET_KEY = "google_drive_client_secret"
+GOOGLE_DRIVE_REFRESH_TOKEN_KEY = "google_drive_refresh_token"
+GOOGLE_DRIVE_ROOT_FOLDER_ID_KEY = "google_drive_root_folder_id"
+
+GOOGLE_DRIVE_SECRET_KEYS: tuple[str, ...] = (
+    GOOGLE_DRIVE_CLIENT_ID_KEY,
+    GOOGLE_DRIVE_CLIENT_SECRET_KEY,
+    GOOGLE_DRIVE_REFRESH_TOKEN_KEY,
+    GOOGLE_DRIVE_ROOT_FOLDER_ID_KEY,
+)
+
 PUBLISHING_SECRET_KEYS: tuple[str, ...] = (
     TELEGRAM_BOT_TOKEN_KEY,
     TELEGRAM_CHAT_ID_KEY,
@@ -86,6 +99,14 @@ def canonical_secret_key(key: str) -> str:
         return INSTAGRAM_ACCESS_TOKEN_KEY
     if k in ("instagram_account_id", "meta_account_id", "ig_account_id", "instagram_account"):
         return INSTAGRAM_ACCOUNT_ID_KEY
+    if k in ("google_drive_client_id", "gdrive_client_id", "drive_client_id"):
+        return GOOGLE_DRIVE_CLIENT_ID_KEY
+    if k in ("google_drive_client_secret", "gdrive_client_secret", "drive_client_secret"):
+        return GOOGLE_DRIVE_CLIENT_SECRET_KEY
+    if k in ("google_drive_refresh_token", "gdrive_refresh_token", "drive_refresh_token"):
+        return GOOGLE_DRIVE_REFRESH_TOKEN_KEY
+    if k in ("google_drive_root_folder_id", "gdrive_root_folder_id", "drive_root_folder_id", "google_drive_folder_id"):
+        return GOOGLE_DRIVE_ROOT_FOLDER_ID_KEY
     return k
 
 

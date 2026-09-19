@@ -141,7 +141,9 @@ async def dispatch_job_to_github(
     brief_data = campaign_brief if campaign_brief is not None else job.settings.get("campaign", {})
     publish_targets = job.settings.get("publish_targets", [])
 
+    from .. import config
     from ..campaign.duration import resolve_duration_limits, resolve_max_clips
+    from ..security.vault import get_vault
 
     min_dur, max_dur = resolve_duration_limits(job.settings, default_min=20.0, default_max=30.0)
     max_clips = resolve_max_clips(job.settings, default_max_clips=5)
@@ -180,7 +182,18 @@ async def dispatch_job_to_github(
                 or ""
             )
         ),
-        "job_settings": json.dumps(job.settings),
+        "job_settings": json.dumps(
+            (
+                lambda s: (
+                    s.update({
+                        k: (get_vault().retrieve_secret(k) or os.getenv(k.upper()) or "")
+                        for k in config.GOOGLE_DRIVE_SECRET_KEYS
+                        if k not in s and (get_vault().retrieve_secret(k) or os.getenv(k.upper()))
+                    }),
+                    s,
+                )[1]
+            )(dict(job.settings))
+        ),
     }
 
     dispatch_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/dispatches"

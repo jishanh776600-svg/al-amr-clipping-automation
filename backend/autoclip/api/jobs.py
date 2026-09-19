@@ -1591,7 +1591,9 @@ def _check_publish_readiness(clip_id: str) -> tuple[bool, list[str]]:
         )
 
     exports = store.list_exports(clip_id)
-    has_drive_backup = any(bool(exp.drive_file_id) for exp in exports)
+    has_drive_backup = any(bool(exp.drive_file_id) for exp in exports) or bool(
+        final_render and final_render.telemetry and final_render.telemetry.get("drive_file_id")
+    )
 
     if final_render and final_render.output_path:
         from pathlib import Path

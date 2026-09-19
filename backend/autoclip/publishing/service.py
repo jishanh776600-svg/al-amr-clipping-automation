@@ -101,7 +101,9 @@ class PublishingService:
         # 1. Step 22: Final Render Gate
         final_render = store.get_final_render(clip_id)
         exports = store.list_exports(clip_id)
-        has_drive_backup = any(bool(exp.drive_file_id) for exp in exports)
+        has_drive_backup = any(bool(exp.drive_file_id) for exp in exports) or bool(
+            final_render and final_render.telemetry and final_render.telemetry.get("drive_file_id")
+        )
         has_local_media = any(bool(exp.path and Path(exp.path).is_file()) for exp in exports)
 
         if final_render is None:

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -312,15 +313,24 @@ async def send_clip_review(
     clip_meta = store.get_clip_metadata(clip_id)
     exports = store.list_exports(clip_id)
 
+    drive_file_id = None
     drive_link = ""
     for exp in exports:
+        if exp.drive_file_id:
+            drive_file_id = exp.drive_file_id
         if exp.drive_web_view_link:
             drive_link = exp.drive_web_view_link
+        if drive_file_id and drive_link:
             break
+
+    if not drive_file_id and final_render and final_render.telemetry:
+        drive_file_id = final_render.telemetry.get("drive_file_id")
+    if not drive_link and drive_file_id:
+        drive_link = f"https://drive.google.com/file/d/{drive_file_id}/view"
 
     media_path = Path(final_render.output_path) if final_render and final_render.output_path else None
     has_local_media = bool(media_path and media_path.exists())
-    has_drive_media = bool(drive_link)
+    has_drive_media = bool(drive_link or drive_file_id)
 
     # Only send review cards for clips that are actually rendered and have media or drive preview
     if not final_render or (not has_local_media and not has_drive_media):
@@ -409,45 +419,82 @@ async def send_clip_review(
     send_video_url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendVideo"
     send_msg_url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
 
-    # Attempt 1: If local file is accessible and under 45MB, send real video preview
-    media_path = Path(final_render.output_path) if final_render and final_render.output_path else None
-    if media_path and media_path.exists():
-        size_mb = media_path.stat().st_size / (1024 * 1024)
-        if size_mb <= 45:
-            try:
-                log.info("Sending clip review video to Telegram chat %s (%d MB)...", chat_id, size_mb)
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    with open(media_path, "rb") as vf:
-                        files = {"video": (media_path.name, vf, "video/mp4")}
-                        data = {
-                            "chat_id": chat_id,
-                            "caption": caption_text[:1024],
-                            "parse_mode": "Markdown",
-                            "reply_markup": json.dumps(reply_markup),
-                        }
-                        resp = await client.post(send_video_url, data=data, files=files)
-                        if resp.status_code == 200:
-                            log.info("Telegram review video delivered successfully for clip %s", clip_id)
-                            resp_json = resp.json()
-                            msg_id = resp_json.get("result", {}).get("message_id")
-                            _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
-                            return resp_json
-                        elif resp.status_code == 400:
-                            # Retry video without markdown parse_mode
-                            data_plain = dict(data)
-                            data_plain.pop("parse_mode", None)
-                            vf.seek(0)
-                            files_plain = {"video": (media_path.name, vf, "video/mp4")}
-                            resp_plain = await client.post(send_video_url, data=data_plain, files=files_plain)
-                            if resp_plain.status_code == 200:
-                                log.info("Telegram review video (plain) delivered for clip %s", clip_id)
-                                resp_json = resp_plain.json()
+    # Materialize video file for review delivery: local file if accessible, or download from Google Drive
+    temp_file_to_clean: Path | None = None
+    effective_media_path: Path | None = None
+
+    if media_path and media_path.is_file() and media_path.stat().st_size > 0:
+        effective_media_path = media_path
+    elif drive_file_id:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                temp_file_to_clean = Path(tf.name)
+            from ..storage.drive import GoogleDriveStorage
+            drive_storage = GoogleDriveStorage()
+            if drive_storage.is_configured:
+                log.info("Downloading clip %s media from Google Drive (%s) for Telegram review...", clip_id, drive_file_id)
+                await asyncio.to_thread(drive_storage.download_file, drive_file_id, temp_file_to_clean)
+                if temp_file_to_clean.is_file() and temp_file_to_clean.stat().st_size > 0:
+                    effective_media_path = temp_file_to_clean
+
+            # Direct download fallback
+            if not effective_media_path or not effective_media_path.exists() or effective_media_path.stat().st_size == 0:
+                direct_url = f"https://drive.google.com/uc?export=download&id={drive_file_id}"
+                log.info("Attempting direct HTTP download from Google Drive %s for Telegram review...", direct_url)
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as dl_client:
+                    resp = await dl_client.get(direct_url)
+                    if resp.status_code == 200 and len(resp.content) > 1000:
+                        temp_file_to_clean.write_bytes(resp.content)
+                        effective_media_path = temp_file_to_clean
+        except Exception as exc:
+            log.warning("Failed downloading clip %s from Google Drive for Telegram review: %s", clip_id, exc)
+
+    try:
+        # Attempt 1: If effective video file is available and <= 48MB, send real video preview
+        if effective_media_path and effective_media_path.exists():
+            size_mb = effective_media_path.stat().st_size / (1024 * 1024)
+            if size_mb <= 48:
+                try:
+                    log.info("Sending clip review video to Telegram chat %s (%.1f MB)...", chat_id, size_mb)
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        with open(effective_media_path, "rb") as vf:
+                            files = {"video": (f"clip_{clip_id}.mp4", vf, "video/mp4")}
+                            data = {
+                                "chat_id": chat_id,
+                                "caption": caption_text[:1024],
+                                "parse_mode": "Markdown",
+                                "reply_markup": json.dumps(reply_markup),
+                                "supports_streaming": "true",
+                            }
+                            resp = await client.post(send_video_url, data=data, files=files)
+                            if resp.status_code == 200:
+                                log.info("Telegram review video delivered successfully for clip %s", clip_id)
+                                resp_json = resp.json()
                                 msg_id = resp_json.get("result", {}).get("message_id")
                                 _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
                                 return resp_json
-                        log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
-            except Exception as exc:
-                log.warning("Failed sending video directly via Telegram API: %s", exc)
+                            elif resp.status_code == 400:
+                                # Retry video without markdown parse_mode
+                                data_plain = dict(data)
+                                data_plain.pop("parse_mode", None)
+                                vf.seek(0)
+                                files_plain = {"video": (f"clip_{clip_id}.mp4", vf, "video/mp4")}
+                                resp_plain = await client.post(send_video_url, data=data_plain, files=files_plain)
+                                if resp_plain.status_code == 200:
+                                    log.info("Telegram review video (plain) delivered for clip %s", clip_id)
+                                    resp_json = resp_plain.json()
+                                    msg_id = resp_json.get("result", {}).get("message_id")
+                                    _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
+                                    return resp_json
+                            log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
+                except Exception as exc:
+                    log.warning("Failed sending video directly via Telegram API: %s", exc)
+    finally:
+        if temp_file_to_clean and temp_file_to_clean.exists():
+            try:
+                temp_file_to_clean.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # Attempt 2: Fallback to sendMessage with drive preview link and interactive keyboard
     try:

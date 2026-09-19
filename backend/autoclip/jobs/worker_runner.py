@@ -313,7 +313,12 @@ async def async_main() -> None:
     log.info("Source ingested successfully: ID=%s, Title=%s, Duration=%.1fs", source.id, source.title, source.duration_s)
 
     # Optional: Archive source to Google Drive
-    drive_storage = GoogleDriveStorage()
+    drive_storage = GoogleDriveStorage(
+        client_id=os.getenv("GOOGLE_DRIVE_CLIENT_ID") or job_settings.get("google_drive_client_id"),
+        client_secret=os.getenv("GOOGLE_DRIVE_CLIENT_SECRET") or job_settings.get("google_drive_client_secret"),
+        refresh_token=os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN") or job_settings.get("google_drive_refresh_token"),
+        root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID") or job_settings.get("google_drive_root_folder_id"),
+    )
     if drive_storage.is_configured:
         try:
             log.info("Archiving source to Google Drive AL-AMR/sources/...")
@@ -556,6 +561,7 @@ async def async_main() -> None:
             drive_file_id = None
             drive_web_view_link = None
             drive_storage_key = None
+            upload_error: Optional[str] = None
 
             # Upload export to Google Drive
             if drive_storage.is_configured:
@@ -584,7 +590,28 @@ async def async_main() -> None:
                         drive_web_view_link,
                     )
                 except Exception as exc:
+                    upload_error = str(exc)
                     log.error("Failed to upload export %s to Google Drive: %s", exp.id, exc)
+            else:
+                upload_error = "Google Drive storage is not configured on worker."
+                log.error("CRITICAL: %s Cannot persist export %s to Google Drive.", upload_error, exp.id)
+
+            fr = store.get_final_render(clip.id)
+            if drive_file_id:
+                if fr:
+                    fr.telemetry = dict(fr.telemetry or {})
+                    fr.telemetry["drive_file_id"] = drive_file_id
+                    fr.telemetry["drive_web_view_link"] = drive_web_view_link
+                    fr.telemetry["drive_storage_key"] = drive_storage_key
+                    store.create_final_render(fr)
+            else:
+                # Failing persistent storage on ephemeral worker MUST fail the quality gate
+                if fr:
+                    fr.quality_status = "RENDER_REJECT"
+                    fr.render_status = "failed"
+                    fr.error_details = list(fr.error_details or [])
+                    fr.error_details.append(f"Drive artifact persistence failed: {upload_error}")
+                    store.create_final_render(fr)
 
             # Publish if requested
             if publish_targets:
@@ -716,6 +743,25 @@ async def async_main() -> None:
             })
 
     # 8. Final completion callback
+    has_successful_render = any(fr.get("quality_status") == "RENDER_PASS" for fr in final_renders_payload)
+    if not has_successful_render and final_renders_payload:
+        err_msg = "Final render persistence or quality gate failed for all clips."
+        log.error("All final renders failed quality/persistence gates. Reporting job failure to control plane.")
+        report(
+            status="failed",
+            stage="failed",
+            progress=1.0,
+            error=err_msg,
+            clips=clips_payload,
+            evaluations=evaluations_payload,
+            exports=exports_payload,
+            final_renders=final_renders_payload,
+            clip_metadata=clip_metadata_payload,
+            publishing_records=publishing_payload,
+            approvals=approvals_payload,
+        )
+        return
+
     report(
         status="done",
         stage="completed",
