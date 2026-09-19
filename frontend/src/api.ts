@@ -1001,6 +1001,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       rawMsg.includes('Failed to fetch') ||
       rawMsg.includes('NetworkError') ||
       rawMsg.includes('Network request failed') ||
+      rawMsg.includes('Invalid fetch') ||
+      rawMsg.includes('Load failed') ||
       err?.name === 'TypeError'
     ) {
       const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
@@ -1036,7 +1038,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  try {
+    return (await response.json()) as T
+  } catch (parseErr: any) {
+    throw new ApiError(
+      `Invalid JSON response: ${parseErr?.message || 'Malformed server response'}`,
+      response.status,
+      'The server returned a non-JSON or HTML response.',
+    )
+  }
 }
 
 export const api = {
@@ -1149,7 +1159,7 @@ export const api = {
   getCampaign: (id: string) => request<CampaignPreset>(`/api/campaigns/${id}`),
   deleteCampaign: (id: string) => request<void>(`/api/campaigns/${id}`, { method: 'DELETE' }),
 
-  streamExportUrl: (exportId: string) => resolveUrl(`/api/exports/${exportId}/stream`),
+  streamExportUrl: (exportId?: string) => (exportId ? resolveUrl(`/api/exports/${exportId}/stream`) : ''),
   ready: () => request<{ status: string; ready: boolean; checks: Record<string, any> }>('/ready'),
 
   listVisualFilters: () => request<VisualFilter[]>('/api/filters'),
@@ -1228,7 +1238,7 @@ export const api = {
 
   getSettingsDiagnostics: () => request<Record<string, any>>('/api/settings/diagnostics'),
 
-  mediaUrl: (jobId: string) => `/api/jobs/${jobId}/media`,
+  mediaUrl: (jobId?: string) => (jobId ? resolveUrl(`/api/jobs/${jobId}/media`) : ''),
 
   listPublishing: (params?: {
     job_id?: string

@@ -303,49 +303,6 @@ async def validate_instagram() -> PlatformValidationResponse:
     )
 
 
-@router.get("/publishing/{record_id}", response_model=PublishingRecordOut)
-async def get_publishing_record(record_id: str) -> PublishingRecordOut:
-    """Retrieve a single publishing record by ID."""
-    record = await asyncio.to_thread(store.get_publishing_record, record_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Publishing record not found.")
-    return PublishingRecordOut.of(record)
-
-
-@router.post("/publishing/{record_id}/retry", response_model=PublishingRecordOut)
-async def retry_publishing(record_id: str) -> PublishingRecordOut:
-    """Retry a failed or pending publishing record."""
-    record = await asyncio.to_thread(store.get_publishing_record, record_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Publishing record not found.")
-
-    export = await asyncio.to_thread(store.get_export, record.export_id)
-    if not export:
-        raise HTTPException(status_code=404, detail="Associated export not found.")
-
-    clip = await asyncio.to_thread(store.get_clip, export.clip_id)
-    title = record.metadata.get("title") or (clip.title if clip else "AL AMR Highlight")
-    desc = record.metadata.get("description") or (clip.hook if clip else "")
-    tags = record.metadata.get("tags") or ["ALAMR", "Shorts"]
-    dry_run = bool(record.metadata.get("dry_run", False))
-
-    metadata = PublishingMetadata(
-        title=title,
-        description=desc,
-        tags=tags,
-        destination=record.destination,
-        extra={"export_id": export.id, "retry": True},
-    )
-
-    updated_record = await _service.publish_export(
-        export.id,
-        record.platform,
-        metadata=metadata,
-        destination=record.destination,
-        dry_run=dry_run,
-    )
-    return PublishingRecordOut.of(updated_record)
-
 
 @router.get("/jobs/{job_id}/publishing", response_model=list[PublishingRecordOut])
 async def get_job_publishing(job_id: str) -> list[PublishingRecordOut]:
@@ -808,19 +765,22 @@ async def get_orchestration_telemetry() -> dict[str, Any]:
     destinations = await asyncio.to_thread(_orchestrator.ensure_default_destinations)
     dest_telemetry = []
     for d in destinations:
+        published_today = getattr(d, "published_today", 0)
+        daily_limit = getattr(d, "daily_limit", 10)
+        spacing_seconds = getattr(d, "spacing_seconds", 3600)
         dest_telemetry.append({
             "id": d.id,
             "platform": d.platform,
             "display_name": d.display_name,
             "enabled": d.enabled,
-            "daily_limit": d.daily_limit,
-            "published_today": d.published_today,
-            "rate_limit_remaining": max(0, d.daily_limit - d.published_today),
-            "min_spacing_minutes": d.min_spacing_minutes,
+            "daily_limit": daily_limit,
+            "published_today": published_today,
+            "rate_limit_remaining": max(0, daily_limit - published_today),
+            "min_spacing_minutes": getattr(d, "min_spacing_minutes", spacing_seconds // 60),
             "account_identifier": d.account_identifier,
         })
 
-    queue_stats = await asyncio.to_thread(_orchestrator.get_queue_stats)
+    queue_stats = await asyncio.to_thread(_orchestrator.get_telemetry)
     reserve_status = await asyncio.to_thread(engine.get_reserve_status)
     learning_eval = await asyncio.to_thread(engine.evaluate_learning)
     recent_audits = await asyncio.to_thread(store.list_learning_audits, limit=10)
@@ -835,6 +795,51 @@ async def get_orchestration_telemetry() -> dict[str, Any]:
             "recent_audits": [a.to_dict() for a in recent_audits],
         },
     }
+
+
+# Catch-all single record endpoints placed last to prevent shadowing sub-routes
+@router.get("/publishing/{record_id}", response_model=PublishingRecordOut)
+async def get_publishing_record(record_id: str) -> PublishingRecordOut:
+    """Retrieve a single publishing record by ID."""
+    record = await asyncio.to_thread(store.get_publishing_record, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Publishing record not found.")
+    return PublishingRecordOut.of(record)
+
+
+@router.post("/publishing/{record_id}/retry", response_model=PublishingRecordOut)
+async def retry_publishing(record_id: str) -> PublishingRecordOut:
+    """Retry a failed or pending publishing record."""
+    record = await asyncio.to_thread(store.get_publishing_record, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Publishing record not found.")
+
+    export = await asyncio.to_thread(store.get_export, record.export_id)
+    if not export:
+        raise HTTPException(status_code=404, detail="Associated export not found.")
+
+    clip = await asyncio.to_thread(store.get_clip, export.clip_id)
+    title = record.metadata.get("title") or (clip.title if clip else "AL AMR Highlight")
+    desc = record.metadata.get("description") or (clip.hook if clip else "")
+    tags = record.metadata.get("tags") or ["ALAMR", "Shorts"]
+    dry_run = bool(record.metadata.get("dry_run", False))
+
+    metadata = PublishingMetadata(
+        title=title,
+        description=desc,
+        tags=tags,
+        destination=record.destination,
+        extra={"export_id": export.id, "retry": True},
+    )
+
+    updated_record = await _service.publish_export(
+        export.id,
+        record.platform,
+        metadata=metadata,
+        destination=record.destination,
+        dry_run=dry_run,
+    )
+    return PublishingRecordOut.of(updated_record)
 
 
 

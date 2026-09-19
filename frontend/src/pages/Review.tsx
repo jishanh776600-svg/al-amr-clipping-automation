@@ -534,7 +534,7 @@ export function Review() {
               <>
                 <ClipPlayer
                   src={
-                    selected.exports && selected.exports.length > 0
+                    selected.exports && selected.exports.length > 0 && selected.exports[0]?.id
                       ? api.streamExportUrl(selected.exports[0].id)
                       : api.mediaUrl(jobId)
                   }

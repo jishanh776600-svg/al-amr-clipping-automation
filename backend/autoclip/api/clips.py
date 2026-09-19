@@ -260,16 +260,20 @@ async def download_export(export_id: str, request: Request):
     if record.drive_file_id:
         drive_storage = GoogleDriveStorage()
         if drive_storage.is_configured:
-            content_iter, status_code, headers = drive_storage.stream_range(record.drive_file_id)
-            headers["Content-Disposition"] = f'attachment; filename="export_{record.id}.mp4"'
-            return StreamingResponse(
-                content_iter,
-                status_code=status_code,
-                headers=headers,
-                media_type="video/mp4",
-            )
+            try:
+                content_iter, status_code, headers = drive_storage.stream_range(record.drive_file_id)
+                headers["Content-Disposition"] = f'attachment; filename="export_{record.id}.mp4"'
+                return StreamingResponse(
+                    content_iter,
+                    status_code=status_code,
+                    headers=headers,
+                    media_type="video/mp4",
+                )
+            except Exception as exc:
+                log.warning("Failed downloading Drive file %s: %s", record.drive_file_id, exc)
         if record.drive_web_view_link:
             return RedirectResponse(record.drive_web_view_link)
+        return RedirectResponse(f"https://drive.google.com/uc?export=download&id={record.drive_file_id}")
 
     raise HTTPException(
         status_code=410,
@@ -296,19 +300,23 @@ async def stream_export(export_id: str, request: Request):
     if record.drive_file_id:
         drive_storage = GoogleDriveStorage()
         if drive_storage.is_configured:
-            range_header = request.headers.get("Range")
-            content_iter, status_code, headers = drive_storage.stream_range(
-                record.drive_file_id,
-                range_header=range_header,
-            )
-            return StreamingResponse(
-                content_iter,
-                status_code=status_code,
-                headers=headers,
-                media_type="video/mp4",
-            )
+            try:
+                range_header = request.headers.get("Range")
+                content_iter, status_code, headers = drive_storage.stream_range(
+                    record.drive_file_id,
+                    range_header=range_header,
+                )
+                return StreamingResponse(
+                    content_iter,
+                    status_code=status_code,
+                    headers=headers,
+                    media_type="video/mp4",
+                )
+            except Exception as exc:
+                log.warning("Failed streaming Drive file %s: %s", record.drive_file_id, exc)
         if record.drive_web_view_link:
             return RedirectResponse(record.drive_web_view_link)
+        return RedirectResponse(f"https://drive.google.com/uc?export=download&id={record.drive_file_id}")
 
     raise HTTPException(
         status_code=410,

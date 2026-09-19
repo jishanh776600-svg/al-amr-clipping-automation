@@ -159,7 +159,7 @@ export function ClipGallery() {
             </div>
 
             <div className="mt-4 flex justify-center bg-ink-950 rounded p-2">
-              {previewClip.exports.length > 0 ? (
+              {previewClip.exports.length > 0 && previewClip.exports[0]?.id ? (
                 <video
                   src={api.streamExportUrl(previewClip.exports[0].id)}
                   controls

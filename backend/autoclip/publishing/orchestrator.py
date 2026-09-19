@@ -327,6 +327,7 @@ class PublishingOrchestrator:
             "failed_permanent": sum(1 for i in items if i.status == "FAILED_PERMANENT"),
             "failed": sum(1 for i in items if "FAILED" in i.status),
             "cancelled": sum(1 for i in items if i.status == "CANCELLED"),
-            "skipped": sum(1 for i in items if i.status == "SKIPPED"),
         }
+
+    get_queue_stats = get_telemetry
 
