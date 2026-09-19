@@ -45,6 +45,18 @@ class CredentialVault:
         self._explicit_key = master_key
         self._cached_cipher: Fernet | None = None
         self._cached_key_source: str | None = None
+        self._cached_key_origin: str = "uninitialized"
+
+    def get_master_key_fingerprint(self) -> str:
+        """Safe SHA-256 fingerprint prefix of active master key (never exposes key)."""
+        self.get_cipher()
+        key = self._cached_key_source or ""
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+    def get_master_key_source(self) -> str:
+        """Origin/source of active master key."""
+        self.get_cipher()
+        return self._cached_key_origin
 
     def _db_anchor_cipher(self) -> Fernet:
         """Deterministic anchor cipher to protect the master key seed in the SQLite database."""
@@ -93,6 +105,7 @@ class CredentialVault:
         6. Deterministic fallback derived from resolved root directory.
         """
         if self._explicit_key:
+            self._cached_key_origin = "explicit"
             return self._explicit_key
 
         root_dir = paths.root()
@@ -135,6 +148,7 @@ class CredentialVault:
                                 "Preserving authoritative persistent disk key from %s across environment regeneration.",
                                 ploc,
                             )
+                        self._cached_key_origin = f"disk_file:{ploc}"
                         return stored_key
             except Exception as exc:
                 log.debug("Could not read persistent master key file %s: %s", ploc, exc)
@@ -154,6 +168,7 @@ class CredentialVault:
                 log.info("Restored authoritative master key from SQLite database to %s", key_file)
             except Exception as exc:
                 log.debug("Could not restore master key to disk: %s", exc)
+            self._cached_key_origin = "sqlite_seed"
             return db_key
 
         # 3. If environment secret is configured, anchor it to the persistent disk volume and DB
@@ -173,6 +188,7 @@ class CredentialVault:
                 log.info("Anchored environment master key to persistent disk at %s and SQLite", key_file)
             except Exception as exc:
                 log.warning("Could not anchor environment master key to %s: %s", key_file, exc)
+            self._cached_key_origin = "env_var"
             return clean_env
 
         # 4. Generate and persist a stable random master key for this installation volume
@@ -191,12 +207,14 @@ class CredentialVault:
                     pass
             self._save_master_key_to_db(new_key)
             log.info("Generated and persisted new durable master key to %s and SQLite", key_file)
+            self._cached_key_origin = "generated"
             return new_key
         except Exception as exc:
             log.warning("Could not write master key file %s: %s", key_file, exc)
 
         # 5. Local development fallback derived from the root path
         fallback = f"autoclip-dev-salt-{root_dir.resolve()}"
+        self._cached_key_origin = "dev_fallback"
         return fallback
 
     def _candidate_keys(self) -> list[str]:

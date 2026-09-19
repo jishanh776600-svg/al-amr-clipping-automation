@@ -185,6 +185,8 @@ async def put_secret_keyed(key: str, payload: SecretIn) -> None:
 @router.get("/diagnostics/credentials")
 async def get_settings_diagnostics() -> dict[str, Any]:
     """Safe diagnostic report verifying DB path, master key, and credential persistence without exposing secrets."""
+    import hashlib
+    import urllib.request
     from .. import paths
     from ..db import store
     from ..jobs import dispatcher
@@ -194,11 +196,46 @@ async def get_settings_diagnostics() -> dict[str, Any]:
     db_file = paths.db_path()
     db_exists = db_file.is_file()
     db_size = db_file.stat().st_size if db_exists else 0
+    db_ino = None
+    db_mtime = None
+    if db_exists:
+        try:
+            st = db_file.stat()
+            db_ino = getattr(st, "st_ino", None)
+            db_mtime = getattr(st, "st_mtime", None)
+        except Exception:
+            pass
 
-    render_disk = Path("/data")
+    wal_file = db_file.with_name(db_file.name + "-wal")
+    wal_exists = wal_file.is_file()
+    wal_size = wal_file.stat().st_size if wal_exists else 0
+
+    root_path = paths.root()
+    root_dev = None
+    data_dev = None
     is_disk_mounted = False
+    proc_mounts_data = []
+    proc_mounts_root = []
     try:
-        is_disk_mounted = render_disk.is_dir() and os.access(render_disk, os.W_OK)
+        if os.path.exists("/"):
+            root_dev = os.stat("/").st_dev
+        if root_path.exists():
+            data_dev = os.stat(str(root_path)).st_dev
+        if root_dev is not None and data_dev is not None:
+            is_disk_mounted = (root_dev != data_dev)
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists("/proc/mounts"):
+            lines = Path("/proc/mounts").read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 2:
+                    if parts[1] == "/":
+                        proc_mounts_root.append(line)
+                    elif "/data" in parts[1]:
+                        proc_mounts_data.append(line)
     except Exception:
         pass
 
@@ -207,41 +244,130 @@ async def get_settings_diagnostics() -> dict[str, Any]:
         or os.environ.get("AUTOCLIP_ENCRYPTION_KEY")
         or os.environ.get("ENCRYPTION_KEY")
     )
-    master_key_file = (paths.root() / ".master_key").is_file()
+    env_master_fp = None
+    raw_env_key = os.environ.get("AL_AMR_MASTER_KEY") or os.environ.get("AUTOCLIP_ENCRYPTION_KEY") or os.environ.get("ENCRYPTION_KEY")
+    if raw_env_key and raw_env_key.strip():
+        env_master_fp = hashlib.sha256(raw_env_key.strip().encode("utf-8")).hexdigest()[:16]
+
+    key_file = root_path / ".master_key"
+    master_key_file = key_file.is_file()
+    disk_master_fp = None
+    if master_key_file:
+        try:
+            content = key_file.read_text(encoding="utf-8").strip()
+            if content:
+                disk_master_fp = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            pass
+
+    db_seed_rec = store.get_credential("__vault_master_seed__")
+    db_seed_fp = None
+    if db_seed_rec:
+        try:
+            db_k = vault._load_master_key_from_db()
+            if db_k:
+                db_seed_fp = hashlib.sha256(db_k.encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            pass
 
     try:
         creds = store.list_credentials()
         stored_keys = [c.key for c in creds]
+        credential_records = [
+            {
+                "key": c.key,
+                "fingerprint": c.fingerprint,
+                "ciphertext_len": len(c.ciphertext),
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+            }
+            for c in creds
+        ]
     except Exception as exc:
         stored_keys = []
+        credential_records = []
         log.warning("Diagnostics store list failed: %s", exc)
 
     pat_status = vault.get_secret_status(config.GITHUB_PAT_KEY)
     pat_decrypted = False
+    decrypted_pat = None
     try:
         dec = vault.retrieve_secret(config.GITHUB_PAT_KEY)
-        pat_decrypted = bool(dec)
+        if dec and dec.strip() and not config.is_masked_secret(dec):
+            pat_decrypted = True
+            decrypted_pat = dec.strip()
     except Exception:
         pat_decrypted = False
+
+    github_auth_test: dict[str, Any] = {"status": "untested"}
+    if decrypted_pat:
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"token {decrypted_pat}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": "AutoClip-Diagnostics",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                import json
+                user_info = json.loads(resp.read().decode("utf-8"))
+                github_auth_test = {
+                    "status": "authenticated",
+                    "login": user_info.get("login"),
+                    "scopes": resp.headers.get("X-OAuth-Scopes", ""),
+                }
+        except Exception as exc:
+            github_auth_test = {
+                "status": "failed",
+                "error": str(exc),
+            }
+    else:
+        github_auth_test = {"status": "not_configured"}
 
     cap = dispatcher.check_dispatch_capability()
 
     return {
         "autoclip_home": os.environ.get("AUTOCLIP_HOME"),
-        "resolved_root": str(paths.root()),
+        "resolved_root": str(root_path),
         "database_path": str(db_file),
         "database_exists": db_exists,
         "database_size_bytes": db_size,
+        "database_inode": db_ino,
+        "database_mtime": db_mtime,
+        "wal_file_exists": wal_exists,
+        "wal_size_bytes": wal_size,
+        "mount_status": {
+            "root_dev": root_dev,
+            "data_dev": data_dev,
+            "is_persistent_disk_mounted": is_disk_mounted,
+            "proc_mounts_data": proc_mounts_data,
+            "proc_mounts_root": proc_mounts_root,
+        },
         "is_persistent_disk_mounted": is_disk_mounted,
+        "master_key": {
+            "active_fingerprint": vault.get_master_key_fingerprint(),
+            "active_source": vault.get_master_key_source(),
+            "env_configured": master_key_env,
+            "env_fingerprint": env_master_fp,
+            "disk_file_exists": master_key_file,
+            "disk_fingerprint": disk_master_fp,
+            "db_seed_exists": bool(db_seed_rec),
+            "db_seed_fingerprint": db_seed_fp,
+            "candidate_sources_count": len(vault._candidate_keys()),
+        },
         "master_key_env_configured": master_key_env,
         "master_key_file_exists": master_key_file,
         "stored_credential_keys": stored_keys,
+        "credential_records": credential_records,
         "github_pat": {
             "configured": pat_status.get("configured", False),
             "masked": pat_status.get("masked", "Not configured"),
             "updated_at": pat_status.get("updated_at", ""),
             "decryption_verified": pat_decrypted,
         },
+        "github_api_auth": github_auth_test,
         "dispatcher_token_available": bool(dispatcher.get_github_token()),
         "worker_dispatch_capability": cap.get("capability", "UNAVAILABLE"),
         "dispatch_capability": cap,
