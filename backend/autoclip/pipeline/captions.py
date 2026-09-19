@@ -171,9 +171,36 @@ RICH_DYNAMIC = CaptionStyle(
     cta_scale=116,
 )
 
+KYLE_KIRSHNER_CORE = CaptionStyle(
+    key="kyle_kirshner_core",
+    label="Kyle Kirshner Core",
+    description="High-converting short-form style: Anton all-caps, 1-3 word phrase pop, semantic highlight coloring (neon green for money/numbers/growth, bright red for loss/danger/shutdown, yellow for hook/subject).",
+    font="Anton",
+    font_file="Anton-Regular.ttf",
+    size_ratio=0.056,
+    primary="#FFFFFF",
+    accent="#FFE500",  # Vibrant yellow
+    outline="#000000",
+    outline_width=4.5,
+    shadow=0.0,
+    bold=True,
+    all_caps=True,
+    margin_v_ratio=0.22,
+    max_words=3,
+    animation="phrase_pop",
+    scale_percent=115,
+    hook_accent="#FFE500",
+    hook_scale=118,
+    climax_accent="#00FF00",
+    climax_scale=120,
+    cta_accent="#00FF00",
+    cta_scale=115,
+)
+
 PRESETS: dict[str, CaptionStyle] = {
     "classic_professional": CLASSIC_PROFESSIONAL,
     "rich_dynamic": RICH_DYNAMIC,
+    "kyle_kirshner_core": KYLE_KIRSHNER_CORE,
     "clean_lower": CaptionStyle(
         key="clean_lower",
         label="Clean Lower",
@@ -602,6 +629,9 @@ STYLE_ALIASES: dict[str, str] = {
     "arcade": "retro_arcade",
     "podcast": "podcast_subtle",
     "headline": "headline_impact",
+    "kyle": "kyle_kirshner_core",
+    "kyle_kirshner": "kyle_kirshner_core",
+    "reference": "kyle_kirshner_core",
 }
 
 
@@ -809,6 +839,128 @@ def _per_word_events(
     return events
 
 
+# --------------------------------------------------------------------------
+# Semantic Word Coloring & Phrase Pop (Reference Style)
+# --------------------------------------------------------------------------
+
+SEMANTIC_GREEN_REGEX = re.compile(
+    r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|profits|dollars?|million|billion|thousand|sales|growth|income|scale|scaled|cash|rich|margin|roi)$",
+    re.IGNORECASE,
+)
+SEMANTIC_RED_REGEX = re.compile(
+    r"^(shutdown|shut|closed|close|closing|fire|flame|flames|burning|burned|loss|losses|lost|killed|broke|danger|banned|worst|fail|failed|failure|lawsuit|died|destroy|bankrupt)$",
+    re.IGNORECASE,
+)
+SEMANTIC_YELLOW_REGEX = re.compile(
+    r"^(grass|amazon|business|secret|secrets|truth|strategy|method|product|products|listing|client|clients|store|stores|company|work|job)$",
+    re.IGNORECASE,
+)
+
+
+def get_semantic_word_color(text: str) -> str | None:
+    """Return semantic highlight color for a word based on narrative concept."""
+    clean = re.sub(r"[^\w\$%]", "", text.strip())
+    if not clean:
+        return None
+    if SEMANTIC_GREEN_REGEX.search(clean):
+        return "#00FF00"  # Neon Green
+    if SEMANTIC_RED_REGEX.search(clean):
+        return "#FF2B2B"  # Bright Red
+    if SEMANTIC_YELLOW_REGEX.search(clean):
+        return "#FFE500"  # Vibrant Yellow
+    return None
+
+
+def _phrase_pop_events(
+    group: CaptionGroup,
+    style: CaptionStyle,
+    offset: float,
+    hook_window: tuple[float, float] | None = None,
+    climax_window: tuple[float, float] | None = None,
+    cta_window: tuple[float, float] | None = None,
+) -> list[pysubs2.SSAEvent]:
+    """Emit high-impact rapid phrase pop dialogue events (Kyle Kirshner reference style).
+
+    Each 1-3 word event highlights the active word with dynamic scaling and semantic coloring
+    (Neon green for numbers/money/growth, bright red for loss/danger/shutdown, yellow for hook/subject).
+    """
+    events: list[pysubs2.SSAEvent] = []
+    for active, word in enumerate(group.words):
+        w_time = word.start
+        active_clean = re.sub(r"[^\w\$%]", "", word.text.strip())
+        sem_color = get_semantic_word_color(active_clean)
+
+        if sem_color:
+            accent = sem_color
+        elif hook_window and (hook_window[0] <= w_time <= hook_window[1]) and style.hook_accent:
+            accent = style.hook_accent
+        elif climax_window and (climax_window[0] <= w_time <= climax_window[1]) and style.climax_accent:
+            accent = style.climax_accent
+        elif cta_window and (cta_window[0] <= w_time <= cta_window[1]) and style.cta_accent:
+            accent = style.cta_accent
+        else:
+            accent = style.accent or "#FFE500"
+
+        scale = style.scale_percent if style.scale_percent else 115
+        accent_tag = rf"\c{ass_colour_override(accent)}"
+        scale_tag = rf"\fscx{scale}\fscy{scale}"
+
+        rendered: list[str] = []
+        for index, other in enumerate(group.words):
+            text = _text_of(other, style)
+            if index == active:
+                rendered.append(f"{{{accent_tag}{scale_tag}}}{text}{{\\r}}")
+            else:
+                other_sem = get_semantic_word_color(re.sub(r"[^\w\$%]", "", other.text.strip()))
+                if other_sem:
+                    rendered.append(f"{{\\c{ass_colour_override(other_sem)}}}{text}{{\\r}}")
+                else:
+                    rendered.append(text)
+
+        end = word.end if active + 1 < len(group.words) else group.end
+        next_start = group.words[active + 1].start if active + 1 < len(group.words) else end
+        events.append(_event(word.start, max(end, next_start), " ".join(rendered), offset))
+
+    return events
+
+
+def create_hook_headline_event(
+    headline: str,
+    start_s: float = 0.0,
+    end_s: float = 3.0,
+    offset: float = 0.0,
+    style: CaptionStyle | None = None,
+) -> pysubs2.SSAEvent:
+    """Creates a top-positioned high-impact 2-3 line hook headline card in ASS.
+
+    Uses \\an8 (top-center) and stacked lines (\\N) with semantic highlighting.
+    """
+    lines = [line.strip() for line in headline.replace("\\N", "\n").splitlines() if line.strip()]
+    if not lines:
+        lines = [headline.strip()]
+
+    formatted_lines: list[str] = []
+    for line in lines:
+        tokens = line.split()
+        colored_tokens: list[str] = []
+        for tok in tokens:
+            clean = re.sub(r"[^\w\$%]", "", tok)
+            sem_color = get_semantic_word_color(clean)
+            if sem_color:
+                colored_tokens.append(rf"{{\c{ass_colour_override(sem_color)}}}{tok.upper()}{{\r}}")
+            else:
+                colored_tokens.append(tok.upper())
+        formatted_lines.append(" ".join(colored_tokens))
+
+    stacked_text = r"{\an8\fs75\b1}" + r"\N".join(formatted_lines)
+    return pysubs2.SSAEvent(
+        start=pysubs2.make_time(s=max(0.0, start_s - offset)),
+        end=pysubs2.make_time(s=max(0.0, end_s - offset)),
+        text=stacked_text,
+        style=STYLE_NAME,
+    )
+
+
 def _build_ass_style(
     style: CaptionStyle,
     *,
@@ -847,6 +999,7 @@ def build_ass(
     hook_window: tuple[float, float] | None = None,
     climax_window: tuple[float, float] | None = None,
     cta_window: tuple[float, float] | None = None,
+    hook_headline: str | None = None,
 ) -> pysubs2.SSAFile:
     """Build an ASS subtitle file for a clip with dynamic styling and safety margins."""
     subs = pysubs2.SSAFile()
@@ -867,11 +1020,35 @@ def build_ass(
         style, height=height, scale=scale, margin_v=margin_v, width=width
     )
 
+    # Optional Hook Headline Card (0-3s, stacked lines with semantic colors)
+    if hook_headline:
+        headline_end = min(3.0, (words[-1].end - time_offset_s) if words else 3.0)
+        subs.events.append(
+            create_hook_headline_event(
+                hook_headline,
+                start_s=0.0,
+                end_s=max(1.0, headline_end),
+                offset=0.0,
+                style=style,
+            )
+        )
+
     groups = group_words(words, max_words=style.max_words)
 
     for group in groups:
         if style.animation == "karaoke":
             subs.events.append(_karaoke_event(group, style, time_offset_s))
+        elif style.animation == "phrase_pop":
+            subs.events.extend(
+                _phrase_pop_events(
+                    group,
+                    style,
+                    time_offset_s,
+                    hook_window=hook_window,
+                    climax_window=climax_window,
+                    cta_window=cta_window,
+                )
+            )
         elif style.animation in ("scale", "subtle") and style.accent:
             subs.events.extend(
                 _per_word_events(
@@ -902,6 +1079,7 @@ def write_ass(
     hook_window: tuple[float, float] | None = None,
     climax_window: tuple[float, float] | None = None,
     cta_window: tuple[float, float] | None = None,
+    hook_headline: str | None = None,
 ) -> Path:
     """Render captions to an .ass file and return its path."""
     subs = build_ass(
@@ -915,6 +1093,7 @@ def write_ass(
         hook_window=hook_window,
         climax_window=climax_window,
         cta_window=cta_window,
+        hook_headline=hook_headline,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     subs.save(str(path), encoding="utf-8")

@@ -45,6 +45,8 @@ class FinalRenderEngine:
         min_duration_s: float | None = None,
         max_duration_s: float | None = None,
         visual_filter: str = "original",
+        words: list[Any] | None = None,
+        edl: Any | None = None,
     ) -> tuple[Path, FinalRenderRecord]:
         """Renders, evaluates, and packages one final clip.
 
@@ -142,19 +144,42 @@ class FinalRenderEngine:
 
         style = captions_module.resolve_style(caption_style_key)
 
+        # Generate B-roll Edit Decision List (EDL) if words provided and EDL not precomputed
+        if edl is None and words:
+            try:
+                from autoclip.pipeline.broll import SemanticBrollEngine, VisualAssetVault
+                broll_engine = SemanticBrollEngine(vault=VisualAssetVault())
+                edl = broll_engine.generate_edl(
+                    words=words,
+                    clip_id=clip.id,
+                    clip_start_s=clip.start_s,
+                    clip_end_s=clip.end_s,
+                )
+            except Exception as e:
+                log.warning("Semantic B-roll generation failed for clip %s: %s; falling back to clean A-roll.", clip.id, e)
+                edl = None
+
+        if edl is not None:
+            try:
+                import json
+                (package_dir / "edl.json").write_text(json.dumps(edl.to_dict(), indent=2), encoding="utf-8")
+            except Exception as e:
+                log.warning("Failed to save edl.json for clip %s: %s", clip.id, e)
+
         request = export.ExportRequest(
             source=source_media_path,
             destination=temp_dest,
             start_s=clip.start_s,
             end_s=clip.end_s,
             crop_path=crop_path,
-            words=[],
+            words=words or [],
             style=style,
             ratio=self.config.ratio,
             burn_captions=bool(ass_path and Path(ass_path).is_file()),
             ass_path=ass_path,
             audio_path=audio_path,
             visual_filter=visual_filter,
+            edl=edl,
         )
 
         export_settings = ExportSettings(

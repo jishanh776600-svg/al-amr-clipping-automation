@@ -1119,6 +1119,7 @@ class PipelineRunner:
             def clip_progress(fraction: float, i: int = index) -> None:
                 self._emit(stage, (i + fraction) / len(clips), f"Rendering & validating clip {i + 1}/{len(clips)}")
 
+            clip_words = transcript.slice(clip.start_word, clip.end_word)
             final_path, render_rec = render_engine.render_and_package(
                 clip=clip,
                 source_media_path=source_path,
@@ -1135,6 +1136,7 @@ class PipelineRunner:
                 min_duration_s=min_dur,
                 max_duration_s=max_dur,
                 visual_filter=selected_filter,
+                words=clip_words,
             )
             final_render_records.append(render_rec)
 

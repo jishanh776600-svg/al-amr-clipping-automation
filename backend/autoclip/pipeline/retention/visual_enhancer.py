@@ -37,7 +37,7 @@ class VisualRetentionEnhancer:
         self,
         max_punch_ins_per_clip: int = 2,
         min_dwell_s: float = 3.0,
-        punch_in_zoom: float = 1.10,
+        punch_in_zoom: float = 1.22,
     ) -> None:
         self.max_punch_ins_per_clip = max_punch_ins_per_clip
         self.min_dwell_s = min_dwell_s

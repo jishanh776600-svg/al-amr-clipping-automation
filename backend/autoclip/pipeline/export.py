@@ -65,6 +65,7 @@ class ExportRequest:
     ass_path: Path | None = None
     audio_path: Path | None = None
     visual_filter: str = "original"
+    edl: Any | None = None
 
     @property
     def duration_s(self) -> float:
@@ -98,6 +99,7 @@ def build_video_filtergraph(
     *,
     subtitle_name: str | None,
     fonts_name: str = "fonts",
+    broll_input_map: list[tuple[int, Any]] | None = None,
 ) -> str:
     """Build the ``-filter_complex`` video chain for one clip."""
     out_w, out_h = ratio_dimensions(request.ratio)
@@ -154,6 +156,35 @@ def build_video_filtergraph(
         if vf and vf.ffmpeg_expr and vf.ffmpeg_expr != "null":
             parts.append(f"{current}{vf.ffmpeg_expr}[vfiltered]")
             current = "[vfiltered]"
+
+    # If broll_input_map not provided directly, derive from request.edl
+    if broll_input_map is None and request.edl and getattr(request.edl, "entries", None):
+        broll_start = 2 if (request.audio_path and Path(request.audio_path).is_file()) else 1
+        broll_input_map = [
+            (broll_start + i, entry)
+            for i, entry in enumerate(request.edl.entries)
+            if Path(entry.asset_path).is_file()
+        ]
+
+    # Composite B-roll and evidence overlays onto video stream
+    if broll_input_map:
+        from autoclip.pipeline.broll.models import PresentationMode
+        for idx, (in_idx, entry) in enumerate(broll_input_map):
+            prep_label = f"broll_prep_{idx}"
+            out_label = f"v_broll_{idx}"
+            if entry.presentation_mode == PresentationMode.PARTIAL_OVERLAY:
+                parts.append(
+                    f"[{in_idx}:v]scale={out_w}:{out_h},setpts=PTS-STARTPTS+{entry.start_s:.4f}/TB[{prep_label}]"
+                )
+            else:
+                parts.append(
+                    f"[{in_idx}:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+                    f"crop={out_w}:{out_h},setsar=1,setpts=PTS-STARTPTS+{entry.start_s:.4f}/TB[{prep_label}]"
+                )
+            parts.append(
+                f"{current}[{prep_label}]overlay=x=0:y=0:enable='between(t,{entry.start_s:.4f},{entry.end_s:.4f})'[{out_label}]"
+            )
+            current = f"[{out_label}]"
 
     if request.burn_captions and subtitle_name is not None:
         # Bare relative names — ffmpeg runs with its cwd set to the render
@@ -301,8 +332,29 @@ def export_clip(
             ass_path, captions_module.FONT_DIR
         )
 
+    # Build B-roll input arguments and mapping
+    broll_input_map: list[tuple[int, Any]] = []
+    broll_args: list[str] = []
+    current_input_index = 1
+    if request.audio_path and Path(request.audio_path).is_file():
+        current_input_index = 2
+
+    if request.edl and getattr(request.edl, "entries", None):
+        for entry in request.edl.entries:
+            asset_path = Path(entry.asset_path)
+            if asset_path.is_file():
+                broll_input_map.append((current_input_index, entry))
+                current_input_index += 1
+                if getattr(entry, "is_video", False) or asset_path.suffix.lower() in [".mp4", ".mov"]:
+                    broll_args.extend(["-ss", "0", "-t", f"{entry.duration_s:.4f}", "-i", str(asset_path)])
+                else:
+                    broll_args.extend(["-loop", "1", "-t", f"{request.duration_s:.4f}", "-i", str(asset_path)])
+
     filtergraph = build_video_filtergraph(
-        request, subtitle_name=subtitle_name, fonts_name=fonts_name
+        request,
+        subtitle_name=subtitle_name,
+        fonts_name=fonts_name,
+        broll_input_map=broll_input_map,
     )
 
     request.destination.parent.mkdir(parents=True, exist_ok=True)
@@ -321,9 +373,12 @@ def export_clip(
     ]
 
     if request.audio_path and Path(request.audio_path).is_file():
+        args.extend(["-i", str(request.audio_path)])
+
+    args.extend(broll_args)
+
+    if request.audio_path and Path(request.audio_path).is_file():
         args.extend([
-            "-i",
-            str(request.audio_path),
             "-filter_complex",
             filtergraph,
             "-map",
@@ -341,6 +396,8 @@ def export_clip(
             str(AUDIO_SAMPLE_RATE),
             "-movflags",
             "+faststart",
+            "-t",
+            f"{request.duration_s:.4f}",
             str(request.destination),
         ])
     else:
@@ -364,6 +421,8 @@ def export_clip(
             str(AUDIO_SAMPLE_RATE),
             "-movflags",
             "+faststart",
+            "-t",
+            f"{request.duration_s:.4f}",
             str(request.destination),
         ])
 
