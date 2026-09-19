@@ -906,6 +906,23 @@ export function getStoredToken(): string {
   return ''
 }
 
+export function getStoredPat(): string {
+  if (typeof localStorage !== 'undefined') {
+    return localStorage.getItem('alamr_github_pat') || ''
+  }
+  return ''
+}
+
+export function setStoredPat(pat: string | null): void {
+  if (typeof localStorage !== 'undefined') {
+    if (pat && pat.trim() && !pat.includes('••••') && !pat.includes('Configured')) {
+      localStorage.setItem('alamr_github_pat', pat.trim())
+    } else if (pat === null || pat === '') {
+      localStorage.removeItem('alamr_github_pat')
+    }
+  }
+}
+
 export function setStoredToken(token: string | null): void {
   if (typeof localStorage !== 'undefined') {
     if (token) {
@@ -1148,16 +1165,41 @@ export const api = {
   getSettings: () => request<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
-  getDispatchStatus: () => request<DispatchStatus>('/api/jobs/dispatch-status'),
+  getDispatchStatus: async (): Promise<DispatchStatus> => {
+    const status = await request<DispatchStatus>('/api/jobs/dispatch-status')
+    if (!status.ready && !status.token_available) {
+      const storedPat = getStoredPat()
+      if (storedPat) {
+        try {
+          await request<void>('/api/settings/secrets', {
+            method: 'PUT',
+            body: JSON.stringify({ key: 'github_pat', value: storedPat }),
+          })
+          return await request<DispatchStatus>('/api/jobs/dispatch-status')
+        } catch {
+          // Non-fatal background sync attempt
+        }
+      }
+    }
+    return status
+  },
 
-  putSecret: (key: string, value: string) =>
-    request<void>('/api/settings/secrets', {
+  putSecret: (key: string, value: string) => {
+    if ((key === 'github_pat' || key === 'GITHUB_PAT') && value) {
+      setStoredPat(value)
+    }
+    return request<void>('/api/settings/secrets', {
       method: 'PUT',
       body: JSON.stringify({ key, value }),
-    }),
+    })
+  },
 
-  deleteSecret: (key: string) =>
-    request<void>(`/api/settings/secrets/${key}`, { method: 'DELETE' }),
+  deleteSecret: (key: string) => {
+    if (key === 'github_pat' || key === 'GITHUB_PAT') {
+      setStoredPat(null)
+    }
+    return request<void>(`/api/settings/secrets/${key}`, { method: 'DELETE' })
+  },
 
   validateSecret: (key: string, value?: string) =>
     request<ValidateSecretResult>(`/api/settings/secrets/${key}/validate`, {

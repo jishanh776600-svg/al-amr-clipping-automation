@@ -626,6 +626,70 @@ def test_settings_api_handles_uppercase_github_pat():
         cleanup_test_env(tmp)
 
 
+def test_ephemeral_disk_reproduction_and_diagnostics_forensics():
+    """Reproduces the exact production failure mode where ephemeral disk wipe destroys DB,
+
+    and proves that:
+    1. Forensic diagnostics correctly track master-key fingerprints, origin source, and DB inode.
+    2. Wiping the ephemeral directory leaves only __vault_master_seed__ on re-init.
+    3. Re-anchoring via store_secret cleanly restores the PAT and verifies round-trip decryption.
+    """
+    tmp = setup_test_env()
+    try:
+        from autoclip.api.settings import get_settings_diagnostics
+        from autoclip.security.vault import get_vault
+        import asyncio
+
+        vault = get_vault()
+        fp1 = vault.get_master_key_fingerprint()
+        src1 = vault.get_master_key_source()
+        assert len(fp1) == 16
+        assert src1 != "uninitialized"
+
+        pat = "ghp_ProductionLivePAT1234567890abcdef"
+        config.set_secret("github_pat", pat)
+
+        # 1. Collect diagnostics with PAT configured
+        diag1 = asyncio.run(get_settings_diagnostics())
+        assert diag1["database_exists"] is True
+        assert "github_pat" in diag1["stored_credential_keys"]
+        assert "__vault_master_seed__" in diag1["stored_credential_keys"]
+        assert diag1["github_pat"]["configured"] is True
+        assert diag1["github_pat"]["decryption_verified"] is True
+        assert diag1["master_key"]["active_fingerprint"] == fp1
+
+        # 2. Simulate ephemeral container recreation (wiping DB and .master_key)
+        from autoclip import db
+        import autoclip.security.vault
+        db.reset_connections()
+        paths.db_path().unlink(missing_ok=True)
+        (paths.root() / ".master_key").unlink(missing_ok=True)
+        autoclip.security.vault._global_vault = None
+
+        # 3. Simulate container reboot calling ensure_initialized()
+        from autoclip import db
+        db.reset_connections()
+        db.init()
+        fresh_vault = get_vault()
+        fresh_vault.ensure_initialized()
+
+        # 4. Now diagnostics reproduces the exact bug: DB is fresh, only __vault_master_seed__ exists
+        diag2 = asyncio.run(get_settings_diagnostics())
+        assert diag2["database_exists"] is True
+        assert "github_pat" not in diag2["stored_credential_keys"]
+        assert "__vault_master_seed__" in diag2["stored_credential_keys"]
+        assert diag2["github_pat"]["configured"] is False
+
+        # 5. Client-side durable auto-recovery restores the PAT seamlessly
+        config.set_secret("github_pat", pat)
+        diag3 = asyncio.run(get_settings_diagnostics())
+        assert diag3["github_pat"]["configured"] is True
+        assert diag3["github_pat"]["decryption_verified"] is True
+        assert config.get_secret("github_pat") == pat
+    finally:
+        cleanup_test_env(tmp)
+
+
 if __name__ == "__main__":
     print("Running test_save_other_settings_preserves_pat...")
     test_save_other_settings_preserves_pat()

@@ -5,6 +5,7 @@ import {
   ApiError,
   getStoredToken,
   setStoredToken,
+  getStoredPat,
   type ProviderStatus,
   type Settings as SettingsData,
   type SystemStatus,
@@ -39,6 +40,19 @@ export function Settings() {
         api.providerStatus().catch(() => []),
         api.system().catch(() => null),
       ])
+      if (sData?.credentials_status?.github_pat && !sData.credentials_status.github_pat.configured) {
+        const storedPat = getStoredPat()
+        if (storedPat) {
+          try {
+            await api.putSecret('github_pat', storedPat)
+            sData.credentials_status.github_pat.configured = true
+            sData.credentials_status.github_pat.masked = '•••••••• Configured (Auto-Restored)'
+            if (sData.keys_present) {
+              sData.keys_present.github_pat = true
+            }
+          } catch {}
+        }
+      }
       setSettings(sData)
       setProviders(pData)
       setSystem(sysData)
