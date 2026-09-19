@@ -39,7 +39,7 @@ on:
       max_clips:
         description: "Maximum clips to generate"
         required: false
-        default: "3"
+        default: "5"
         type: string
       min_duration_s:
         description: "Minimum clip duration in seconds"
@@ -177,6 +177,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           AUTOCLIP_PROXY: socks5h://127.0.0.1:1080
           WORKER_MIN_DURATION_S: ${{ github.event.inputs.min_duration_s }}
