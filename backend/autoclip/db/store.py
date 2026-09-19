@@ -2929,23 +2929,30 @@ def save_credential(key: str, ciphertext: str, fingerprint: str = "") -> models.
 
 
 def get_credential(key: str) -> AppCredentialRecord | None:
+    query = (
+        "SELECT * FROM app_credentials "
+        "WHERE key = ? OR LOWER(key) = LOWER(?) "
+        "ORDER BY (CASE WHEN key = ? THEN 0 ELSE 1 END) "
+        "LIMIT 1"
+    )
     try:
         with connection() as conn:
-            row = conn.execute("SELECT * FROM app_credentials WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(query, (key, key, key)).fetchone()
     except sqlite3.OperationalError:
         from . import init
         init()
         with connection() as conn:
-            row = conn.execute("SELECT * FROM app_credentials WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(query, (key, key, key)).fetchone()
     if row is None:
         return None
     return AppCredentialRecord.from_row(row)
 
 
 def delete_credential(key: str) -> bool:
+    query = "DELETE FROM app_credentials WHERE key = ? OR LOWER(key) = LOWER(?)"
     try:
         with connection() as conn:
-            cur = conn.execute("DELETE FROM app_credentials WHERE key = ?", (key,))
+            cur = conn.execute(query, (key, key))
             deleted = cur.rowcount > 0
         from . import checkpoint
         checkpoint("TRUNCATE")

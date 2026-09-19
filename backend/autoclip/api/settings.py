@@ -56,6 +56,7 @@ def _settings_out(settings: config.Settings) -> SettingsOut:
         | {
             config.HF_TOKEN_KEY: config.get_secret(config.HF_TOKEN_KEY, settings) is not None,
             config.GITHUB_PAT_KEY: config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
+            "GITHUB_PAT": config.get_secret(config.GITHUB_PAT_KEY, settings) is not None,
         },
         credentials_status=cred_status,
     )
@@ -106,57 +107,62 @@ async def put_settings(payload: SettingsIn) -> SettingsOut:
             status_code=400, detail="Minimum clip length must be below the maximum."
         )
 
+    pat_val = None
     if "github_pat" in updates:
         pat_val = updates["github_pat"]
-        if pat_val is not None:
-            raw = str(pat_val).strip()
-            if raw == "__CLEAR__":
-                config.delete_secret(config.GITHUB_PAT_KEY)
-                log.info("GitHub PAT explicitly cleared via Settings PUT __CLEAR__.")
-            elif raw and not config.is_masked_secret(raw):
-                saved = config.set_secret(config.GITHUB_PAT_KEY, raw)
-                if saved:
-                    log.info("GitHub PAT explicitly updated via Settings PUT.")
-                else:
-                    log.info("GitHub PAT update rejected (masked or placeholder value); preserving existing stored PAT.")
+    elif "GITHUB_PAT" in updates:
+        pat_val = updates["GITHUB_PAT"]
+
+    if pat_val is not None:
+        raw = str(pat_val).strip()
+        if raw == "__CLEAR__":
+            config.delete_secret(config.GITHUB_PAT_KEY)
+            log.info("GitHub PAT explicitly cleared via Settings PUT __CLEAR__.")
+        elif raw and not config.is_masked_secret(raw):
+            saved = config.set_secret(config.GITHUB_PAT_KEY, raw)
+            if saved:
+                log.info("GitHub PAT explicitly updated via Settings PUT.")
             else:
-                log.info("GitHub PAT in Settings PUT is empty, null, undefined, or masked; preserving existing stored PAT.")
+                log.info("GitHub PAT update rejected (masked or placeholder value); preserving existing stored PAT.")
         else:
-            log.info("GitHub PAT in Settings PUT is None; preserving existing stored PAT.")
+            log.info("GitHub PAT in Settings PUT is empty, null, undefined, or masked; preserving existing stored PAT.")
+    elif "github_pat" in updates or "GITHUB_PAT" in updates:
+        log.info("GitHub PAT in Settings PUT is None; preserving existing stored PAT.")
 
     config.save(settings)
     return _settings_out(settings)
 
 
 def _handle_secret_save(key: str, raw_value: str | None) -> None:
+    canon = config.canonical_secret_key(key) or key
     valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
-    if key not in valid:
+    if canon not in valid:
         raise HTTPException(
             status_code=400, detail=f"Unknown secret '{key}'. Expected one of: {', '.join(valid)}"
         )
     if raw_value is None:
-        log.warning("Ignoring attempt to set None for secret '%s'. Stored secret preserved.", key)
+        log.warning("Ignoring attempt to set None for secret '%s'. Stored secret preserved.", canon)
         return
 
     val = str(raw_value).strip()
     if not val or config.is_masked_secret(val):
         log.warning(
             "Ignoring attempt to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Stored secret preserved.",
-            key,
+            canon,
             val[:12] if val else "empty",
         )
         return
 
     if val == "__CLEAR__":
-        config.delete_secret(key)
-        log.info("Secret '%s' explicitly deleted via __CLEAR__ marker.", key)
+        config.delete_secret(canon)
+        log.info("Secret '%s' explicitly deleted via __CLEAR__ marker.", canon)
         return
 
-    saved = config.set_secret(key, val)
+    saved = config.set_secret(canon, val)
     if saved:
-        log.info("Secret '%s' successfully encrypted and saved to durable vault.", key)
+        log.info("Secret '%s' successfully encrypted and saved to durable vault.", canon)
     else:
-        log.warning("Secret '%s' could not be saved (rejected as invalid/placeholder). Stored secret preserved.", key)
+        log.warning("Secret '%s' could not be saved (rejected as invalid/placeholder). Stored secret preserved.", canon)
 
 
 @router.put("/settings/secrets", status_code=204)
@@ -218,6 +224,8 @@ async def get_settings_diagnostics() -> dict[str, Any]:
     except Exception:
         pat_decrypted = False
 
+    cap = dispatcher.check_dispatch_capability()
+
     return {
         "autoclip_home": os.environ.get("AUTOCLIP_HOME"),
         "resolved_root": str(paths.root()),
@@ -235,12 +243,15 @@ async def get_settings_diagnostics() -> dict[str, Any]:
             "decryption_verified": pat_decrypted,
         },
         "dispatcher_token_available": bool(dispatcher.get_github_token()),
+        "worker_dispatch_capability": cap.get("capability", "UNAVAILABLE"),
+        "dispatch_capability": cap,
     }
 
 
 @router.delete("/settings/secrets/{key}", status_code=204)
 async def delete_secret(key: str) -> None:
-    config.delete_secret(key)
+    canon = config.canonical_secret_key(key) or key
+    config.delete_secret(canon)
 
 
 @router.post("/settings/secrets/{key}/validate", response_model=ValidateSecretOut)
@@ -249,16 +260,17 @@ async def validate_secret(key: str, payload: SecretIn | None = None) -> Validate
 
     Does NOT expose the secret. Tests connectivity and permissions.
     """
+    canon = config.canonical_secret_key(key) or key
     valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
-    if key not in valid:
+    if canon not in valid:
         raise HTTPException(status_code=400, detail=f"Unknown secret '{key}'.")
 
     # If payload provided, test provided value; otherwise test stored value
-    token = payload.value.strip() if (payload and payload.value and payload.value.strip()) else config.get_secret(key)
+    token = payload.value.strip() if (payload and payload.value and payload.value.strip()) else config.get_secret(canon)
     if not token:
         return ValidateSecretOut(valid=False, message="No token is currently configured.")
 
-    if key == config.GITHUB_PAT_KEY:
+    if canon == config.GITHUB_PAT_KEY:
         import httpx
 
         url = "https://api.github.com/user"

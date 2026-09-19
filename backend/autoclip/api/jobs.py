@@ -35,7 +35,11 @@ from ..config import load as load_settings
 from ..db import models, store
 from ..db.models import CampaignGuideline, CampaignSpecificationRecord, Job, Source, new_id
 from ..jobs import orchestrator
-from ..jobs.dispatcher import dispatch_job_to_github, is_github_dispatch_enabled
+from ..jobs.dispatcher import (
+    check_dispatch_capability,
+    dispatch_job_to_github,
+    is_github_dispatch_enabled,
+)
 from ..jobs.events import Event, acquisition_event, broker
 from ..jobs.queue import queue
 from ..pipeline import ingest
@@ -66,6 +70,12 @@ from .schemas import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+@router.get("/dispatch-status")
+async def get_dispatch_status() -> dict[str, Any]:
+    """Preflight check for worker dispatch capability and readiness."""
+    return check_dispatch_capability()
 
 
 def _apply_overrides(settings, overrides: JobSettingsIn):

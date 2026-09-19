@@ -44,6 +44,18 @@ HF_TOKEN_KEY = "huggingface_token"
 GITHUB_PAT_KEY = "github_pat"
 
 
+def canonical_secret_key(key: str) -> str:
+    """Normalize secret keys so case differences or naming aliases resolve to a single canonical key."""
+    if not key:
+        return ""
+    k = key.strip().lower()
+    if k in ("github_pat", "github_token", "gh_token", "github-pat", "pat", "github"):
+        return GITHUB_PAT_KEY
+    if k in ("hf_token", "huggingface_token", "huggingface", "hf"):
+        return HF_TOKEN_KEY
+    return k
+
+
 class ProviderSettings(BaseModel):
     """Per-provider configuration. The API key itself is never stored here."""
 
@@ -224,71 +236,93 @@ def _keyring():
 def get_secret(key: str, settings: Settings | None = None) -> str | None:
     """Return a stored secret, or None if unset.
 
-    Checks:
-    1. Environment variable overrides (AUTOCLIP_<KEY>_KEY, or GITHUB_PAT/GH_TOKEN for github_pat).
-    2. Durable encrypted SQLite vault (persists across Render restarts/redeployments).
+    Canonical source of truth hierarchy:
+    1. Durable encrypted SQLite vault (canonical primary source of truth).
+    2. Environment variable overrides / bootstrap (AUTOCLIP_<KEY>_KEY, or GITHUB_PAT/GH_TOKEN for github_pat).
+       If an environment variable is found, it is automatically anchored into the vault.
     3. OS keyring (with automatic migration to SQLite vault).
     4. Plaintext fallback secrets (with automatic migration to SQLite vault).
     """
-    env_override = os.environ.get(f"AUTOCLIP_{key.upper()}_KEY")
-    if env_override and env_override.strip():
-        return env_override.strip()
+    canon = canonical_secret_key(key)
+    if not canon:
+        return None
 
-    if key == GITHUB_PAT_KEY:
+    # 1. Environment variable overrides / bootstrap
+    env_override = os.environ.get(f"AUTOCLIP_{canon.upper()}_KEY")
+    if env_override and env_override.strip() and not is_masked_secret(env_override):
+        clean_override = env_override.strip()
+        try:
+            from .security.vault import get_vault
+            get_vault().store_secret(canon, clean_override)
+        except Exception:
+            pass
+        return clean_override
+
+    if canon == GITHUB_PAT_KEY:
         token = (
             os.environ.get("GITHUB_PAT")
             or os.environ.get("GH_TOKEN")
             or os.environ.get("GITHUB_TOKEN")
         )
-        if token and token.strip():
-            return token.strip()
+        if token and token.strip() and not is_masked_secret(token):
+            clean = token.strip()
+            try:
+                from .security.vault import get_vault
+                get_vault().store_secret(GITHUB_PAT_KEY, clean)
+            except Exception:
+                pass
+            return clean
 
-    # 2. Durable encrypted SQLite vault
+    # 2. Durable encrypted SQLite vault (canonical source of truth when no env var)
     try:
         from .security.vault import get_vault
 
-        vault_val = get_vault().retrieve_secret(key)
-        if vault_val:
-            return vault_val
+        vault_val = get_vault().retrieve_secret(canon)
+        if vault_val and vault_val.strip() and not is_masked_secret(vault_val):
+            return vault_val.strip()
     except Exception as exc:
-        log.debug("Credential vault lookup for %s: %s", key, exc)
+        log.debug("Credential vault lookup for %s: %s", canon, exc)
 
     # 3. OS keyring (with migration path)
     kr = _keyring()
     keyring_val: str | None = None
     if kr is not None:
         for service in (KEYRING_SERVICE, LEGACY_KEYRING_SERVICE):
-            try:
-                value = kr.get_password(service, key)
-                if value and value.strip():
-                    keyring_val = value.strip()
-                    break
-            except Exception as exc:  # pragma: no cover - backend dependent
-                log.debug("Keyring read failed for %s: %s", key, exc)
+            for test_k in (canon, key):
+                try:
+                    value = kr.get_password(service, test_k)
+                    if value and value.strip() and not is_masked_secret(value):
+                        keyring_val = value.strip()
+                        break
+                except Exception as exc:  # pragma: no cover - backend dependent
+                    log.debug("Keyring read failed for %s: %s", test_k, exc)
+            if keyring_val:
+                break
 
     if keyring_val:
         try:
             from .security.vault import get_vault
 
-            get_vault().migrate_from_keyring(key, keyring_val)
+            get_vault().migrate_from_keyring(canon, keyring_val)
         except Exception as exc:
-            log.warning("Failed to migrate %s from keyring to durable vault: %s", key, exc)
+            log.warning("Failed to migrate %s from keyring to durable vault: %s", canon, exc)
         return keyring_val
 
     # 4. Fallback secrets migration path
     settings = settings if settings is not None else load()
-    fallback_val = settings._fallback_secrets.get(key)
-    if fallback_val and fallback_val.strip():
+    fallback_val = settings._fallback_secrets.get(canon) or settings._fallback_secrets.get(key)
+    if fallback_val and fallback_val.strip() and not is_masked_secret(fallback_val):
         clean_fb = fallback_val.strip()
         try:
             from .security.vault import get_vault
 
-            get_vault().store_secret(key, clean_fb)
+            get_vault().store_secret(canon, clean_fb)
+            settings._fallback_secrets.pop(canon, None)
             settings._fallback_secrets.pop(key, None)
             settings.insecure_secret_storage = bool(settings._fallback_secrets)
             save(settings)
         except Exception as exc:
-            log.warning("Failed to migrate %s from fallback secrets to durable vault: %s", key, exc)
+            log.warning("Failed to migrate %s from fallback secrets to durable vault: %s", canon, exc)
         return clean_fb
 
     return None
@@ -344,15 +378,19 @@ def set_secret(key: str, value: str | None, settings: Settings | None = None) ->
     Returns True if stored in durable encrypted storage or keyring.
     NEVER overwrites an existing secret with an empty, null, undefined, or masked value.
     """
+    canon = canonical_secret_key(key)
+    if not canon:
+        return False
+
     if value is None:
-        log.warning("Rejected attempt to set None secret for '%s'. Existing secret preserved.", key)
+        log.warning("Rejected attempt to set None secret for '%s'. Existing secret preserved.", canon)
         return False
 
     token = str(value).strip()
     if not token or is_masked_secret(token):
         log.warning(
             "Rejected attempt to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Existing secret preserved.",
-            key,
+            canon,
             token[:12] if token else "empty",
         )
         return False
@@ -360,19 +398,24 @@ def set_secret(key: str, value: str | None, settings: Settings | None = None) ->
     from .security.vault import get_vault
 
     vault = get_vault()
-    vault.store_secret(key, token)
+    vault.store_secret(canon, token)
 
     # Secondary sync to OS keyring for local desktop convenience if available
     kr = _keyring()
     if kr is not None:
-        try:
-            kr.set_password(KEYRING_SERVICE, key, token)
-        except Exception as exc:  # pragma: no cover - backend dependent
-            log.debug("Keyring write failed for %s (durable vault is active): %s", key, exc)
+        for test_k in (canon, key):
+            try:
+                kr.set_password(KEYRING_SERVICE, test_k, token)
+            except Exception as exc:  # pragma: no cover - backend dependent
+                log.debug("Keyring write failed for %s (durable vault is active): %s", test_k, exc)
 
     # If it was previously stored in plaintext fallback secrets, purge it
     settings = settings if settings is not None else load()
-    if settings._fallback_secrets.pop(key, None) is not None:
+    purged = False
+    for test_k in (canon, key):
+        if settings._fallback_secrets.pop(test_k, None) is not None:
+            purged = True
+    if purged:
         settings.insecure_secret_storage = bool(settings._fallback_secrets)
         save(settings)
 
@@ -381,10 +424,30 @@ def set_secret(key: str, value: str | None, settings: Settings | None = None) ->
 
 def delete_secret(key: str, settings: Settings | None = None) -> None:
     """Remove a secret from durable database vault, keyring, and fallback storage."""
+    canon = canonical_secret_key(key)
+    if not canon:
+        return
+
     from .security.vault import get_vault
 
     with contextlib.suppress(Exception):
-        get_vault().delete_secret(key)
+        get_vault().delete_secret(canon)
+
+    kr = _keyring()
+    if kr is not None:
+        for service in (KEYRING_SERVICE, LEGACY_KEYRING_SERVICE):
+            for test_k in (canon, key):
+                with contextlib.suppress(Exception):
+                    kr.delete_password(service, test_k)
+
+    settings = settings if settings is not None else load()
+    purged = False
+    for test_k in (canon, key):
+        if settings._fallback_secrets.pop(test_k, None) is not None:
+            purged = True
+    if purged:
+        settings.insecure_secret_storage = bool(settings._fallback_secrets)
+        save(settings)
 
     kr = _keyring()
     if kr is not None:

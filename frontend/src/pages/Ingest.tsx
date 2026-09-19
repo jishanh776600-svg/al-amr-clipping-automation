@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import {
   ApiError,
@@ -7,6 +7,7 @@ import {
   formatBytes,
   formatDuration,
   type BGMAsset,
+  type DispatchStatus,
   type Job,
   type JobSettingsOverrides,
   type ProviderStatus,
@@ -113,10 +114,12 @@ export function Ingest() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('')
   const [overrides, setOverrides] = useState<JobSettingsOverrides>({})
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [dispatchStatus, setDispatchStatus] = useState<DispatchStatus | null>(null)
 
   useEffect(() => {
     api.listJobs(8).then(setJobs).catch(() => undefined)
     api.providerStatus().then(setProviders).catch(() => undefined)
+    api.getDispatchStatus().then(setDispatchStatus).catch(() => undefined)
     api.getSettings().then((s) => {
       if (s?.export) {
         if (s.export.caption_style) {
@@ -412,6 +415,31 @@ export function Ingest() {
           The engine extracts requirements, tracks speakers, reframes to 9:16, generates kinetic captions, and publishes automatically.
         </p>
       </div>
+
+      {dispatchStatus && dispatchStatus.is_cloud && !dispatchStatus.ready && (
+        <div className="mt-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-amber-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-amber-300 font-semibold text-sm">Worker Dispatch Setup Required</div>
+              <div className="text-xs text-amber-200/90 mt-0.5">
+                GitHub Actions worker dispatch is required for cloud execution on Render. Please configure your GitHub Personal Access Token in Settings.
+              </div>
+            </div>
+            <Link
+              to="/settings"
+              className="inline-flex items-center justify-center rounded bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 transition-colors whitespace-nowrap"
+            >
+              Configure GITHUB_PAT in Settings →
+            </Link>
+          </div>
+        </div>
+      )}
+      {dispatchStatus && dispatchStatus.is_cloud && dispatchStatus.ready && (
+        <div className="mt-4 inline-flex items-center gap-2 rounded bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 text-xs text-emerald-400">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>Remote Worker Dispatch Active (GitHub Actions)</span>
+        </div>
+      )}
 
       {error && (
         <div className="mt-8">

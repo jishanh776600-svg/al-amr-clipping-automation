@@ -35,10 +35,14 @@ from autoclip.security.vault import get_vault, CredentialVault
 
 
 _orig_env: dict[str, str | None] = {}
+_keyring_patcher = None
 
 
 def setup_test_env():
-    global _orig_env
+    global _orig_env, _keyring_patcher
+    _keyring_patcher = patch.object(config, "_keyring", return_value=None)
+    _keyring_patcher.start()
+
     _orig_env = {
         "AUTOCLIP_HOME": os.environ.get("AUTOCLIP_HOME"),
         "AL_AMR_MASTER_KEY": os.environ.get("AL_AMR_MASTER_KEY"),
@@ -59,6 +63,11 @@ def setup_test_env():
 
 
 def cleanup_test_env(tmp_home: Path):
+    global _keyring_patcher
+    if _keyring_patcher:
+        _keyring_patcher.stop()
+        _keyring_patcher = None
+
     db.reset_connections()
     shutil.rmtree(tmp_home, ignore_errors=True)
     for k, v in _orig_env.items():
@@ -533,6 +542,90 @@ def test_database_anchored_master_key_survives_master_key_file_deletion():
         cleanup_test_env(tmp)
 
 
+def test_vault_pat_case_insensitivity_and_canonicalization():
+    """Verify that both lowercase 'github_pat' and uppercase 'GITHUB_PAT' seamlessly resolve."""
+    tmp = setup_test_env()
+    try:
+        from autoclip.jobs import dispatcher
+
+        pat_val = "ghp_CaseInsensitiveValidationToken1234"
+        # Store using uppercase key
+        config.set_secret("GITHUB_PAT", pat_val)
+
+        # Retrieve using both uppercase and lowercase
+        assert config.get_secret("GITHUB_PAT") == pat_val
+        assert config.get_secret("github_pat") == pat_val
+
+        vault = get_vault()
+        assert vault.retrieve_secret("GITHUB_PAT") == pat_val
+        assert vault.retrieve_secret("github_pat") == pat_val
+
+        status_upper = vault.get_secret_status("GITHUB_PAT")
+        status_lower = vault.get_secret_status("github_pat")
+        assert status_upper["configured"] is True
+        assert status_lower["configured"] is True
+
+        # Dispatcher must resolve token
+        assert dispatcher.get_github_token() == pat_val
+    finally:
+        cleanup_test_env(tmp)
+
+
+def test_dispatcher_capability_without_env_var():
+    """Verify dispatcher capability check returns AVAILABLE in cloud environment when token is in vault."""
+    tmp = setup_test_env()
+    try:
+        from autoclip.jobs import dispatcher
+
+        # Ensure no env var
+        os.environ.pop("GITHUB_PAT", None)
+        os.environ.pop("GH_TOKEN", None)
+        os.environ.pop("GITHUB_TOKEN", None)
+        os.environ["RENDER"] = "1"
+        os.environ["AUTOCLIP_DISPATCH_MODE"] = "auto"
+
+        # Initially without token: capability must be UNAVAILABLE
+        cap_unavail = dispatcher.check_dispatch_capability()
+        assert cap_unavail["ready"] is False
+        assert cap_unavail["capability"] == "UNAVAILABLE"
+        assert dispatcher.is_github_dispatch_enabled() is False
+
+        # Store PAT into durable vault
+        pat_val = "ghp_CloudWorkerDispatchToken9999"
+        config.set_secret("github_pat", pat_val)
+
+        # Now: capability must be AVAILABLE and ready=True even with NO env var
+        assert dispatcher.is_github_dispatch_enabled() is True
+        cap_avail = dispatcher.check_dispatch_capability()
+        assert cap_avail["ready"] is True
+        assert cap_avail["capability"] == "AVAILABLE"
+        assert cap_avail["token_available"] is True
+    finally:
+        os.environ.pop("RENDER", None)
+        os.environ.pop("AUTOCLIP_DISPATCH_MODE", None)
+        cleanup_test_env(tmp)
+
+
+def test_settings_api_handles_uppercase_github_pat():
+    """Verify settings endpoints (_handle_secret_save, delete_secret, validate_secret) accept 'GITHUB_PAT'."""
+    tmp = setup_test_env()
+    try:
+        from autoclip.api.settings import _handle_secret_save
+
+        pat = "ghp_SecretEndpointToken5555"
+        _handle_secret_save("GITHUB_PAT", pat)
+
+        assert config.get_secret("github_pat") == pat
+        assert config.get_secret("GITHUB_PAT") == pat
+
+        # Test delete with uppercase
+        config.delete_secret("GITHUB_PAT")
+        assert config.get_secret("github_pat") is None
+        assert config.get_secret("GITHUB_PAT") is None
+    finally:
+        cleanup_test_env(tmp)
+
+
 if __name__ == "__main__":
     print("Running test_save_other_settings_preserves_pat...")
     test_save_other_settings_preserves_pat()
@@ -566,4 +659,10 @@ if __name__ == "__main__":
     test_persistent_master_key_is_reused_instead_of_regenerated()
     print("Running test_database_anchored_master_key_survives_master_key_file_deletion...")
     test_database_anchored_master_key_survives_master_key_file_deletion()
-    print("ALL 16 PAT PERSISTENCE REGRESSION TESTS PASSED SUCCESSFULLY!")
+    print("Running test_vault_pat_case_insensitivity_and_canonicalization...")
+    test_vault_pat_case_insensitivity_and_canonicalization()
+    print("Running test_dispatcher_capability_without_env_var...")
+    test_dispatcher_capability_without_env_var()
+    print("Running test_settings_api_handles_uppercase_github_pat...")
+    test_settings_api_handles_uppercase_github_pat()
+    print("ALL 19 PAT PERSISTENCE AND DETECTION REGRESSION TESTS PASSED SUCCESSFULLY!")

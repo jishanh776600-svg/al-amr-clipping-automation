@@ -649,6 +649,16 @@ export interface PublishRequest {
   dry_run?: boolean
 }
 
+export interface DispatchStatus {
+  ready: boolean
+  capability: 'AVAILABLE' | 'UNAVAILABLE'
+  dispatch_mode: string
+  is_cloud: boolean
+  token_available: boolean
+  vault_configured: boolean
+  reason: string
+}
+
 
 export interface CampaignBrief {
   campaign_id?: string
@@ -1138,6 +1148,7 @@ export const api = {
   getSettings: () => request<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) =>
     request<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
+  getDispatchStatus: () => request<DispatchStatus>('/api/jobs/dispatch-status'),
 
   putSecret: (key: string, value: string) =>
     request<void>('/api/settings/secrets', {

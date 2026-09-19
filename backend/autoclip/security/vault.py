@@ -320,31 +320,33 @@ class CredentialVault:
         Returns the masked fingerprint.
         NEVER overwrites an existing secret with empty, null, undefined, or masked values.
         """
-        from ..config import is_masked_secret
+        from ..config import canonical_secret_key, is_masked_secret
+
+        canon = canonical_secret_key(key) or key
 
         if plaintext is None:
-            log.warning("Cannot store None secret for '%s'. Existing secret preserved.", key)
-            existing = self.retrieve_secret(key)
-            return self.mask_token(key, existing) if existing else "Not configured"
+            log.warning("Cannot store None secret for '%s'. Existing secret preserved.", canon)
+            existing = self.retrieve_secret(canon)
+            return self.mask_token(canon, existing) if existing else "Not configured"
 
         token = str(plaintext).strip()
         if not token or is_masked_secret(token):
             log.warning(
                 "Refusing to overwrite secret '%s' with empty, null, undefined, or masked placeholder (%s). Existing secret preserved.",
-                key,
+                canon,
                 token[:12] if token else "empty",
             )
-            existing = self.retrieve_secret(key)
-            return self.mask_token(key, existing) if existing else "Not configured"
+            existing = self.retrieve_secret(canon)
+            return self.mask_token(canon, existing) if existing else "Not configured"
 
         cipher = self.get_cipher()
         ciphertext = cipher.encrypt(token.encode("utf-8")).decode("utf-8")
-        fingerprint = self.mask_token(key, token)
+        fingerprint = self.mask_token(canon, token)
 
-        store.save_credential(key, ciphertext, fingerprint)
+        store.save_credential(canon, ciphertext, fingerprint)
         log.info(
             "Durable credential '%s' successfully encrypted and stored at rest (fingerprint: %s)",
-            key,
+            canon,
             fingerprint,
         )
         return fingerprint
@@ -355,7 +357,10 @@ class CredentialVault:
         Returns the plaintext secret to internal callers only, or None if not set.
         Includes self-healing multi-key candidate recovery if the active master key changed.
         """
-        rec = store.get_credential(key)
+        from ..config import canonical_secret_key
+
+        canon = canonical_secret_key(key) or key
+        rec = store.get_credential(canon)
         if rec is None:
             return None
 
@@ -365,10 +370,10 @@ class CredentialVault:
         except InvalidToken:
             log.warning(
                 "Primary master key failed to decrypt credential '%s'. Attempting multi-key candidate recovery...",
-                key,
+                canon,
             )
         except Exception as exc:
-            log.error("Unexpected error decrypting credential '%s': %s", key, exc)
+            log.error("Unexpected error decrypting credential '%s': %s", canon, exc)
             return None
 
         # Multi-candidate key self-healing recovery
@@ -380,34 +385,40 @@ class CredentialVault:
                 decrypted = candidate_fernet.decrypt(rec.ciphertext.encode("utf-8")).decode("utf-8")
                 log.info(
                     "Credential '%s' successfully recovered using fallback candidate key. Re-encrypting with active master key.",
-                    key,
+                    canon,
                 )
                 # Re-encrypt with active primary cipher and heal the record
                 new_ciphertext = cipher.encrypt(decrypted.encode("utf-8")).decode("utf-8")
-                fingerprint = self.mask_token(key, decrypted)
-                store.save_credential(key, new_ciphertext, fingerprint)
+                fingerprint = self.mask_token(canon, decrypted)
+                store.save_credential(canon, new_ciphertext, fingerprint)
                 return decrypted
             except (InvalidToken, Exception):
                 continue
 
         log.error(
             "Failed to decrypt credential '%s'. The master encryption key may have changed.",
-            key,
+            canon,
         )
         raise RuntimeError(
-            f"Could not decrypt stored credential '{key}'. Master encryption key mismatch."
+            f"Could not decrypt stored credential '{canon}'. Master encryption key mismatch."
         )
 
     def delete_secret(self, key: str) -> bool:
         """Delete a secret from the persistent store."""
-        deleted = store.delete_credential(key)
+        from ..config import canonical_secret_key
+
+        canon = canonical_secret_key(key) or key
+        deleted = store.delete_credential(canon)
         if deleted:
-            log.info("Durable credential '%s' removed from encrypted database vault", key)
+            log.info("Durable credential '%s' removed from encrypted database vault", canon)
         return deleted
 
     def get_secret_status(self, key: str) -> dict[str, Any]:
         """Return non-sensitive status information for Settings UI."""
-        rec = store.get_credential(key)
+        from ..config import canonical_secret_key
+
+        canon = canonical_secret_key(key) or key
+        rec = store.get_credential(canon)
         if rec is None:
             return {
                 "configured": False,
@@ -418,7 +429,7 @@ class CredentialVault:
         # Verify whether the stored credential is successfully decryptable with active master key
         decrypted = False
         try:
-            val = self.retrieve_secret(key)
+            val = self.retrieve_secret(canon)
             decrypted = bool(val)
         except Exception:
             decrypted = False
@@ -444,25 +455,29 @@ class CredentialVault:
         if not keyring_value or not keyring_value.strip():
             return False
 
+        from ..config import canonical_secret_key
+
+        canon = canonical_secret_key(key) or key
+
         # Only migrate if SQLite does not already have a record
-        existing = store.get_credential(key)
+        existing = store.get_credential(canon)
         if existing is not None:
             return False
 
-        log.info("Migrating credential '%s' from OS keyring to durable SQLite vault...", key)
+        log.info("Migrating credential '%s' from OS keyring to durable SQLite vault...", canon)
         token = keyring_value.strip()
-        fingerprint = self.store_secret(key, token)
+        fingerprint = self.store_secret(canon, token)
 
         # Verify round-trip decryption
-        verified = self.retrieve_secret(key)
+        verified = self.retrieve_secret(canon)
         if verified != token:
-            log.error("Migration verification failed for credential '%s'. Rolling back.", key)
-            self.delete_secret(key)
+            log.error("Migration verification failed for credential '%s'. Rolling back.", canon)
+            self.delete_secret(canon)
             return False
 
         log.info(
             "Successfully migrated credential '%s' to durable SQLite vault (fingerprint: %s)",
-            key,
+            canon,
             fingerprint,
         )
         return True

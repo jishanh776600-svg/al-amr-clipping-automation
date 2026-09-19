@@ -30,19 +30,12 @@ def get_dispatch_mode() -> str:
 
 
 def get_github_token() -> str | None:
-    """Resolve GitHub token from environment variables or stored application secrets."""
-    token = (
-        os.environ.get("GITHUB_PAT")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-    )
-    if token and token.strip():
-        return token.strip()
-    try:
-        from .. import config
+    """Resolve GitHub token from environment variables or durable encrypted vault."""
+    from .. import config
 
+    try:
         secret = config.get_secret(config.GITHUB_PAT_KEY)
-        if secret and secret.strip():
+        if secret and secret.strip() and not config.is_masked_secret(secret):
             return secret.strip()
     except Exception as exc:
         log.debug("Failed to read GITHUB_PAT secret: %s", exc)
@@ -61,12 +54,49 @@ def is_cloud_environment() -> bool:
 
 def is_github_dispatch_enabled() -> bool:
     mode = get_dispatch_mode()
-    if mode == "github":
-        return bool(get_github_token())
-    if mode == "auto":
-        # In cloud environments, dispatch must be github if token is present
-        return bool(get_github_token())
-    return False
+    if mode == "local":
+        return False
+    return bool(get_github_token())
+
+
+def check_dispatch_capability() -> dict[str, Any]:
+    """Inspect and return current dispatch readiness for preflight checks."""
+    from .. import config
+    from ..security.vault import get_vault
+
+    token = get_github_token()
+    is_cloud = is_cloud_environment()
+    mode = get_dispatch_mode()
+    vault = get_vault()
+    pat_status = vault.get_secret_status(config.GITHUB_PAT_KEY)
+
+    token_available = bool(token)
+    if is_cloud:
+        ready = token_available
+        capability = "AVAILABLE" if ready else "UNAVAILABLE"
+        reason = (
+            "Ready for remote GitHub Actions worker execution."
+            if ready
+            else "GitHub Personal Access Token (GITHUB_PAT) is required for remote worker execution on cloud control plane. Please configure in Settings."
+        )
+    else:
+        ready = True
+        capability = "AVAILABLE"
+        reason = (
+            "Ready for remote GitHub Actions worker execution."
+            if token_available
+            else "Ready for local execution (GitHub PAT optional for local mode)."
+        )
+
+    return {
+        "ready": ready,
+        "capability": capability,
+        "dispatch_mode": mode,
+        "is_cloud": is_cloud,
+        "token_available": token_available,
+        "vault_configured": pat_status.get("configured", False),
+        "reason": reason,
+    }
 
 
 async def dispatch_job_to_github(
