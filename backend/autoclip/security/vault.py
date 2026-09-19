@@ -312,30 +312,43 @@ class CredentialVault:
 
         # Seed from encrypted vault envelope if database was recreated without persistent disk
         if not existing:
+            envelope_ciphertexts = []
+            try:
+                from . import vault_envelope
+                c_env = getattr(vault_envelope, "CIPHERTEXT", None)
+                if c_env and c_env.strip():
+                    envelope_ciphertexts.append(c_env.strip())
+            except ImportError:
+                pass
             envelope_file = Path(__file__).parent / ".vault_envelope"
             if envelope_file.is_file():
                 try:
-                    envelope_ciphertext = envelope_file.read_text(encoding="utf-8").strip()
-                    if envelope_ciphertext:
-                        cipher = self.get_cipher()
-                        decrypted = None
+                    f_env = envelope_file.read_text(encoding="utf-8").strip()
+                    if f_env and f_env not in envelope_ciphertexts:
+                        envelope_ciphertexts.append(f_env)
+                except Exception:
+                    pass
+
+            cipher = self.get_cipher()
+            candidate_keys = self._candidate_keys()
+            for ect in envelope_ciphertexts:
+                decrypted = None
+                try:
+                    decrypted = cipher.decrypt(ect.encode("utf-8")).decode("utf-8")
+                except Exception:
+                    for ck in candidate_keys:
                         try:
-                            decrypted = cipher.decrypt(envelope_ciphertext.encode("utf-8")).decode("utf-8")
+                            decrypted = Fernet(_derive_fernet_key(ck)).decrypt(ect.encode("utf-8")).decode("utf-8")
+                            if decrypted:
+                                break
                         except Exception:
-                            for ck in self._candidate_keys():
-                                try:
-                                    decrypted = Fernet(_derive_fernet_key(ck)).decrypt(envelope_ciphertext.encode("utf-8")).decode("utf-8")
-                                    if decrypted:
-                                        break
-                                except Exception:
-                                    pass
-                        if decrypted and decrypted.strip():
-                            from ..config import is_masked_secret
-                            if not is_masked_secret(decrypted.strip()):
-                                self.store_secret("github_pat", decrypted.strip())
-                                log.info("Restored GitHub PAT into durable SQLite vault from encrypted envelope on startup.")
-                except Exception as exc:
-                    log.debug("Could not restore PAT from encrypted envelope: %s", exc)
+                            pass
+                if decrypted and decrypted.strip():
+                    from ..config import is_masked_secret
+                    if not is_masked_secret(decrypted.strip()):
+                        self.store_secret("github_pat", decrypted.strip())
+                        log.info("Restored GitHub PAT into durable SQLite vault from encrypted envelope on startup.")
+                        break
 
     def get_cipher(self) -> Fernet:
         """Return the active Fernet cipher instance."""
