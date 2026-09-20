@@ -346,7 +346,7 @@ class ContextualSemanticParser:
         self,
         words: list[Word],
         clip_start_s: float = 0.0,
-        clip_end_s: float = 30.0,
+        clip_end_s: float | None = None,
     ) -> list[SemanticVisualCue]:
         """Convenience alias for parse_transcript_segment."""
         return self.parse_transcript_segment(words, clip_start_s, clip_end_s)
@@ -355,11 +355,14 @@ class ContextualSemanticParser:
         self,
         words: list[Word],
         clip_start_s: float = 0.0,
-        clip_end_s: float = 30.0,
+        clip_end_s: float | None = None,
     ) -> list[SemanticVisualCue]:
         """Parses a word list into chronologically ordered, non-overlapping semantic visual cues."""
         if not words:
             return []
+
+        if clip_end_s is None:
+            clip_end_s = (words[-1].end + self.default_dwell_s) if words else (clip_start_s + 30.0)
 
         cues: list[SemanticVisualCue] = []
         n_words = len(words)
@@ -391,7 +394,9 @@ class ContextualSemanticParser:
                     w_obj = words[matched_idx]
                     t_start = w_obj.start
                     t_end = min(clip_end_s, t_start + self.default_dwell_s)
-                    if t_start < clip_end_s and (t_end - t_start) >= self.min_dwell_s:
+                    if (t_end - t_start) < self.min_dwell_s and (clip_end_s - t_start) >= 1.5:
+                        t_end = clip_end_s
+                    if t_start < clip_end_s and (t_end - t_start) >= 1.5:
                         window_ctx = get_window_text(matched_idx, window_radius=6)
                         q = fig.get("search_queries", [""])[0]
                         ctx_q = synthesize_contextual_query(window_ctx, fig["concept"], fig.get("search_queries"))
@@ -459,10 +464,18 @@ class ContextualSemanticParser:
                     log.debug("Forbidden idiom rejected keyword '%s' for concept '%s'", matched_kw, concept_id)
                     continue
 
-                # Concrete entities are accepted directly; ambiguous entities require context check
-                ambiguous_keywords = {"fire", "grass", "smoke", "bills", "item", "box", "feed"}
-                if matched_kw in ambiguous_keywords and defn.context_indicators:
+                # Require positive context indicators unless the keyword is highly specific/distinct
+                strong_unambiguous = {
+                    "amazon", "fba", "shopify", "ecommerce", "warehouse", "revenue",
+                    "competitor", "competition", "shipping", "shutdown", "suspended",
+                    "million dollars", "payout", "unboxing", "bestseller", "analytics",
+                    "dashboard", "fulfillment", "pallets", "forklift",
+                }
+                if defn.context_indicators and matched_kw not in strong_unambiguous:
                     has_context = any(ind in window_text for ind in defn.context_indicators)
+                    if concept_id in ("financial_revenue", "profit_cash", "digital_analytics"):
+                        if re.search(r"\b(\d+|million|thousand|dollars?|\$\d+|k\b)", window_text):
+                            has_context = True
                     if not has_context:
                         continue
 
@@ -470,8 +483,13 @@ class ContextualSemanticParser:
                 duration = self.default_dwell_s
                 trigger_end = min(clip_end_s, trigger_start + duration)
 
-                if trigger_start >= clip_end_s or (trigger_end - trigger_start) < self.min_dwell_s:
+                if trigger_start >= clip_end_s:
                     continue
+                if (trigger_end - trigger_start) < self.min_dwell_s:
+                    if (clip_end_s - trigger_start) >= 1.5:
+                        trigger_end = clip_end_s
+                    else:
+                        continue
 
                 # Extract partial overlay metadata if applicable
                 meta: dict[str, Any] = {}
@@ -540,7 +558,7 @@ class ContextualSemanticParser:
         min_gap_s: float = 4.5,
     ) -> list[SemanticVisualCue]:
         """Proactively identifies secondary visual opportunities inside long uninterrupted A-roll sections."""
-        if not words or clip_end_s <= clip_start_s:
+        if not words or (clip_end_s - clip_start_s) < 8.0:
             return cues
 
         def _word_text(w: Word) -> str:
