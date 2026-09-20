@@ -146,20 +146,12 @@ class VisualAssetVault:
                 return []
 
             # Build contextual search query from cue
-            concept_def = None
-            try:
-                from .semantic_parser import CONCEPT_DEFINITIONS
+            query = getattr(cue, "context_query", "") or ""
+            if not query:
+                from .semantic_parser import synthesize_contextual_query, CONCEPT_DEFINITIONS
                 concept_def = CONCEPT_DEFINITIONS.get(cue.concept)
-            except Exception:
-                pass
-
-            if concept_def and concept_def.search_queries:
-                query = concept_def.search_queries[0]
-            elif cue.trigger_phrase:
-                # Derive a contextual query from trigger phrase + concept
-                query = f"{cue.trigger_phrase} {cue.concept.replace('_', ' ')}"
-            else:
-                query = cue.concept.replace("_", " ")
+                defaults = concept_def.search_queries if concept_def else cue.search_queries
+                query = synthesize_contextual_query(cue.trigger_phrase, cue.concept, defaults)
 
             return client.search_and_acquire(
                 query=query,

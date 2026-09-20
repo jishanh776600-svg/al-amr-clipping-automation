@@ -72,6 +72,11 @@ class VisualRelevanceScorer:
             if matching_tags > 0:
                 semantic_score = min(0.9, 0.5 + (matching_tags * 0.15))
 
+        # Factor in Pexels video metadata relevance if available
+        if "relevance_score" in asset.metadata:
+            pexels_rel = float(asset.metadata["relevance_score"])
+            semantic_score = max(semantic_score, pexels_rel)
+
         # 2. Literal Relevance Score
         # Does the visual literally depict the concrete concept?
         literal_score = 0.6
@@ -82,7 +87,7 @@ class VisualRelevanceScorer:
                 literal_score = 0.85
         else:
             # Figurative / metaphorical visuals receive lower literal score
-            literal_score = 0.4
+            literal_score = 0.5
 
         # 3. Visual Quality Score
         quality_score = 0.7
@@ -98,23 +103,23 @@ class VisualRelevanceScorer:
         if asset.height > asset.width:  # Native vertical 9:16
             aspect_score = 1.0
         elif asset.width == asset.height:  # 1:1 square
-            aspect_score = 0.8
+            aspect_score = 0.85
         elif asset.width > asset.height:  # 16:9 landscape
             # Landscape is acceptable if reframed/centered or partial overlay
             if cue.preferred_mode == PresentationMode.PARTIAL_OVERLAY:
                 aspect_score = 0.95
             else:
-                aspect_score = 0.75
+                aspect_score = 0.80
 
-        # 5. Visual Repetition Penalty
+        # 5. Visual Repetition Penalty (prevent repetition spam across clip)
         repetition_penalty = 0.0
         # If the exact same asset was used recently in this clip
         if asset.asset_id in recent_asset_ids:
-            repetition_penalty += 0.40
+            repetition_penalty += 0.50
 
-        # If the same concept was shown very recently
+        # If the same concept was shown immediately prior
         if recent_concepts and recent_concepts[-1:] == [cue.concept]:
-            repetition_penalty += 0.20
+            repetition_penalty += 0.25
 
         # Weighted combination
         raw_score = (

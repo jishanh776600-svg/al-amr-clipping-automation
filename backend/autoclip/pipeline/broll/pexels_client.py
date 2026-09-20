@@ -85,49 +85,54 @@ CONFIDENCE_THRESHOLD: float = 0.70
 def _relevance_score(video: dict[str, Any], query: str, concept: str) -> float:
     """Heuristic relevance score [0.0, 1.0] for a Pexels video record.
 
-    Factors:
-    - Orientation: portrait gets 1.0, landscape 0.3
-    - Duration: ideal 2-60s gets 1.0, outside range degrades
-    - Resolution quality: >=1080 wide gets full score
-    - Tags/description keyword overlap with query
+    Prioritizes RELEVANCE > ORIENTATION:
+    - Semantic/Keyword relevance: 40%
+    - Resolution/Quality: 25%
+    - Duration suitability: 20%
+    - Orientation: 15% (portrait 1.0, square 0.85, landscape 0.75 since renderer center-crops to 9:16)
     """
-    # Orientation score
+    # Orientation score: landscape is cleanly reframed to 9:16, so it is well-supported
     w = video.get("width", 0)
     h = video.get("height", 0)
     if h > 0 and h >= w:
         orientation_score = 1.0
     elif w > 0 and h > 0:
         ratio = h / w
-        orientation_score = max(0.0, ratio - 0.5) if ratio < 1.0 else 1.0
+        orientation_score = 0.75 if ratio < 1.0 else 0.85
     else:
-        orientation_score = 0.5
+        orientation_score = 0.75
 
     # Duration score: Pexels stock clips are trimmed to cue duration during ffmpeg reframe
     dur = video.get("duration", 0)
     if 2.0 <= dur <= 60.0:
         dur_score = 1.0
     elif 1.0 <= dur <= 120.0:
-        dur_score = 0.8
+        dur_score = 0.85
     else:
-        dur_score = 0.4
+        dur_score = 0.5
 
     # Quality score
-    quality_score = 1.0 if (min(w, h) >= 1080) else (0.7 if (min(w, h) >= 720) else 0.4)
+    quality_score = 1.0 if (min(w, h) >= 1080) else (0.85 if (min(w, h) >= 720) else 0.5)
 
-    # Keyword overlap
+    # Keyword and semantic overlap
     query_tokens = set(query.lower().split())
     concept_tokens = set(concept.lower().replace("_", " ").split())
     all_tokens = query_tokens | concept_tokens
-    description = (video.get("url", "") + " " + video.get("user", {}).get("name", "")).lower()
-    tag_overlap = sum(1 for t in all_tokens if t in description) / max(1, len(all_tokens))
-    keyword_score = min(1.0, 0.5 + tag_overlap * 0.5)
+    description = (
+        str(video.get("url", "")) + " " +
+        str(video.get("user", {}).get("name", "")) + " " +
+        " ".join(t.get("name", "") if isinstance(t, dict) else str(t) for t in video.get("tags", []))
+    ).lower()
 
-    # Weighted average
+    tag_overlap = sum(1 for t in all_tokens if t in description) / max(1, len(all_tokens))
+    keyword_score = min(1.0, 0.60 + tag_overlap * 0.40)
+
+    # Weighted average: Relevance (40%) > Quality (25%) > Duration (20%) > Orientation (15%)
     return (
-        orientation_score * 0.35
-        + dur_score * 0.25
-        + quality_score * 0.20
-        + keyword_score * 0.20
+        keyword_score * 0.40
+        + quality_score * 0.25
+        + dur_score * 0.20
+        + orientation_score * 0.15
     )
 
 
@@ -210,33 +215,54 @@ class PexelsVideoClient:
             except Exception:
                 pass
 
+        videos: list[dict[str, Any]] = []
         try:
             import urllib.parse
             import urllib.request
 
-            url = (
+            # 1. Attempt portrait search first
+            url_portrait = (
                 f"{PEXELS_VIDEO_SEARCH_URL}"
                 f"?query={urllib.parse.quote(query)}"
                 f"&per_page={per_page}"
                 f"&orientation=portrait"
             )
-
-            req = urllib.request.Request(
-                url,
+            req_portrait = urllib.request.Request(
+                url_portrait,
                 headers={
                     "Authorization": key,
                     "User-Agent": "AL-AMR-AutoClip/1.0",
                 },
             )
-
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req_portrait, timeout=15) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
+            videos = payload.get("videos", [])
+
+            # 2. If portrait returned fewer than 3 results, query all orientations (FFmpeg center-crops to 9:16)
+            if len(videos) < 3:
+                url_all = (
+                    f"{PEXELS_VIDEO_SEARCH_URL}"
+                    f"?query={urllib.parse.quote(query)}"
+                    f"&per_page={per_page}"
+                )
+                req_all = urllib.request.Request(
+                    url_all,
+                    headers={
+                        "Authorization": key,
+                        "User-Agent": "AL-AMR-AutoClip/1.0",
+                    },
+                )
+                with urllib.request.urlopen(req_all, timeout=15) as resp_all:
+                    payload_all = json.loads(resp_all.read().decode("utf-8"))
+                extra_videos = payload_all.get("videos", [])
+                existing_ids = {v.get("id") for v in videos}
+                for ev in extra_videos:
+                    if ev.get("id") not in existing_ids:
+                        videos.append(ev)
 
         except Exception as exc:
             log.warning("Pexels API search failed for '%s': %s", query, exc)
             return []
-
-        videos = payload.get("videos", [])
         # Score and sort
         scored = []
         for v in videos:

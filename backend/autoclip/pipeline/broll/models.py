@@ -48,6 +48,7 @@ class SemanticVisualCue:
     preferred_mode: PresentationMode
     visual_type: VisualType
     search_queries: list[str] = field(default_factory=list)
+    context_query: str = ""
     is_literal: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -125,6 +126,7 @@ class EDLEntry:
     is_video: bool = False
     overlay_x_expr: str = "(W-w)/2"
     overlay_y_expr: str = "(H-h)*0.55"
+    debug_info: dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration_s(self) -> float:
@@ -143,6 +145,7 @@ class EDLEntry:
             "concept": self.concept,
             "score": self.relevance_score.to_dict(),
             "transition": self.transition,
+            "debug_info": self.debug_info,
         }
 
 
@@ -170,3 +173,7 @@ class EditDecisionList:
             "entries": [e.to_dict() for e in self.entries],
             "fallbacks": self.fallbacks,
         }
+
+
+EDL = EditDecisionList
+

@@ -49,6 +49,7 @@ class FinalRenderGateResult:
     video_metrics: dict[str, Any] = field(default_factory=dict)
     audio_metrics: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    visual_metrics: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     rejection_reasons: list[str] = field(default_factory=list)
 
@@ -63,6 +64,7 @@ class FinalRenderGateResult:
             "is_approved": self.is_approved,
             "video_metrics": self.video_metrics,
             "audio_metrics": self.audio_metrics,
+            "visual_metrics": self.visual_metrics,
             "provenance": self.provenance,
             "warnings": self.warnings,
             "rejection_reasons": self.rejection_reasons,

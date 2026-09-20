@@ -77,6 +77,7 @@ class FinalRenderEngine:
                 min_duration_s=min_duration_s,
                 max_duration_s=max_duration_s,
                 expected_visual_filter=visual_filter,
+                clip_start_s=clip.start_s,
             )
             if existing_gate.is_approved:
                 log.info("Clip %s output already exists and passes quality gate at %s; reusing.", clip.id, final_mp4_path)
@@ -240,6 +241,8 @@ class FinalRenderEngine:
             min_duration_s=min_duration_s,
             max_duration_s=max_duration_s,
             expected_visual_filter=visual_filter,
+            edl=edl,
+            clip_start_s=clip.start_s,
         )
 
         elapsed_s = round(time.time() - start_time, 3)

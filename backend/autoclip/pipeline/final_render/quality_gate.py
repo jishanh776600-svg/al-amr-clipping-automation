@@ -75,6 +75,107 @@ class FinalRenderQualityGate:
                     pass
         return mean_vol, max_vol
 
+    def compute_visual_metrics(
+        self,
+        edl_data: Any,
+        video_duration: float,
+        clip_start_s: float = 0.0,
+    ) -> dict[str, Any]:
+        """Calculates B-roll overlay metrics, coverage percentage, and A-roll gap distribution."""
+        entries: list[Any] = []
+        if hasattr(edl_data, "entries"):
+            entries = getattr(edl_data, "entries") or []
+        elif isinstance(edl_data, dict):
+            entries = edl_data.get("entries", [])
+
+        if not entries or video_duration <= 0:
+            return {
+                "broll_event_count": 0,
+                "total_broll_duration_s": 0.0,
+                "broll_coverage_pct": 0.0,
+                "longest_a_roll_gap_s": round(video_duration, 2),
+                "visual_qa_status": "VISUAL_NONE",
+            }
+
+        intervals: list[tuple[float, float]] = []
+        for entry in entries:
+            if isinstance(entry, dict):
+                start = float(entry.get("start_s", 0.0))
+                end = float(entry.get("end_s", 0.0))
+                if end <= start and "duration_s" in entry:
+                    end = start + float(entry.get("duration_s", 0.0))
+            else:
+                start = float(getattr(entry, "start_s", 0.0))
+                end = float(getattr(entry, "end_s", 0.0))
+                if end <= start and hasattr(entry, "duration_s"):
+                    end = start + float(getattr(entry, "duration_s", 0.0))
+
+            # Normalize to clip-relative timeline [0, video_duration]
+            if start >= clip_start_s and clip_start_s > 0:
+                rel_start = start - clip_start_s
+                rel_end = end - clip_start_s
+            else:
+                rel_start = start
+                rel_end = end
+
+            rel_start = max(0.0, rel_start)
+            rel_end = min(video_duration, rel_end)
+
+            if rel_end > rel_start:
+                intervals.append((rel_start, rel_end))
+
+        if not intervals:
+            return {
+                "broll_event_count": 0,
+                "total_broll_duration_s": 0.0,
+                "broll_coverage_pct": 0.0,
+                "longest_a_roll_gap_s": round(video_duration, 2),
+                "visual_qa_status": "VISUAL_NONE",
+            }
+
+        # Merge overlapping intervals
+        intervals.sort(key=lambda x: x[0])
+        merged: list[list[float]] = []
+        for s, e in intervals:
+            if not merged:
+                merged.append([s, e])
+            else:
+                if s <= merged[-1][1]:
+                    merged[-1][1] = max(merged[-1][1], e)
+                else:
+                    merged.append([s, e])
+
+        total_broll = sum(e - s for s, e in merged)
+        coverage_pct = round((total_broll / video_duration) * 100.0, 1)
+
+        # Calculate A-roll gaps
+        gaps: list[float] = []
+        curr = 0.0
+        for s, e in merged:
+            if s > curr:
+                gaps.append(s - curr)
+            curr = max(curr, e)
+        if video_duration > curr:
+            gaps.append(video_duration - curr)
+
+        longest_gap = round(max(gaps), 2) if gaps else 0.0
+
+        # Broadcast visual style target: 40-55% coverage; >= 25% passes comfortably
+        if coverage_pct >= 25.0 and longest_gap <= 8.0:
+            qa_status = "VISUAL_PASS"
+        elif coverage_pct >= 15.0 or (len(intervals) >= 1 and video_duration <= 15.0):
+            qa_status = "VISUAL_WARN"
+        else:
+            qa_status = "VISUAL_DEFICIENT"
+
+        return {
+            "broll_event_count": len(intervals),
+            "total_broll_duration_s": round(total_broll, 2),
+            "broll_coverage_pct": coverage_pct,
+            "longest_a_roll_gap_s": longest_gap,
+            "visual_qa_status": qa_status,
+        }
+
     def evaluate(
         self,
         output_path: Path,
@@ -85,6 +186,8 @@ class FinalRenderQualityGate:
         min_duration_s: float | None = None,
         max_duration_s: float | None = None,
         expected_visual_filter: str = "original",
+        edl: Any | None = None,
+        clip_start_s: float = 0.0,
     ) -> FinalRenderGateResult:
         """Evaluates rendered MP4 against video, audio, caption, and BGM rules."""
         warnings: list[str] = []
@@ -299,6 +402,29 @@ class FinalRenderQualityGate:
         if not decode_ok:
             rejection_reasons.append(f"Video decode check failed: {decode_err}")
 
+        # 5b. Visual QA metrics evaluation (from edl or package edl.json)
+        edl_to_eval = edl
+        if edl_to_eval is None and output_path.parent:
+            edl_file = output_path.parent / "edl.json"
+            if edl_file.is_file():
+                try:
+                    import json
+                    edl_to_eval = json.loads(edl_file.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    log.warning("Could not read edl.json for visual QA: %s", exc)
+
+        visual_metrics = self.compute_visual_metrics(
+            edl_to_eval,
+            video_duration=video_duration,
+            clip_start_s=clip_start_s,
+        )
+
+        if visual_metrics.get("visual_qa_status") == "VISUAL_DEFICIENT" and video_duration >= 10.0:
+            warnings.append(
+                f"Visual B-roll coverage is low: {visual_metrics.get('broll_coverage_pct', 0)}% "
+                f"({visual_metrics.get('broll_event_count', 0)} events, max gap {visual_metrics.get('longest_a_roll_gap_s', 0)}s)"
+            )
+
         # 6. Quality scoring
         if rejection_reasons:
             status = "RENDER_REJECT"
@@ -316,6 +442,7 @@ class FinalRenderQualityGate:
             video_metrics=video_metrics,
             audio_metrics=audio_metrics,
             provenance=provenance,
+            visual_metrics=visual_metrics,
             warnings=warnings,
             rejection_reasons=rejection_reasons,
         )

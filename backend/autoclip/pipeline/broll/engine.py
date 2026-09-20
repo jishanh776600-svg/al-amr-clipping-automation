@@ -108,6 +108,16 @@ class SemanticBrollEngine:
                 continue
 
             # 4. Approved: Add to EDL
+            debug_info = {
+                "spoken_text": cue.trigger_phrase,
+                "semantic_concept": cue.concept,
+                "query": getattr(cue, "context_query", "") or cue.trigger_word,
+                "candidate_urls": [
+                    str(c.metadata.get("pexels_url", "")) for c in candidates if c.metadata.get("pexels_url")
+                ],
+                "selected_asset": best_asset.asset_id,
+                "selection_score": round(best_score.total_score, 3),
+            }
             entry = EDLEntry(
                 entry_id=f"edl_{len(edl.entries)+1}_{cue.concept}",
                 start_s=cue.start_s,
@@ -120,19 +130,21 @@ class SemanticBrollEngine:
                 relevance_score=best_score,
                 transition="hard_cut",
                 is_video=best_asset.is_video,
+                debug_info=debug_info,
             )
             edl.entries.append(entry)
             recent_asset_ids.append(best_asset.asset_id)
             recent_concepts.append(cue.concept)
 
             log.info(
-                "EDL APPROVED: [%.2fs - %.2fs] concept=%s mode=%s asset=%s score=%.2f",
+                "EDL APPROVED: [%.2fs - %.2fs] concept=%s mode=%s asset=%s score=%.2f query='%s'",
                 entry.start_s,
                 entry.end_s,
                 entry.concept,
                 entry.presentation_mode.value,
                 best_asset.asset_id,
                 best_score.total_score,
+                debug_info["query"],
             )
 
         return edl
