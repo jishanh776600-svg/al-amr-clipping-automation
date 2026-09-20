@@ -41,10 +41,20 @@ DANGLING_END_TOKENS: set[str] = {
     "where", "who", "whom", "whose", "while", "though", "although", "since",
     "as", "than", "then", "with", "for", "to", "at", "by", "from", "in", "into",
     "onto", "of", "about", "like", "such", "the", "a", "an", "their", "my", "your",
-    "our", "its", "his", "her",
+    "our", "its", "his", "her", "just", "really", "even", "well", "actually",
+    "basically", "you", "know",
 }
 
 SENTENCE_TERMINALS: set[str] = {".", "!", "?", ";"}
+
+
+def is_true_sentence_terminal(word_text: str) -> bool:
+    """True sentence terminals (. ! ? ;) excluding trailing ellipses (...) and hesitation."""
+    wt = word_text.strip()
+    if wt.endswith("...") or wt.endswith("…"):
+        return False
+    return any(wt.endswith(p) for p in SENTENCE_TERMINALS)
+
 
 HOOK_PATTERNS: list[tuple[str, str, float]] = [
     (r"\b(why|how|what if|have you ever|did you know|who is|can you)\b", "question", 9.2),
@@ -240,23 +250,25 @@ class SmartBoundaryEngine:
         while end_idx > start_idx:
             last_word_raw = all_words[end_idx].text.strip()
             last_word_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
-            has_terminal = any(last_word_raw.endswith(p) for p in SENTENCE_TERMINALS)
+            is_terminal = is_true_sentence_terminal(last_word_raw)
+            is_dangling = (last_word_clean in DANGLING_END_TOKENS) or last_word_raw.endswith("...") or last_word_raw.endswith("…")
 
-            if last_word_clean in DANGLING_END_TOKENS and not has_terminal:
+            if is_dangling and (not is_terminal or last_word_clean in DANGLING_END_TOKENS):
                 test_dur = all_words[end_idx - 1].end - all_words[start_idx].start
                 if test_dur >= duration_min_s:
                     end_idx -= 1
-                    adjustments.append(f"trimmed_dangling_end_token({last_word_clean})")
+                    adjustments.append(f"trimmed_dangling_end_token({last_word_clean or 'ellipsis'})")
+                    continue
                 else:
                     break
             else:
                 break
 
         # Look backward up to 6 words to snap to a complete sentence terminal if close
-        if not any(all_words[end_idx].text.strip().endswith(p) for p in SENTENCE_TERMINALS):
+        if not is_true_sentence_terminal(all_words[end_idx].text):
             for step_back in range(1, min(7, end_idx - start_idx)):
                 candidate_terminal_word = all_words[end_idx - step_back]
-                if any(candidate_terminal_word.text.strip().endswith(p) for p in SENTENCE_TERMINALS):
+                if is_true_sentence_terminal(candidate_terminal_word.text):
                     test_dur = candidate_terminal_word.end - all_words[start_idx].start
                     if test_dur >= duration_min_s:
                         end_idx = end_idx - step_back

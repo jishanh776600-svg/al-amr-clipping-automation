@@ -92,10 +92,11 @@ class DynamicPacingEngine:
         else:
             tightened_start_s = clip_start_s
 
-        # Tighten trailing dead air (leave safe padding of 0.12s)
+        # Tighten trailing dead air (leave safe padding of at least 0.35s to preserve natural speech tail)
         tail_out_gap = max(0.0, clip_end_s - last_word.end)
-        if tail_out_gap > 0.4:
-            tightened_end_s = min(clip_end_s, last_word.end + self.word_padding_s * 1.5)
+        natural_tail_s = max(0.35, self.word_padding_s * 4.0)
+        if tail_out_gap > (natural_tail_s + 0.25):
+            tightened_end_s = min(clip_end_s, last_word.end + natural_tail_s)
         else:
             tightened_end_s = clip_end_s
 

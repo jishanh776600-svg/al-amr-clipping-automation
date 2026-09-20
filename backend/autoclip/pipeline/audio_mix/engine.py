@@ -69,8 +69,11 @@ class BGMMixingEngine:
                 "ffmpeg",
                 "-y",
                 "-ss", str(speech_start_offset_s),
-                "-t", str(duration_s),
+                "-t", str(duration_s + 1.0),
                 "-i", str(speech_input_path),
+                "-filter_complex",
+                f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={duration_s:.3f},atrim=0:{duration_s:.3f}[out_a]",
+                "-map", "[out_a]",
                 "-vn",
                 "-sn",
                 "-c:a", "aac",
@@ -130,14 +133,14 @@ class BGMMixingEngine:
         fade_out_st = max(0.0, duration_s - self.config.fade_out_s)
 
         # Build FFmpeg command with sidechain compression ducking
-        # Input 0: Speech input (sliced to clip window)
+        # Input 0: Speech input (sliced to clip window with safe margin)
         # Input 1: BGM input (stream-looped if clip > bgm)
         cmd = ["ffmpeg", "-y"]
 
         # Speech input
         cmd.extend([
             "-ss", str(speech_start_offset_s),
-            "-t", str(duration_s),
+            "-t", str(duration_s + 1.0),
             "-i", str(speech_input_path),
         ])
 
@@ -148,14 +151,18 @@ class BGMMixingEngine:
             cmd.extend(["-i", str(bgm_path)])
 
         # Build calibrated speech-dominant filtergraph:
-        # 1. Normalize speech first so vocal presence is authoritative and consistent (-14.0 LUFS)
-        # 2. Pre-attenuate BGM bed so it naturally sits ~18 dB below speech
-        # 3. Sidechain ducking aggressively ducks BGM further when speech is active
-        # 4. Mix with speech authoritative and BGM subtle background
-        # 5. Limit peaks to protect against clipping without boosting the bed
+        # 1. Trim speech precisely to duration_s and reset PTS
+        # 2. Normalize speech presence (-14.0 LUFS)
+        # 3. Pad speech with apad so amix does not prematurely terminate if speech ends before duration_s
+        # 4. Pre-attenuate BGM bed so it naturally sits ~18 dB below speech
+        # 5. Sidechain ducking aggressively ducks BGM further when speech is active
+        # 6. Mix speech and BGM with dropout_transition=0, clamp strictly to duration_s
+        # 7. Limit peaks to protect against clipping
         filter_complex = (
-            f"[0:a]loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
-            f"asplit=2[speech_main][speech_sc];"
+            f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+            f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
+            f"asplit=2[speech_raw][speech_sc];"
+            f"[speech_raw]apad=whole_dur={duration_s:.3f}[speech_main];"
             f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
             f"afade=t=in:st=0:d={self.config.fade_in_s},"
             f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
@@ -166,7 +173,8 @@ class BGMMixingEngine:
             f"attack={self.config.attack_ms}:"
             f"release={self.config.release_ms}[bgm_ducked];"
             f"[speech_main][bgm_ducked]amix="
-            f"inputs=2:duration=first:dropout_transition=2:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight},"
+            f"inputs=2:duration=first:dropout_transition=0:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight},"
+            f"atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
             f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
         )
 

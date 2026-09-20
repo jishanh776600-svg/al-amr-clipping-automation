@@ -256,8 +256,11 @@ def _zoom_filter(zoom: float, out_w: int, out_h: int) -> str:
     return f"zoompan=z='min(zoom+{zoom / 240:.6f},{end_zoom:.4f})':d=1:s={out_w}x{out_h}:fps=30"
 
 
-def build_audio_filtergraph(settings: ExportSettings) -> str:
-    return f"loudnorm=I={settings.loudness_lufs}:TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
+def build_audio_filtergraph(settings: ExportSettings, duration_s: float | None = None) -> str:
+    base = f"loudnorm=I={settings.loudness_lufs}:TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}"
+    if duration_s is not None and duration_s > 0:
+        return f"{base},apad=whole_dur={duration_s:.3f},atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS"
+    return base
 
 
 def encoder_args(settings: ExportSettings) -> list[str]:
@@ -422,7 +425,7 @@ def export_clip(
             "-map",
             "0:a?",
             "-af",
-            build_audio_filtergraph(settings),
+            build_audio_filtergraph(settings, duration_s=request.duration_s),
             *encoder_args(settings),
             "-pix_fmt",
             "yuv420p",

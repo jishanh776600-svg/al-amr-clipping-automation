@@ -100,14 +100,19 @@ class PublishingService:
 
         # 1. Step 22: Final Render Gate
         final_render = store.get_final_render(clip_id)
+        approval = store.get_clip_approval(clip_id)
         exports = store.list_exports(clip_id)
         has_drive_backup = any(bool(exp.drive_file_id) for exp in exports) or bool(
             final_render and final_render.telemetry and final_render.telemetry.get("drive_file_id")
         )
         has_local_media = any(bool(exp.path and Path(exp.path).is_file()) for exp in exports)
+        has_telegram_media = bool(
+            (final_render and final_render.telemetry and final_render.telemetry.get("telegram_file_id"))
+            or (approval and approval.telemetry and approval.telemetry.get("telegram_file_id"))
+        )
 
         if final_render is None:
-            if not has_drive_backup and not has_local_media:
+            if not has_drive_backup and not has_local_media and not has_telegram_media:
                 reasons.append("Final render record not found (Step 22 not completed).")
         else:
             if final_render.quality_status not in ("RENDER_PASS", "RENDER_WARN"):
@@ -117,8 +122,8 @@ class PublishingService:
                 )
             if final_render.output_path:
                 render_file = Path(final_render.output_path)
-                if not render_file.exists() and not has_drive_backup and not has_local_media:
-                    reasons.append(f"Render output file not found on disk: {final_render.output_path} and no Google Drive backup found.")
+                if not render_file.exists() and not has_drive_backup and not has_local_media and not has_telegram_media:
+                    reasons.append(f"Render output file not found on disk: {final_render.output_path} and no Google Drive or Telegram backup found.")
 
         # 2. Step 23: SEO & Metadata Gate
         clip_meta = store.get_clip_metadata(clip_id)
@@ -132,7 +137,6 @@ class PublishingService:
                 )
 
         # 3. Step 24: Operator Approval Gate
-        approval = store.get_clip_approval(clip_id)
         if approval is None:
             reasons.append("Clip approval record not found (Step 24 not completed).")
         else:
@@ -251,6 +255,10 @@ class PublishingService:
                     pub_metadata.extra["export_id"] = exp.id
                     break
 
+            if not drive_file_id and final_render and final_render.telemetry:
+                drive_file_id = final_render.telemetry.get("drive_file_id")
+                drive_link = final_render.telemetry.get("drive_web_view_link")
+
             if not has_media and drive_file_id:
                 try:
                     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
@@ -277,8 +285,49 @@ class PublishingService:
                 except Exception as exc:
                     log.warning("Failed downloading from Google Drive for clip %s: %s", clip_id, exc)
 
+            # Fallback direct download from Telegram Bot API if file_id is available
+            if not has_media:
+                tg_file_id = None
+                if final_render and final_render.telemetry:
+                    tg_file_id = final_render.telemetry.get("telegram_file_id")
+                if not tg_file_id:
+                    appr = store.get_clip_approval(clip_id)
+                    if appr and appr.telemetry:
+                        tg_file_id = appr.telemetry.get("telegram_file_id")
+
+                if tg_file_id:
+                    tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                    if tg_token:
+                        try:
+                            import httpx
+                            if not temp_file_to_clean:
+                                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
+                                    temp_file_to_clean = Path(tf.name)
+                            log.info("Downloading clip %s media from Telegram Bot API (file_id=%s)...", clip_id, tg_file_id)
+                            with httpx.Client(timeout=60.0) as dl_client:
+                                info_resp = dl_client.get(
+                                    f"https://api.telegram.org/bot{tg_token}/getFile",
+                                    params={"file_id": tg_file_id},
+                                )
+                                if info_resp.status_code == 200 and info_resp.json().get("ok"):
+                                    rel_path = info_resp.json()["result"].get("file_path")
+                                    if rel_path:
+                                        file_url = f"https://api.telegram.org/file/bot{tg_token}/{rel_path}"
+                                        file_resp = dl_client.get(file_url)
+                                        if file_resp.status_code == 200 and len(file_resp.content) > 1000:
+                                            temp_file_to_clean.write_bytes(file_resp.content)
+                                            media_path = temp_file_to_clean
+                                            has_media = True
+                                            log.info(
+                                                "Successfully downloaded media for clip %s from Telegram (%d bytes)",
+                                                clip_id,
+                                                len(file_resp.content),
+                                            )
+                        except Exception as exc:
+                            log.warning("Failed downloading from Telegram for clip %s: %s", clip_id, exc)
+
         if not has_media or not media_path.exists():
-            log.warning("No accessible media file found for clip %s locally or on Google Drive.", clip_id)
+            log.warning("No accessible media file found for clip %s locally, on Google Drive, or on Telegram.", clip_id)
             now_fail = models.utcnow()
             record_id = existing.id if existing else models.new_id()
             err_msg = "Final render output file not accessible locally or on Google Drive."

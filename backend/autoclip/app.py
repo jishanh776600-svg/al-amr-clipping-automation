@@ -92,7 +92,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pub_ticker_task = asyncio.create_task(_publishing_queue_ticker(), name="alamr-publishing-ticker")
 
     tg_polling_task = None
-    if os.getenv("TELEGRAM_POLLING") == "1":
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    tg_webhook = os.getenv("TELEGRAM_WEBHOOK_URL")
+    tg_polling_env = os.getenv("TELEGRAM_POLLING")
+    should_poll = (tg_polling_env == "1") or (
+        bool(tg_token) and not bool(tg_webhook) and tg_polling_env != "0"
+    )
+    if should_poll and tg_token:
         from .telegram.review_bot import poll_telegram_updates
         tg_polling_task = asyncio.create_task(poll_telegram_updates(), name="alamr-telegram-polling")
 
