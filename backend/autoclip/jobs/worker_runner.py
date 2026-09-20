@@ -705,7 +705,10 @@ async def async_main() -> None:
             clip_metadata_payload.append(meta.to_dict())
 
     # 7. Trigger Telegram Review delivery from worker if configured (only for successfully rendered clips)
-    rendered_clip_ids = {fr["clip_id"] for fr in final_renders_payload if fr.get("quality_status") == "RENDER_PASS"}
+    rendered_clip_ids = {
+        fr["clip_id"] for fr in final_renders_payload
+        if fr.get("quality_status") in ("RENDER_PASS", "RENDER_WARN")
+    }
     try:
         from ..telegram.review_bot import is_telegram_configured, send_clip_review
         if is_telegram_configured(job_settings) and rendered_clip_ids:
@@ -743,7 +746,9 @@ async def async_main() -> None:
             })
 
     # 8. Final completion callback
-    has_successful_render = any(fr.get("quality_status") == "RENDER_PASS" for fr in final_renders_payload)
+    has_successful_render = any(
+        fr.get("quality_status") in ("RENDER_PASS", "RENDER_WARN") for fr in final_renders_payload
+    )
     if not has_successful_render and final_renders_payload:
         err_msg = "Final render persistence or quality gate failed for all clips."
         log.error("All final renders failed quality/persistence gates. Reporting job failure to control plane.")

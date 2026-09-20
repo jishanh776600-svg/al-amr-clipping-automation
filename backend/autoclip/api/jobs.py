@@ -1451,7 +1451,7 @@ async def worker_callback(
                 clips_to_review = await asyncio.to_thread(store.list_clips_for_job, job_id)
                 for clip_item in clips_to_review:
                     fr = await asyncio.to_thread(store.get_final_render, clip_item.id)
-                    if not fr or fr.quality_status != "RENDER_PASS":
+                    if not fr or fr.quality_status not in ("RENDER_PASS", "RENDER_WARN"):
                         continue
                     try:
                         await send_clip_review(job_id, clip_item.id, job_settings=job.settings)

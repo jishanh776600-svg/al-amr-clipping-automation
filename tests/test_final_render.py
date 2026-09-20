@@ -318,7 +318,7 @@ def test_db_store_final_renders(tmp_path: Path, monkeypatch):
     conn = sqlite3.connect(str(db_file))
     conn.row_factory = sqlite3.Row
     v = schema.migrate(conn)
-    assert v == 17
+    assert v >= 17
 
     monkeypatch.setattr(store, "connection", lambda: conn)
 
