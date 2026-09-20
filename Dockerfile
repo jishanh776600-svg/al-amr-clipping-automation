@@ -47,8 +47,22 @@ COPY --from=frontend /backend/autoclip/static ./backend/autoclip/static
 
 RUN pip install --no-cache-dir .
 
-# Persistent storage volume
-RUN mkdir -p /data
+# --------------------------------------------------------------------------
+# Non-root user — required by blitz.cloud (and a good security practice).
+# The autoclip user owns /data (persistent disk) and /app.
+# /data is created here so chown can set ownership before the runtime
+# volume mount overwrites it. Docker preserves the UID/GID from the image
+# layer so blitz's persistent volume is initialized with the right owner.
+# --------------------------------------------------------------------------
+RUN mkdir -p /data \
+    && groupadd --system autoclip \
+    && useradd --system --gid autoclip --no-create-home autoclip \
+    && chown -R autoclip:autoclip /data /app
+
+USER autoclip
+
+# Persistent storage volume — declared AFTER USER so blitz.cloud assigns the
+# volume to the correct UID. Files written here survive container restarts.
 VOLUME ["/data"]
 
 EXPOSE 8000
@@ -56,8 +70,12 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:${PORT:-8000}/health || exit 1
 
-# Start AutoClip service with dynamic PORT support
-CMD ["sh", "-c", "autoclip serve --host 0.0.0.0 --port ${PORT:-8000} --no-open"]
+# Start via uvicorn directly so we can pass --proxy-headers.
+# blitz.cloud terminates HTTPS at its edge proxy — without --proxy-headers,
+# uvicorn would log all requests as HTTP and 127.0.0.1 instead of the real
+# client IP/scheme. --forwarded-allow-ips=* is safe here because blitz's
+# proxy is the only host that can reach port 8000.
+CMD ["sh", "-c", "exec python -m uvicorn autoclip.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*' --log-level info"]
 
 # ---------------------------------------------------------------------------
 # GPU variant
