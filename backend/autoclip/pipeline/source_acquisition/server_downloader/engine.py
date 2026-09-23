@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import yt_dlp
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 
 from ..base import (
     AcquisitionResult,
@@ -215,6 +218,11 @@ class ServerDownloaderEngine:
 
         # 4. Execute download with timeout guard in separate thread
         def _execute_ydl() -> dict[str, Any]:
+            if yt_dlp is None:
+                raise SourceAcquisitionError(
+                    SourceErrorCode.ENGINE_FAILURE,
+                    "yt-dlp is not installed in this environment",
+                )
             last_exc = None
             for s_name, extractor_args in strategies:
                 opts = dict(ydl_opts)
