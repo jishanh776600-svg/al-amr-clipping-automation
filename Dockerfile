@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 
-# AutoClip — Production CPU & GPU image for AL AMR Clipping Automation.
-#
-# Docker is the guaranteed path: it pins ffmpeg with libass, the exact Python
-# version MediaPipe has wheels for, and the font situation.
+# AutoClip — Control Plane Image for blitz.cloud
+# The heavy video rendering & AI pipeline (FFmpeg, Whisper, MediaPipe)
+# runs on GitHub Actions workers. This container serves the FastAPI control plane,
+# React web dashboard, SQLite state, and Telegram bot.
 
 # ---------------------------------------------------------------------------
 # Frontend build
@@ -19,9 +19,8 @@ COPY frontend/ ./
 RUN mkdir -p /backend/autoclip && npm run build -- --outDir /backend/autoclip/static
 
 # ---------------------------------------------------------------------------
-# Runtime base
+# Runtime base (Ultra-Lightweight Control Plane)
 # ---------------------------------------------------------------------------
-# Python 3.12: MediaPipe publishes 3.12 wheels, required for speaker reframing.
 FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -30,12 +29,8 @@ ENV PYTHONUNBUFFERED=1 \
     AUTOCLIP_HOME=/data \
     PORT=8000
 
-# ffmpeg with libass/libx264, fonts-liberation for subtitles, curl for health checks
+# curl for container health check
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg \
-      fonts-liberation \
-      libgl1 \
-      libglib2.0-0 \
       curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -45,34 +40,41 @@ COPY pyproject.toml README.md LICENSE ./
 COPY backend/ ./backend/
 COPY --from=frontend /backend/autoclip/static ./backend/autoclip/static
 
-RUN pip install --no-cache-dir .
+# Install control plane dependencies only.
+# Heavy ML/rendering packages (torch, mediapipe, whisper) are executed
+# remotely on GitHub Actions workers and are not needed on Blitz.
+RUN pip install --no-cache-dir \
+      "fastapi>=0.115" \
+      "uvicorn[standard]>=0.32" \
+      "sse-starlette>=2.1" \
+      "python-multipart>=0.0.9" \
+      "pydantic>=2.9" \
+      "pydantic-settings>=2.5" \
+      "keyring>=25.4" \
+      "cryptography>=42.0" \
+      "httpx[socks]>=0.27" \
+      "socksio>=1.0.0" \
+      "google-api-python-client>=2.100.0" \
+      "google-auth>=2.20.0" \
+      "pypdf>=4.0.0" \
+      "python-docx>=1.1.0" \
+      "typer>=0.12" \
+      "rich>=13.9" \
+      "requests>=2.31.0" \
+    && pip install --no-cache-dir --no-deps .
 
-# --------------------------------------------------------------------------
-# Non-root user — required by blitz.cloud (and a good security practice).
-# The autoclip user owns /data (persistent disk) and /app.
-# /data is created here so chown can set ownership before the runtime
-# volume mount overwrites it. Docker preserves the UID/GID from the image
-# layer so blitz's persistent volume is initialized with the right owner.
-# --------------------------------------------------------------------------
+# Non-root user with persistent storage ownership
 RUN mkdir -p /data \
     && groupadd --system autoclip \
     && useradd --system --gid autoclip --create-home autoclip \
     && chown -R autoclip:autoclip /data /app /home/autoclip
 
 USER autoclip
-
-# Persistent storage volume — declared AFTER USER so blitz.cloud assigns the
-# volume to the correct UID. Files written here survive container restarts.
 VOLUME ["/data"]
-
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:${PORT:-8000}/health || exit 1
 
-# Start via uvicorn directly so we can pass --proxy-headers.
-# blitz.cloud terminates HTTPS at its edge proxy — without --proxy-headers,
-# uvicorn would log all requests as HTTP and 127.0.0.1 instead of the real
-# client IP/scheme. --forwarded-allow-ips=* is safe here because blitz's
-# proxy is the only host that can reach port 8000.
+# Start via uvicorn with proxy headers for blitz.cloud edge proxy
 CMD ["sh", "-c", "exec python -m uvicorn autoclip.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*' --log-level info"]
