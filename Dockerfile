@@ -62,6 +62,7 @@ RUN pip install --no-cache-dir \
       "rich>=13.9" \
       "requests>=2.31.0" \
       "yt-dlp>=2024.1.1" \
+      "pysubs2>=1.7.0" \
     && pip install --no-cache-dir --no-deps .
 
 # Non-root user with persistent storage ownership

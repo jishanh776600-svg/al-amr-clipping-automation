@@ -25,7 +25,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pysubs2
+try:
+    import pysubs2
+except ImportError:
+    pysubs2 = None
 
 from ..campaign.models_intelligence import CampaignSpecification
 from ..db.models import (
