@@ -1,0 +1,51 @@
+# Git and metadata
+.git
+.gitignore
+.github
+
+# Python virtual envs and caches
+.venv
+venv
+ENV
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Large data and evaluation sets (3GB+)
+evaluation
+backup
+exports
+scratch
+android
+android_pdf
+
+# Documentation and notes
+docs
+obsidian
+project_vault
+
+# Tests
+tests
+
+# Frontend dev artifacts
+frontend/node_modules
+frontend/dist
+
+# Databases and runtime data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs and archives
+*.log
+*.zip
+*.tar.gz
