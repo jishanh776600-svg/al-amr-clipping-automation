@@ -56,8 +56,8 @@ RUN pip install --no-cache-dir .
 # --------------------------------------------------------------------------
 RUN mkdir -p /data \
     && groupadd --system autoclip \
-    && useradd --system --gid autoclip --no-create-home autoclip \
-    && chown -R autoclip:autoclip /data /app
+    && useradd --system --gid autoclip --create-home autoclip \
+    && chown -R autoclip:autoclip /data /app /home/autoclip
 
 USER autoclip
 
@@ -76,13 +76,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # client IP/scheme. --forwarded-allow-ips=* is safe here because blitz's
 # proxy is the only host that can reach port 8000.
 CMD ["sh", "-c", "exec python -m uvicorn autoclip.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*' --log-level info"]
-
-# ---------------------------------------------------------------------------
-# GPU variant
-# ---------------------------------------------------------------------------
-FROM base AS gpu
-
-# CUDA 12 runtime libraries for CTranslate2 / faster-whisper GPU acceleration
-RUN pip install --no-cache-dir \
-      "nvidia-cublas-cu12>=12.4" \
-      "nvidia-cudnn-cu12>=9.1"
