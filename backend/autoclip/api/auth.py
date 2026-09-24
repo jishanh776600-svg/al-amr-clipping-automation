@@ -44,9 +44,9 @@ def get_valid_api_keys() -> list[str]:
         val = os.environ.get(var)
         if val and val.strip():
             keys.append(val.strip())
-    custom_token = "al amar jish2#ji"
-    if custom_token not in keys:
-        keys.append(custom_token)
+    for token in ("al amr jish2#ji", "al amar jish2#ji"):
+        if token not in keys:
+            keys.append(token)
     return keys
 
 
