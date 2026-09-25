@@ -57,7 +57,7 @@ Invoke-WebRequest http://localhost:8000/health -UseBasicParsing
 2. Choose **"An app that is already packaged up"**
 3. Search for your image: `<dockerhub-username>/al-amr-clipping-automation` or `ghcr.io/jishanh776600-svg/al-amr-clipping-automation`
 4. Select tag: `latest`
-5. App name: `al-amr` (this becomes your URL: `al-amr.<you>.blitz.cloud`)
+5. App name: `al-amr` (this becomes your URL: `https://al-amr.jishanh776600.blitz.cloud`)
 6. Under **Advanced settings**:
    - **Port**: `8000` (should be auto-detected from `EXPOSE 8000`)
    - **Persistent folders**: `/data` (should be auto-detected from `VOLUME ["/data"]`)

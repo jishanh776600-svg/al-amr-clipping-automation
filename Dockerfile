@@ -29,9 +29,10 @@ ENV PYTHONUNBUFFERED=1 \
     AUTOCLIP_HOME=/data \
     PORT=8000
 
-# curl for container health check
+# curl for container health check, ffmpeg for lightweight media probing
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
+      ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

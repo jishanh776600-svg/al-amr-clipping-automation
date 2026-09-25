@@ -5,6 +5,8 @@ import {
   ApiError,
   getStoredToken,
   setStoredToken,
+  getStoredApiUrl,
+  setStoredApiUrl,
   getStoredPat,
   type ProviderStatus,
   type Settings as SettingsData,
@@ -28,6 +30,7 @@ export function Settings() {
   const [error, setError] = useState<Error | null>(null)
   const [saved, setSaved] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState(() => getStoredToken() || '')
+  const [apiUrlInput, setApiUrlInput] = useState(() => getStoredApiUrl() || '')
   const [tokenStatus, setTokenStatus] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
 
@@ -64,15 +67,21 @@ export function Settings() {
   }
 
   const handleSaveToken = async () => {
-    const trimmed = apiKeyInput.trim()
+    const trimmedToken = apiKeyInput.trim()
+    const trimmedUrl = apiUrlInput.trim()
     setVerifying(true)
     setTokenStatus(null)
     try {
-      if (trimmed) {
-        const isValid = await api.testAuth(trimmed)
+      if (trimmedUrl) {
+        setStoredApiUrl(trimmedUrl)
+      } else {
+        setStoredApiUrl(null)
+      }
+      if (trimmedToken) {
+        const isValid = await api.testAuth(trimmedToken, trimmedUrl)
         if (isValid) {
-          setStoredToken(trimmed)
-          setTokenStatus('✓ Token verified and connected!')
+          setStoredToken(trimmedToken)
+          setTokenStatus('✓ Connected and verified with AL AMR backend!')
           await reload()
         } else {
           setTokenStatus('Authentication rejected: HTTP 401 Unauthorized. Check token.')
@@ -232,24 +241,39 @@ export function Settings() {
             </div>
           </div>
 
-          <div className="mt-6 border-t border-ink-800 pt-5">
-            <label className="eyebrow">Enter Operator API Key</label>
-            <div className="mt-2 flex gap-3">
+          <div className="mt-6 border-t border-ink-800 pt-5 space-y-4">
+            <div>
+              <label className="eyebrow">Backend API URL (Optional Override)</label>
               <input
-                type="password"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                placeholder="Paste your remote OPERATOR_TOKEN…"
-                className="field text-xs font-mono"
+                type="text"
+                value={apiUrlInput}
+                onChange={(e) => setApiUrlInput(e.target.value)}
+                placeholder="e.g. https://al-amr-clipping-automation-6d0c.onrender.com (blank for default)"
+                className="mt-2 field text-xs font-mono w-full"
               />
-              <button
-                type="button"
-                disabled={verifying || !apiKeyInput.trim()}
-                onClick={handleSaveToken}
-                className="btn btn-primary shrink-0 text-xs"
-              >
-                {verifying ? 'Verifying…' : 'Save & Connect'}
-              </button>
+              <p className="mt-1 text-[11px] text-ink-500">
+                Leave empty to use default (<code className="text-ink-400">window.location.origin</code> or build-time URL).
+              </p>
+            </div>
+            <div>
+              <label className="eyebrow">Enter Operator API Key</label>
+              <div className="mt-2 flex gap-3">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="Paste your remote OPERATOR_TOKEN…"
+                  className="field text-xs font-mono"
+                />
+                <button
+                  type="button"
+                  disabled={verifying || !apiKeyInput.trim()}
+                  onClick={handleSaveToken}
+                  className="btn btn-primary shrink-0 text-xs"
+                >
+                  {verifying ? 'Verifying…' : 'Save & Connect'}
+                </button>
+              </div>
             </div>
             {tokenStatus && (
               <p className="mt-2.5 text-xs text-sodium-400 font-medium">{tokenStatus}</p>
@@ -314,38 +338,69 @@ export function Settings() {
 
       <Section
         title="Operator Access & Authentication"
-        note="Token used to authenticate this browser client with the remote AutoClip server."
+        note="Token and backend server used to connect this browser client with the remote AutoClip server."
       >
-        <div className="rounded border border-ink-800 bg-ink-850/60 p-4">
-          <label className="eyebrow">Operator API Key (AUTOCLIP_API_KEY)</label>
-          <div className="mt-2 flex gap-3">
-            <input
-              type="password"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder="Paste your remote AUTOCLIP_API_KEY…"
-              className="field text-xs font-mono"
-            />
-            <button
-              type="button"
-              onClick={handleSaveToken}
-              className="btn btn-primary shrink-0 text-xs"
-            >
-              Save & Verify
-            </button>
-            {apiKeyInput && (
+        <div className="rounded border border-ink-800 bg-ink-850/60 p-4 space-y-4">
+          <div>
+            <label className="eyebrow">Backend API Server URL (Optional Override)</label>
+            <div className="mt-2 flex gap-3">
+              <input
+                type="text"
+                value={apiUrlInput}
+                onChange={(e) => setApiUrlInput(e.target.value)}
+                placeholder="e.g. https://al-amr-clipping-automation-6d0c.onrender.com (blank for default)"
+                className="field text-xs font-mono"
+              />
+              {apiUrlInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiUrlInput('')
+                    setStoredApiUrl(null)
+                    setTokenStatus('Server URL reset to default')
+                  }}
+                  className="btn btn-quiet shrink-0 text-xs"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-ink-500">
+              Leave blank to use current origin. Override if connecting a standalone frontend to a remote backend.
+            </p>
+          </div>
+
+          <div>
+            <label className="eyebrow">Operator API Key (AUTOCLIP_API_KEY)</label>
+            <div className="mt-2 flex gap-3">
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Paste your remote AUTOCLIP_API_KEY…"
+                className="field text-xs font-mono"
+              />
               <button
                 type="button"
-                onClick={() => {
-                  setApiKeyInput('')
-                  setStoredToken(null)
-                  setTokenStatus('Token cleared')
-                }}
-                className="btn btn-quiet shrink-0 text-xs"
+                onClick={handleSaveToken}
+                className="btn btn-primary shrink-0 text-xs"
               >
-                Clear
+                Save & Verify
               </button>
-            )}
+              {apiKeyInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApiKeyInput('')
+                    setStoredToken(null)
+                    setTokenStatus('Token cleared')
+                  }}
+                  className="btn btn-quiet shrink-0 text-xs"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           {tokenStatus && (
             <p className="mt-2 text-xs text-sodium-400">

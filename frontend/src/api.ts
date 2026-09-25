@@ -918,6 +918,23 @@ export const API_BASE_URL: string = (
 export const API_KEY: string =
   (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_KEY) || ''
 
+export function getStoredApiUrl(): string {
+  if (typeof localStorage !== 'undefined') {
+    return (localStorage.getItem('alamr_api_url') || '').trim().replace(/\/$/, '')
+  }
+  return ''
+}
+
+export function setStoredApiUrl(url: string | null): void {
+  if (typeof localStorage !== 'undefined') {
+    if (url && url.trim()) {
+      localStorage.setItem('alamr_api_url', url.trim().replace(/\/$/, ''))
+    } else {
+      localStorage.removeItem('alamr_api_url')
+    }
+  }
+}
+
 export function getStoredToken(): string {
   if (typeof localStorage !== 'undefined') {
     return localStorage.getItem('alamr_api_key') || ''
@@ -971,7 +988,7 @@ export function resolveUrl(path: string): string {
     return path
   }
   const normalized = path.startsWith('/') ? path : `/${path}`
-  let base = API_BASE_URL
+  let base = getStoredApiUrl() || API_BASE_URL
   if (typeof window !== 'undefined' && window.location.protocol === 'https:' && base.startsWith('http://')) {
     base = base.replace(/^http:\/\//i, 'https://')
   }
@@ -1006,9 +1023,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       err?.name === 'TypeError'
     ) {
       const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
-      const hint = isOffline
-        ? 'Your browser appears offline. Check your internet connection.'
-        : 'Could not connect to the AL AMR server. Ensure the server is reachable and valid authentication credentials are configured in Settings.'
+      let hint: string
+      if (isOffline) {
+        hint = 'Your browser appears offline. Check your internet connection.'
+      } else if (init?.body instanceof FormData) {
+        hint = 'The upload was aborted or rejected by the cloud proxy (payload limit or connection reset). For large files (>100 MB), use a video link (YouTube or Google Drive) instead of direct browser upload.'
+      } else {
+        hint = `Could not reach AL AMR server at ${fullUrl}. Ensure the server is online (allow ~45s if waking from sleep) and CORS/API URL are correct.`
+      }
       throw new ApiError(`Network request failed: ${rawMsg}`, 0, hint)
     }
     throw err
@@ -1050,8 +1072,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  testAuth: async (token: string): Promise<boolean> => {
-    const fullUrl = resolveUrl('/api/settings')
+  testAuth: async (token: string, serverUrl?: string): Promise<boolean> => {
+    let fullUrl = resolveUrl('/api/settings')
+    if (serverUrl && serverUrl.trim()) {
+      fullUrl = `${serverUrl.trim().replace(/\/$/, '')}/api/settings`
+    }
     try {
       const resp = await fetch(fullUrl, {
         headers: {

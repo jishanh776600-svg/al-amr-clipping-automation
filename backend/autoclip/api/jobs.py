@@ -327,9 +327,32 @@ async def create_autonomous_job(
                 status_code=400,
                 detail=f"Unsupported media extension '{suffix}'. Accepted: {', '.join(sorted(ingest.ACCEPTED_SUFFIXES))}",
             )
+        max_upload_size = 100 * 1024 * 1024
+        upload_chunk = 4 * 1024 * 1024
+        total_bytes = 0
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = Path(tmp.name)
-            shutil.copyfileobj(video_file.file, tmp)
+            try:
+                while True:
+                    chunk = await video_file.read(upload_chunk)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > max_upload_size:
+                        tmp_path.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail={
+                                "message": f"Uploaded video exceeds the 100 MB cloud proxy limit (read {total_bytes / (1024 * 1024):.1f} MB).",
+                                "hint": "For large video files, switch to the 'Link' tab and provide a YouTube, Google Drive, or direct URL so the remote worker can download it directly without cloud proxy limits.",
+                            },
+                        )
+                    tmp.write(chunk)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=500, detail="Failed to receive uploaded video file.") from exc
         try:
             source = await asyncio.to_thread(ingest.ingest_file, tmp_path, move=True, title=Path(video_file.filename).stem)
             await asyncio.to_thread(store.create_source, source)

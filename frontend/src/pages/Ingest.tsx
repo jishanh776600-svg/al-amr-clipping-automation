@@ -345,6 +345,14 @@ export function Ingest() {
       setError(new Error('Please select or drop a source video file.'))
       return
     }
+    if (sourceMode === 'file' && selectedVideoFile && selectedVideoFile.size > 100 * 1024 * 1024) {
+      setError(
+        new Error(
+          `File size (${(selectedVideoFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 100 MB direct cloud upload limit. For large source videos, switch to the "Link" tab and paste a YouTube, Google Drive, or direct URL so the remote worker can download it directly without cloud proxy limits.`
+        )
+      )
+      return
+    }
     if (sourceMode === 'url' && !url.trim()) {
       setError(new Error('Please provide a source video URL.'))
       return
@@ -532,9 +540,14 @@ export function Ingest() {
                       <span className="text-sm font-medium text-signal-good block">
                         ✓ {selectedVideoFile.name}
                       </span>
-                      <span className="text-xs text-ink-400 block mt-1">
+                      <span className={`text-xs block mt-1 ${selectedVideoFile.size > 100 * 1024 * 1024 ? 'text-amber-400 font-semibold' : 'text-ink-400'}`}>
                         {(selectedVideoFile.size / (1024 * 1024)).toFixed(1)} MB · Click to replace
                       </span>
+                      {selectedVideoFile.size > 100 * 1024 * 1024 && (
+                        <div className="mt-2.5 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded p-2 text-left">
+                          ⚠️ <strong>File is large ({(selectedVideoFile.size / (1024 * 1024)).toFixed(1)} MB).</strong> Cloud proxies reject direct browser uploads over 100 MB. For large videos, switch to the <strong>Link</strong> tab and provide a YouTube, Google Drive, or direct URL so the remote worker can download it directly.
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div>

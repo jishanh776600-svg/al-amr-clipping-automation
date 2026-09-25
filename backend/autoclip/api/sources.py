@@ -117,12 +117,26 @@ async def upload_source(file: UploadFile = File(...)) -> SourceOut:
         )
 
     # Stage to a temp file first so a failed or abandoned upload never leaves a
-    # half-written file in the media store.
+    # half-written file in the media store. Enforce 100 MB max for cloud proxy limits.
+    max_upload_size = 100 * 1024 * 1024
+    total_bytes = 0
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as staging:
         staging_path = Path(staging.name)
         try:
             while chunk := await file.read(UPLOAD_CHUNK):
+                total_bytes += len(chunk)
+                if total_bytes > max_upload_size:
+                    staging_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail={
+                            "message": f"File size exceeds control plane limit of 100 MB (read {total_bytes / (1024 * 1024):.1f} MB).",
+                            "hint": "For large video files, use the Link / YouTube / Google Drive ingestion option to allow remote workers to download directly.",
+                        },
+                    )
                 staging.write(chunk)
+        except HTTPException:
+            raise
         except Exception as exc:
             staging_path.unlink(missing_ok=True)
             raise HTTPException(status_code=500, detail="Upload failed.") from exc
