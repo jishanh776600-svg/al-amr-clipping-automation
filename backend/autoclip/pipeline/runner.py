@@ -582,11 +582,12 @@ class PipelineRunner:
             if len(approved_specs) < required_final_clips:
                 from collections import Counter
                 from .highlights import HighlightError
-                rejection_summary = Counter([r for s in all_specs for r in s.rejection_reasons])
+                # Distinguish unique candidates rejected per reason so counts reflect candidate count
+                unique_cand_rejections = Counter([r for s in all_specs for r in set(s.rejection_reasons)])
                 diagnosed_count = len(all_specs)
                 approved_count = len(approved_specs)
                 all_cand_count = len(all_candidates)
-                diag_str = "; ".join(f"{k}: {v}" for k, v in rejection_summary.most_common(5))
+                diag_str = "; ".join(f"{k}: {v}" for k, v in unique_cand_rejections.most_common(5))
 
                 log.error(
                     "INSUFFICIENT_VALID_CLIPS: produced %d/%d clips from %d candidates "

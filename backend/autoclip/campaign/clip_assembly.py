@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from autoclip.campaign.candidate_discovery import (
     compute_iou,
     compute_text_similarity,
 )
+from autoclip.campaign.extractor import ENGLISH_STOPWORDS
 from autoclip.campaign.models_intelligence import CampaignSpecification, RequirementItem
 from autoclip.campaign.models import CampaignBrief
 from autoclip.db.models import Clip, ClipCandidateRecord, ClipSpecificationRecord, new_id, utcnow
@@ -35,15 +37,22 @@ FILLER_TOKENS: set[str] = {
     "anyway", "anyways", "so basically", "so like", "see", "look",
 }
 
-# Words that indicate an incomplete thought if left at the very end of a clip
-DANGLING_END_TOKENS: set[str] = {
-    "and", "but", "or", "so", "because", "if", "that", "which", "when",
+# Words that strictly cannot end a sentence under any circumstance (articles, prepositions, conjunctions)
+ALWAYS_DANGLING_TOKENS: set[str] = {
+    "and", "but", "or", "because", "if", "that", "which", "when",
     "where", "who", "whom", "whose", "while", "though", "although", "since",
-    "as", "than", "then", "with", "for", "to", "at", "by", "from", "in", "into",
-    "onto", "of", "about", "like", "such", "the", "a", "an", "their", "my", "your",
-    "our", "its", "his", "her", "just", "really", "even", "well", "actually",
-    "basically", "you", "know",
+    "as", "than", "with", "for", "to", "at", "by", "from", "in", "into",
+    "onto", "of", "about", "the", "a", "an", "their", "my", "your",
+    "our", "its", "such",
 }
+
+# Conversational words that only dangle if unpunctuated; with terminal punctuation (. ! ?) they represent complete thoughts
+CONDITIONAL_DANGLING_TOKENS: set[str] = {
+    "you", "know", "well", "actually", "basically", "just", "really", "even",
+    "so", "then", "like", "her", "his", "him", "me", "them", "us", "it",
+}
+
+DANGLING_END_TOKENS: set[str] = ALWAYS_DANGLING_TOKENS | CONDITIONAL_DANGLING_TOKENS
 
 SENTENCE_TERMINALS: set[str] = {".", "!", "?", ";"}
 
@@ -320,6 +329,26 @@ class SmartBoundaryEngine:
                 end_idx = target_end
                 adjustments.append("expanded_boundary_to_preserve_required_cta")
 
+        # Post-Expansion Incomplete Thought Guard: ensure boundary expansions didn't end on dangling tokens
+        while end_idx > start_idx:
+            last_word_raw = all_words[end_idx].text.strip()
+            last_word_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
+            is_terminal = is_true_sentence_terminal(last_word_raw)
+            is_dangling = (
+                last_word_clean in ALWAYS_DANGLING_TOKENS
+                or (last_word_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal)
+                or last_word_raw.endswith("...")
+                or last_word_raw.endswith("…")
+            )
+            if is_dangling:
+                test_dur = all_words[end_idx - 1].end - all_words[start_idx].start
+                if test_dur >= duration_min_s:
+                    end_idx -= 1
+                    adjustments.append(f"trimmed_dangling_end_token({last_word_clean or 'ellipsis'})")
+                    continue
+                break
+            break
+
         # ------------------------------------------------------------------
         # 6. Padding & Silence Cleanup
         # ------------------------------------------------------------------
@@ -474,10 +503,19 @@ class PreRenderQualityGate:
         # 2. Transcript Completeness & Word Timing
         if len(clip_words) < 6:
             hard_rejections.append(f"insufficient_word_count({len(clip_words)} words)")
-        elif any(w.start >= w.end for w in clip_words):
-            hard_rejections.append("corrupted_word_timestamps")
         else:
-            rule_checks.append({"rule": "transcript_integrity", "passed": True, "weight": 1.0})
+            # Deterministically repair minor zero-duration or inverted timestamps before declaring corruption
+            for i, w in enumerate(clip_words):
+                if w.start >= w.end:
+                    next_start = clip_words[i + 1].start if (i + 1 < len(clip_words) and clip_words[i + 1].start > w.start) else None
+                    if next_start is not None:
+                        w.end = max(w.start + 0.05, min(w.start + 0.08, next_start))
+                    else:
+                        w.end = w.start + 0.08
+            if any(w.start >= w.end or math.isnan(w.start) or math.isnan(w.end) or w.start < 0 for w in clip_words):
+                hard_rejections.append("corrupted_word_timestamps")
+            else:
+                rule_checks.append({"rule": "transcript_integrity", "passed": True, "weight": 1.0})
 
         # 3. Narrative Hook Quality
         if optimization.hook_type == "weak/none":
@@ -557,11 +595,22 @@ class PreRenderQualityGate:
             banned_terms.extend([str(w).lower() for w in banned_words if w])
             banned_terms.extend([str(w).lower() for w in banned_topics if w])
 
-        for banned in banned_terms:
+        # Deduplicate terms and exclude common English stopwords
+        deduped_banned_terms: list[str] = []
+        seen_banned_terms: set[str] = set()
+        for t in banned_terms:
+            clean_t = t.strip().lower()
+            if clean_t and clean_t not in seen_banned_terms and clean_t not in ENGLISH_STOPWORDS:
+                seen_banned_terms.add(clean_t)
+                deduped_banned_terms.append(clean_t)
+
+        for banned in deduped_banned_terms:
             if not banned:
                 continue
             if re.search(r"\b" + re.escape(banned) + r"\b", clip_text, re.IGNORECASE):
-                hard_rejections.append(f"contains_banned_content({banned})")
+                reason = f"contains_banned_content({banned})"
+                if reason not in hard_rejections:
+                    hard_rejections.append(reason)
                 rule_checks.append({"rule": "banned_check", "passed": False, "term": banned, "weight": 2.0})
 
         # 8b. Intro/Greeting Dominance & Substantive Hook Disambiguation
@@ -577,10 +626,20 @@ class PreRenderQualityGate:
             rule_checks.append({"rule": "no_intro_greeting", "passed": True, "weight": 1.0})
 
         # 8c. Semantic Completeness Check
-        last_word_text = clip_words[-1].text.strip().lower() if clip_words else ""
-        last_clean = re.sub(r"[^\w]", "", last_word_text)
-        if last_clean in DANGLING_END_TOKENS:
-            hard_rejections.append(f"dangling_sentence_ending({last_clean})")
+        last_word_raw = clip_words[-1].text.strip() if clip_words else ""
+        last_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
+        is_terminal = is_true_sentence_terminal(last_word_raw)
+
+        is_dangling = False
+        if last_clean in ALWAYS_DANGLING_TOKENS:
+            is_dangling = True
+        elif last_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal:
+            is_dangling = True
+        elif last_word_raw.endswith("...") or last_word_raw.endswith("…"):
+            is_dangling = True
+
+        if is_dangling:
+            hard_rejections.append(f"dangling_sentence_ending({last_clean or 'ellipsis'})")
             rule_checks.append({"rule": "complete_thought_ending", "passed": False, "weight": 1.5})
         else:
             rule_checks.append({"rule": "complete_thought_ending", "passed": True, "weight": 1.0})

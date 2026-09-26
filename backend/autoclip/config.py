@@ -135,7 +135,7 @@ class WhisperSettings(BaseModel):
 class ClipSettings(BaseModel):
     min_duration_s: float = 20.0
     max_duration_s: float = 30.0
-    max_clips: int = 10
+    max_clips: int = 5
 
 
 class IngestSettings(BaseModel):

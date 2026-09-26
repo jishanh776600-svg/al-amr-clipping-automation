@@ -110,7 +110,7 @@ class TranscriptWindow:
 class DetectionConfig:
     min_duration_s: float = 20.0
     max_duration_s: float = 90.0
-    max_clips: int = 10
+    max_clips: int = 5
     language: str = ""
     #: Prompt file stem in ``autoclip/prompts/``. Versioned so contributors can
     #: iterate on prompts without touching code.

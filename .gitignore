@@ -85,3 +85,4 @@ android/app/build/
 /exports/
 /models/
 scratch/
+*.log

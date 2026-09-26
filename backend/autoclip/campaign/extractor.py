@@ -28,6 +28,33 @@ SUPPORTED_MIME_TYPES = {
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
+ENGLISH_STOPWORDS: set[str] = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can't", "cannot", "could", "couldn't",
+    "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
+    "each", "few", "for", "from", "further", "had", "hadn't", "has", "hasn't",
+    "have", "haven't", "having", "he", "he'd", "he'll", "he's", "her", "here",
+    "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i",
+    "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's",
+    "its", "itself", "let's", "me", "more", "most", "mustn't", "my", "myself",
+    "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought",
+    "our", "ours", "ourselves", "out", "over", "own", "same", "shan't", "she",
+    "she'd", "she'll", "she's", "should", "shouldn't", "so", "some", "such",
+    "than", "that", "that's", "the", "their", "theirs", "them", "themselves",
+    "then", "there", "there's", "these", "they", "they'd", "they'll", "they're",
+    "they've", "this", "those", "through", "to", "too", "under", "until", "up",
+    "very", "was", "wasn't", "we", "we'd", "we'll", "we're", "we've", "were",
+    "weren't", "what", "what's", "when", "when's", "where", "where's", "which",
+    "while", "who", "who's", "whom", "why", "why's", "with", "won't", "would",
+    "wouldn't", "you", "you'd", "you'll", "you're", "you've", "your", "yours",
+    "yourself", "yourselves",
+    # Guideline framing & syntax terms
+    "following", "words", "word", "terms", "term", "topics", "topic", "phrases",
+    "phrase", "language", "content", "say", "saying", "mention", "mentioning",
+    "use", "using", "etc", "avoid", "banned", "prohibited", "exclude",
+}
+
 
 class GuidelineExtractionError(ValueError):
     """Raised when a guideline document cannot be processed or contains no usable text."""
@@ -264,9 +291,44 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
 
     # 5. Banned Words / Prohibited Topics
     banned_words: list[str] = []
-    banned_match = re.search(r"(?:banned|avoid|prohibited|do\s+not\s+mention|exclude)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
-    if banned_match:
-        banned_words = [w.strip().lower() for w in re.split(r"[,;•|]+", banned_match.group(1)) if w.strip()]
+    # Search for banned words using explicit horizontal whitespace so newlines are not crossed
+    banned_matches = re.finditer(
+        r"(?:banned|avoid|prohibited|do\s+not\s+mention|exclude)[ \t]*[:\-]?[ \t]*([^\n\r]+)",
+        raw_text,
+        re.IGNORECASE,
+    )
+    for b_m in banned_matches:
+        raw_captured = b_m.group(1).strip()
+        # Strip syntactic preamble like "the following words:" or "words:" or "terms:"
+        cleaned_lead = re.sub(
+            r"^(?:the\s+)?(?:following\s+)?(?:words|topics|phrases|terms|content)?\s*[:\-]\s*",
+            "",
+            raw_captured,
+            flags=re.IGNORECASE,
+        ).strip()
+        raw_items = re.split(r"[,;•|\t]+", cleaned_lead)
+        for w in raw_items:
+            # Strip parenthetical clarifications (e.g. "eligible (bachelor)" -> "eligible")
+            base_term = re.sub(r"\(.*?\)", "", w).strip().lower()
+            base_term = re.sub(r"^[^\w]+|[^\w]+$", "", base_term)
+            if base_term and len(base_term) > 2 and base_term not in ENGLISH_STOPWORDS:
+                if base_term not in banned_words:
+                    banned_words.append(base_term)
+
+    # Also check if there is a bulleted list immediately following a "banned/avoid" header
+    header_match = re.search(
+        r"(?:banned|avoid|prohibited|do\s+not\s+say|do\s+not\s+mention)(?:\s+(?:the\s+)?(?:following\s+)?(?:words|topics|terms))?\s*:\s*\n((?:\s*[-*•\d+.]\s+[^\n\r]+\n?)+)",
+        raw_text,
+        re.IGNORECASE,
+    )
+    if header_match:
+        bullet_lines = re.findall(r"[-*•\d+.]\s+([^\n\r]+)", header_match.group(1))
+        for line in bullet_lines:
+            base_term = re.sub(r"\(.*?\)", "", line).strip().lower()
+            base_term = re.sub(r"^[^\w]+|[^\w]+$", "", base_term)
+            if base_term and len(base_term) > 2 and base_term not in ENGLISH_STOPWORDS:
+                if base_term not in banned_words:
+                    banned_words.append(base_term)
 
     # 6. Call to Action (CTA)
     cta_required = False
@@ -280,18 +342,21 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         cta_text = cta_heading_match.group(1).strip()
         cta_instructions.append(cta_text)
 
-    if any(phrase in lower_text for phrase in ("call to action", "cta", "subscribe", "link in bio", "follow", "comment below", "share this")):
-        cta_required = True
-        if "subscribe" in lower_text:
-            cta_types.append("subscribe")
-        if "link in bio" in lower_text or "link" in lower_text:
-            cta_types.append("link_in_bio")
-        if "comment" in lower_text:
-            cta_types.append("comment")
-        if "share" in lower_text:
-            cta_types.append("share")
-        if not cta_types:
-            cta_types = ["general"]
+    cta_patterns = (
+        (r"\bcall\s+to\s+action\b", "general"),
+        (r"\bclosing\s+cta\b", "general"),
+        (r"\bcta\b", "general"),
+        (r"\bsubscribe\b", "subscribe"),
+        (r"\blink\s+in\s+bio\b", "link_in_bio"),
+        (r"\bfollow\s+(?:us|for\s+more|me|page|account|channel)\b", "follow"),
+        (r"\bcomment\s+below\b", "comment"),
+        (r"\bshare\s+this\b", "share"),
+    )
+    for pat, cta_type in cta_patterns:
+        if re.search(pat, lower_text):
+            cta_required = True
+            if cta_type not in cta_types:
+                cta_types.append(cta_type)
 
     # 7. Aspect ratio
     aspect_ratio: Any = "9:16"

@@ -8,6 +8,7 @@ trim-handle snapping all derive from it.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -247,6 +248,9 @@ def transcribe(
             "was extracted."
         )
 
+    # Deterministically repair minor Whisper timestamp defects (e.g. zero duration, inverted)
+    repair_word_timestamps(transcript.words)
+
     if on_progress:
         on_progress(1.0)
 
@@ -254,6 +258,39 @@ def transcribe(
         "Transcribed %d words in %d segments.", len(transcript.words), len(transcript.segments)
     )
     return transcript
+
+
+def repair_word_timestamps(words: list[Word]) -> list[Word]:
+    """Deterministically repair minor Whisper timestamp defects (e.g. start == end, zero duration, or slight non-monotonicity)."""
+    if not words:
+        return words
+    for i, w in enumerate(words):
+        # Handle NaN or negative start
+        if math.isnan(w.start) or w.start < 0:
+            prev_end = words[i - 1].end if i > 0 else 0.0
+            w.start = prev_end
+        if math.isnan(w.end):
+            w.end = w.start + 0.08
+
+        # If inverted, swap
+        if w.start > w.end and w.end > 0:
+            w.start, w.end = w.end, w.start
+
+        # If zero or negative duration (w.start >= w.end):
+        if w.start >= w.end:
+            next_start = words[i + 1].start if (i + 1 < len(words) and words[i + 1].start > w.start) else None
+            if next_start is not None:
+                w.end = max(w.start + 0.05, min(w.start + 0.08, next_start))
+            else:
+                w.end = w.start + 0.08
+
+        # Enforce monotonicity with previous word
+        if i > 0 and w.start < words[i - 1].start:
+            w.start = words[i - 1].end
+            if w.end <= w.start:
+                w.end = w.start + 0.05
+
+    return words
 
 
 # --------------------------------------------------------------------------

@@ -123,22 +123,25 @@ def validate_duration_bounds(
 
 
 DEFAULT_MAX_CLIPS: int = 5
+TARGET_VALID_CLIPS: int = 5
 
 
 def resolve_max_clips(
     job_settings: dict[str, Any] | None = None,
     campaign_spec: Any | None = None,
     campaign_brief: Any | None = None,
-    default_max_clips: int = DEFAULT_MAX_CLIPS,
+    default_max_clips: int = TARGET_VALID_CLIPS,
 ) -> int:
-    """Deterministically resolve canonical target max_clips count.
+    """Deterministically resolve canonical target valid clips count (strictly 5 for AL AMR production).
 
     Priority:
-    1. Explicit job overrides in job_settings: 'max_clips'.
+    1. Explicit job overrides in job_settings: 'max_clips' (if explicitly specified).
     2. Campaign Specification requirements (output_count).
-    3. Campaign Brief requirements (output_count or maximum_candidates).
+    3. Campaign Brief requirements (output_count).
     4. Nested clips settings in job_settings: 'clips.max_clips'.
-    5. Configured default (default_max_clips, defaults to 5).
+    5. Configured default (default_max_clips, strictly defaults to TARGET_VALID_CLIPS = 5).
+
+    Note: Candidate pool limits ('maximum_candidates') are intentionally NOT used as output clip targets.
     """
     settings = job_settings or {}
     clips_settings = settings.get("clips") if isinstance(settings.get("clips"), dict) else {}
@@ -148,7 +151,9 @@ def resolve_max_clips(
     # 1. Top-level settings overrides
     if settings.get("max_clips") is not None:
         try:
-            count = int(settings["max_clips"])
+            val = int(settings["max_clips"])
+            if val > 0:
+                count = val
         except (ValueError, TypeError):
             pass
 
@@ -159,7 +164,9 @@ def resolve_max_clips(
             val = getattr(out_cnt, "value", out_cnt)
             if val is not None:
                 try:
-                    count = int(val)
+                    c = int(val)
+                    if c > 0:
+                        count = c
                 except (ValueError, TypeError):
                     pass
 
@@ -168,16 +175,11 @@ def resolve_max_clips(
         out_cnt = getattr(campaign_brief, "output_count", None)
         if out_cnt is not None:
             try:
-                count = int(out_cnt)
+                c = int(out_cnt)
+                if c > 0:
+                    count = c
             except (ValueError, TypeError):
                 pass
-        if count is None:
-            max_cands = getattr(campaign_brief, "maximum_candidates", None)
-            if max_cands is not None:
-                try:
-                    count = int(max_cands)
-                except (ValueError, TypeError):
-                    pass
 
     # 4. Nested clips settings
     if count is None and clips_settings.get("max_clips") is not None:
