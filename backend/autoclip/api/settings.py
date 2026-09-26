@@ -179,6 +179,13 @@ def _handle_secret_save(key: str, raw_value: str | None) -> None:
     saved = config.set_secret(canon, val)
     if saved:
         log.info("Secret '%s' successfully encrypted and saved to durable vault.", canon)
+        if "telegram" in canon.lower():
+            try:
+                import asyncio
+                from ..telegram.review_bot import setup_telegram_bot_lifecycle
+                asyncio.create_task(setup_telegram_bot_lifecycle())
+            except Exception as e:
+                log.warning("Could not refresh Telegram lifecycle after secret update: %s", e)
     else:
         log.warning("Secret '%s' could not be saved (rejected as invalid/placeholder). Stored secret preserved.", canon)
 

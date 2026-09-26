@@ -1281,6 +1281,8 @@ class PipelineRunner:
             guideline = store.get_guideline_for_job(self.job.id)
             if guideline and guideline.parsed_brief:
                 campaign_spec = CampaignSpecification.from_campaign_brief(guideline.parsed_brief, filename=guideline.filename)
+        if campaign_spec is None and "campaign" in self.job.settings and isinstance(self.job.settings["campaign"], dict):
+            campaign_spec = CampaignSpecification.from_campaign_brief(self.job.settings["campaign"])
 
         seo_engine = SEOEngine.from_campaign_spec(campaign_spec)
         seo_records = []

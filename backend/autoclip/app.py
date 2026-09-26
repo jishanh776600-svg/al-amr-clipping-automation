@@ -92,15 +92,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pub_ticker_task = asyncio.create_task(_publishing_queue_ticker(), name="alamr-publishing-ticker")
 
     tg_polling_task = None
-    tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    tg_webhook = os.getenv("TELEGRAM_WEBHOOK_URL")
-    tg_polling_env = os.getenv("TELEGRAM_POLLING")
-    should_poll = (tg_polling_env == "1") or (
-        bool(tg_token) and not bool(tg_webhook) and tg_polling_env != "0"
-    )
-    if should_poll and tg_token:
-        from .telegram.review_bot import poll_telegram_updates
-        tg_polling_task = asyncio.create_task(poll_telegram_updates(), name="alamr-telegram-polling")
+    try:
+        from .telegram.review_bot import setup_telegram_bot_lifecycle
+        tg_res = await setup_telegram_bot_lifecycle()
+        if tg_res and tg_res.get("mode") == "polling":
+            tg_polling_task = tg_res.get("task")
+    except Exception as tg_err:
+        log.warning("Could not initialize Telegram lifecycle in app startup: %s", tg_err)
 
     # Serving the API without a worker is useful for debugging a stuck queue and
     # makes API tests deterministic — jobs stay queued instead of racing off.

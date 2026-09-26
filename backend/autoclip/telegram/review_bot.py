@@ -245,6 +245,7 @@ def _record_review_sent(
     chat_id: str | int,
     message_id: str | int | None = None,
     has_caption: bool = False,
+    telegram_file_id: str | None = None,
 ) -> None:
     """Record TELEGRAM_REVIEW_SENT action in approval history and telemetry for deduplication."""
     try:
@@ -262,10 +263,13 @@ def _record_review_sent(
                 updated_at=models.utcnow(),
             )
             store.create_clip_approval(approval)
+        approval.telemetry = dict(approval.telemetry or {})
         if message_id:
             approval.telemetry["telegram_message_id"] = message_id
             approval.telemetry["telegram_chat_id"] = str(chat_id)
             approval.telemetry["telegram_has_caption"] = has_caption
+        if telegram_file_id:
+            approval.telemetry["telegram_file_id"] = telegram_file_id
 
         approval.operator_action = "TELEGRAM_REVIEW_SENT"
         approval.operator_note = f"Delivered review card to Telegram chat {chat_id}"
@@ -471,7 +475,8 @@ async def send_clip_review(
                                 log.info("Telegram review video delivered successfully for clip %s", clip_id)
                                 resp_json = resp.json()
                                 msg_id = resp_json.get("result", {}).get("message_id")
-                                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
+                                tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
+                                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
                                 return resp_json
                             elif resp.status_code == 400:
                                 # Retry video without markdown parse_mode
@@ -484,7 +489,8 @@ async def send_clip_review(
                                     log.info("Telegram review video (plain) delivered for clip %s", clip_id)
                                     resp_json = resp_plain.json()
                                     msg_id = resp_json.get("result", {}).get("message_id")
-                                    _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True)
+                                    tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
+                                    _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
                                     return resp_json
                             log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
                 except Exception as exc:
@@ -810,6 +816,22 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
     if not clip and not approval:
         await _answer_callback_query(bot_token, cb_id, text=f"Clip {clip_id} not found.", show_alert=True)
         return {"status": "not_found", "clip_id": clip_id}
+
+    # Ensure video file_id from telegram message is preserved in approval / final_render telemetry
+    video_obj = message.get("video") or {}
+    vid_file_id = video_obj.get("file_id")
+    if vid_file_id:
+        if approval:
+            approval.telemetry = dict(approval.telemetry or {})
+            if not approval.telemetry.get("telegram_file_id"):
+                approval.telemetry["telegram_file_id"] = vid_file_id
+                store.update_clip_approval(approval)
+        fr = store.get_final_render(clip_id)
+        if fr:
+            fr.telemetry = dict(fr.telemetry or {})
+            if not fr.telemetry.get("telegram_file_id"):
+                fr.telemetry["telegram_file_id"] = vid_file_id
+                store.create_final_render(fr)
 
     job_id = clip.job_id if clip else (approval.job_id if approval else "")
     actor = f"telegram:@{username}" if username else f"telegram:{user_id}"
@@ -1404,4 +1426,62 @@ async def poll_telegram_updates(
 
 # Canonical alias for webhook handling
 handle_telegram_webhook_payload = handle_telegram_update
+
+
+async def setup_telegram_bot_lifecycle() -> dict[str, Any] | None:
+    """Configure webhook or start update polling based on runtime environment."""
+    bot_token, chat_id, _ = get_telegram_config()
+    if not bot_token:
+        log.info("Telegram review bot not configured (no bot token).")
+        return None
+
+    public_url = (
+        os.getenv("TELEGRAM_WEBHOOK_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or os.getenv("ALAMR_PUBLIC_URL")
+        or ""
+    ).strip().rstrip("/")
+
+    force_polling = os.getenv("TELEGRAM_POLLING") == "1"
+
+    if public_url and not force_polling:
+        webhook_target = f"{public_url}/api/telegram/webhook"
+        log.info("Registering Telegram webhook at %s...", webhook_target)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                webhook_payload: dict[str, Any] = {
+                    "url": webhook_target,
+                    "allowed_updates": ["callback_query", "message"],
+                    "drop_pending_updates": False,
+                }
+                secret = (os.getenv("TELEGRAM_WEBHOOK_SECRET") or "").strip()
+                if not secret:
+                    try:
+                        from ..security.vault import get_vault
+                        v_sec = get_vault().retrieve_secret("telegram_webhook_secret") or get_vault().retrieve_secret("TELEGRAM_WEBHOOK_SECRET")
+                        if v_sec:
+                            secret = v_sec.strip()
+                    except Exception:
+                        pass
+                if secret:
+                    webhook_payload["secret_token"] = secret
+                resp = await client.post(
+                    f"{TELEGRAM_API_BASE}/bot{bot_token}/setWebhook",
+                    json=webhook_payload,
+                )
+                if resp.status_code == 200 and resp.json().get("ok"):
+                    log.info("Successfully registered Telegram webhook with Bot API: %s", webhook_target)
+                    return {"mode": "webhook", "url": webhook_target}
+                else:
+                    log.warning("Telegram setWebhook returned HTTP %s: %s. Falling back to polling.", resp.status_code, resp.text)
+        except Exception as exc:
+            log.warning("Failed to register Telegram webhook: %s. Falling back to polling.", exc)
+
+    # Polling mode fallback
+    log.info("Starting Telegram Bot API update polling loop...")
+    polling_task = asyncio.create_task(
+        poll_telegram_updates(bot_token=bot_token),
+        name="alamr-telegram-polling",
+    )
+    return {"mode": "polling", "task": polling_task}
 

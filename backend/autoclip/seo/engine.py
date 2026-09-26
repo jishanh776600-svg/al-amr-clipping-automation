@@ -201,10 +201,10 @@ class SEOEngine:
             if len(candidate_title) + len(self.reqs.brand_name) + 3 <= self.reqs.max_title_length:
                 candidate_title = f"{candidate_title} | {self.reqs.brand_name}"
 
-        # If mandatory phrase is required, ensure it's in the title if it fits
+        # If mandatory phrase is required, ensure it's in the title if it fits and is a real content phrase
         for phrase in self.reqs.required_phrases:
             if phrase.lower() not in candidate_title.lower():
-                if len(candidate_title) + len(phrase) + 3 <= self.reqs.max_title_length:
+                if len(candidate_title) + len(phrase) + 3 <= self.reqs.max_title_length and (len(phrase) > 8 or " " in phrase):
                     candidate_title = f"{candidate_title} - {phrase}"
                     break
 
@@ -230,8 +230,13 @@ class SEOEngine:
                 summary = snippet[:first_period + 1].strip()
         parts.append(summary)
 
-        if self.reqs.required_phrases:
-            phrases_line = "Key Focus: " + ", ".join(self.reqs.required_phrases)
+        # Include genuine campaign topics/phrases naturally (avoiding SOP words)
+        content_phrases = [
+            p for p in self.reqs.required_phrases
+            if len(p) > 3 and not any(w in p.lower() for w in ("rejection", "payout", "submit", "tier-1", "late", "must"))
+        ]
+        if content_phrases:
+            phrases_line = "Key Focus: " + ", ".join(content_phrases)
             parts.append(phrases_line)
 
         cta_text = self._synthesize_cta(topic=topic)
@@ -246,9 +251,13 @@ class SEOEngine:
 
         if self.reqs.description_guidelines:
             for dg in self.reqs.description_guidelines:
-                clean_dg = dg.strip()
-                if clean_dg and clean_dg not in parts:
+                clean_dg = dg.strip().strip('“"”')
+                if len(clean_dg) > 10 and clean_dg not in parts:
                     parts.append(clean_dg)
+
+        if self.reqs.required_hashtags:
+            norm_tags = [h if h.startswith("#") else f"#{h}" for h in self.reqs.required_hashtags]
+            parts.append(" ".join(norm_tags))
 
         desc = "\n\n".join(parts)
         if len(desc) > self.reqs.max_description_length:
@@ -261,10 +270,19 @@ class SEOEngine:
         clean_tags_lower = [t.lower().lstrip("#") for t in tags]
 
         words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
-        stopwords = {"this", "that", "with", "from", "have", "they", "will", "what", "when", "there", "about", "your", "more", "into", "their"}
+        stopwords = {
+            "this", "that", "with", "from", "have", "they", "will", "what", "when",
+            "there", "about", "your", "more", "into", "their", "rejection", "submit",
+            "payouts", "late", "must", "consistent", "required", "think", "start", "like",
+        }
         prohibited_set = {p.lower().strip() for p in self.reqs.prohibited_terms}
 
         candidate_tags = ["#Shorts", "#Reels", "#Viral", "#ALAMR"]
+        if self.reqs.brand_name:
+            b_tag = "#" + re.sub(r"[^\w]", "", self.reqs.brand_name)
+            if b_tag.lower() not in [t.lower() for t in candidate_tags] and b_tag.lower().lstrip("#") not in clean_tags_lower:
+                candidate_tags.insert(0, b_tag)
+
         for w in words:
             wl = w.lower()
             if wl not in stopwords and wl not in prohibited_set and wl not in clean_tags_lower:

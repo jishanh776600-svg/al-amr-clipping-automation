@@ -197,6 +197,81 @@ def extract_text_from_docx(stream_or_path: str | Path | BinaryIO | bytes) -> str
         ) from exc
 
 
+def _normalize_extracted_text(text: str) -> str:
+    """Normalize layout-fragmented text extracted from PDFs.
+
+    Many PDF briefs produce output where layout bounding boxes cause every single word
+    or token to be placed on its own line (separated by newlines and spaces).
+    This function detects when average words per line < 2.5 and reassembles words into
+    coherent sentences, paragraphs, and sections while preserving true list items and headings.
+    """
+    if not text:
+        return ""
+
+    non_empty = [l.strip() for l in text.splitlines() if l.strip()]
+    if not non_empty:
+        return ""
+
+    avg_words = sum(len(l.split()) for l in non_empty) / max(1, len(non_empty))
+    if avg_words >= 2.5:
+        return text
+
+    KNOWN_SECTION_HEADERS = {
+        "platforms", "platform", "audience", "target audience", "clip length", "length",
+        "duration", "rules", "guidelines", "requirements", "payouts", "payout", "topics",
+        "topic", "caption", "captions", "description", "hashtags", "hashtag", "tags",
+        "mentions", "mention", "cta", "call to action", "branding", "instructions",
+        "rejection", "eligibility", "payment", "themes", "focus areas", "keywords",
+    }
+
+    tokens = non_empty
+    assembled_lines: list[str] = []
+    current_tokens: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        cand1 = tok.lower().rstrip(":")
+        cand2 = (tokens[i] + " " + tokens[i + 1]).lower().rstrip(":") if i + 1 < len(tokens) else ""
+
+        is_bullet = bool(re.match(r"^[-*•\d+.](\s+|$)", tok))
+        is_heading1 = cand1 in KNOWN_SECTION_HEADERS
+        is_heading2 = cand2 in KNOWN_SECTION_HEADERS
+
+        if is_bullet:
+            if current_tokens:
+                assembled_lines.append(" ".join(current_tokens))
+                current_tokens = []
+            current_tokens.append(tok)
+            i += 1
+            continue
+
+        if is_heading2:
+            if current_tokens:
+                assembled_lines.append(" ".join(current_tokens))
+                current_tokens = []
+            assembled_lines.append(f"{tokens[i]} {tokens[i + 1]}:")
+            i += 2
+            continue
+
+        if is_heading1:
+            if current_tokens:
+                assembled_lines.append(" ".join(current_tokens))
+                current_tokens = []
+            assembled_lines.append(f"{tok}:")
+            i += 1
+            continue
+
+        current_tokens.append(tok)
+        i += 1
+
+    if current_tokens:
+        assembled_lines.append(" ".join(current_tokens))
+
+    joined = "\n\n".join(assembled_lines)
+    joined = re.sub(r"\s+([,.:;?!])", r"\1", joined)
+    return joined
+
+
 def extract_guideline_text(filename: str, content_bytes: bytes) -> tuple[str, str]:
     """Validate and extract raw text from guideline bytes. Returns (text, normalized_ext)."""
     ext = validate_guideline_file(filename, content_bytes)
@@ -206,7 +281,7 @@ def extract_guideline_text(filename: str, content_bytes: bytes) -> tuple[str, st
         text = extract_text_from_docx(content_bytes)
     else:
         raise GuidelineExtractionError(f"Unsupported format: {ext}")
-    return text, ext
+    return _normalize_extracted_text(text), ext
 
 
 def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> CampaignBrief:
@@ -215,6 +290,7 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     Uses deterministic heuristic extraction to identify topics, duration,
     hooks, CTAs, tone, audience, and banned terms without requiring an active LLM key.
     """
+    raw_text = _normalize_extracted_text(raw_text)
     stem = Path(filename).stem
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
@@ -222,7 +298,10 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     name = stem.replace("_", " ").replace("-", " ").title()
     if lines:
         first_line = lines[0]
-        if len(first_line) < 60 and not any(kw in first_line.lower() for kw in ("page ", "confidential", "date")):
+        clean_first = re.sub(r"\s*[-–—:]?\s*(?:no networks|video clipping campaign|video clipping rules).*$", "", first_line, flags=re.IGNORECASE).strip(" -#:")
+        if clean_first and len(clean_first) >= 3 and not any(kw in clean_first.lower() for kw in ("page ", "confidential", "date")):
+            name = clean_first[:80]
+        elif len(first_line) < 60 and not any(kw in first_line.lower() for kw in ("page ", "confidential", "date")):
             name = first_line.strip("# ")
 
     # Section extractors
@@ -275,7 +354,14 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     bullet_items = re.findall(r"(?:^|\n)\s*[-*•\d+.]\s+([^\n\r]+)", raw_text)
     for item in bullet_items:
         clean = item.strip()
-        if 4 <= len(clean) <= 60 and not clean.lower().startswith(("page", "http", "www")):
+        clean_lower = clean.lower()
+        if 4 <= len(clean) <= 60 and not clean_lower.startswith(("page", "http", "www")):
+            is_sop = any(re.search(rf"\b{re.escape(w)}\b", clean_lower) for w in (
+                "rejection", "submit", "payout", "payouts", "tier-1", "late", "non-dedicated",
+                "invoice", "deadline", "submission", "guideline", "payment"
+            ))
+            if is_sop:
+                continue
             if len(required_topics) < 5:
                 required_topics.append(clean)
             elif len(optional_keywords) < 10:
@@ -286,8 +372,10 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     if kw_match:
         extracted = [w.strip() for w in re.split(r"[,;•|]+", kw_match.group(1)) if w.strip()]
         for kw in extracted:
-            if kw and kw not in required_topics:
-                required_topics.append(kw)
+            kw_l = kw.lower()
+            if kw and kw_l not in ENGLISH_STOPWORDS and not any(w in kw_l for w in ("rejection", "payout", "submit", "late", "deadline", "tier-1")):
+                if kw not in required_topics:
+                    required_topics.append(kw)
 
     # 5. Banned Words / Prohibited Topics
     banned_words: list[str] = []
@@ -396,6 +484,15 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
             if b and b not in required_concepts:
                 required_concepts.append(b)
                 branding_rules.append(b)
+    if not branding_rules and name:
+        # Check creator/brand name before hyphen in campaign name (e.g. "Jake Paul - 'The Ranch'")
+        creator_m = re.match(r"^([A-Z][a-zA-Z0-9\s]{1,25})\s*[-–—]", name)
+        if creator_m:
+            c_name = creator_m.group(1).strip()
+            if c_name.lower() not in ("video", "campaign", "guideline", "brief"):
+                branding_rules.append(c_name)
+                if c_name not in required_concepts:
+                    required_concepts.append(c_name)
 
     # 10. Hashtags extraction
     hashtags: list[str] = []
@@ -410,6 +507,13 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
             norm_tag = t if t.startswith("#") else f"#{t}"
             if norm_tag not in hashtags:
                 hashtags.append(norm_tag)
+    # Ensure brand tag is present if brand was discovered
+    for b in branding_rules:
+        clean_bt = re.sub(r"[^\w]", "", b)
+        if clean_bt:
+            b_tag = f"#{clean_bt}"
+            if b_tag not in hashtags:
+                hashtags.append(b_tag)
 
     # 11. Title Patterns extraction
     title_patterns: list[str] = []
@@ -420,10 +524,18 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
 
     # 12. Description Guidelines & links extraction
     description_guidelines: list[str] = []
+    # Extract full quotes (e.g. “Jake Paul...”)
+    quote_matches = re.findall(r'[“"][^"”\n\r]{15,400}[”"]', raw_text)
+    for qm in quote_matches:
+        q_clean = qm.strip('“"”').strip()
+        if q_clean and q_clean not in description_guidelines:
+            description_guidelines.append(q_clean)
+
     for dm in re.finditer(r"(?:description|caption(?:\s+requirements)?|body\s+copy|link\s+in\s+description)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE):
         d_val = dm.group(1).strip()
-        if d_val and d_val not in description_guidelines:
-            description_guidelines.append(d_val)
+        d_clean = re.sub(r'^[“"”\s]+|[“"”\s]+$', '', d_val)
+        if len(d_clean) > 8 and d_clean not in description_guidelines:
+            description_guidelines.append(d_clean)
     raw_urls = re.findall(r"https?://[^\s<>\"']+|www\.[^\s<>\"']+", raw_text)
     for u in raw_urls:
         url_note = f"Include link: {u}"

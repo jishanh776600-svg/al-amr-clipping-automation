@@ -296,7 +296,8 @@ class PublishingService:
                         tg_file_id = appr.telemetry.get("telegram_file_id")
 
                 if tg_file_id:
-                    tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+                    from ..telegram.review_bot import get_telegram_config
+                    tg_token, _, _ = get_telegram_config()
                     if tg_token:
                         try:
                             import httpx

@@ -44,11 +44,16 @@ def extract_campaign_seo_requirements(
     elif hasattr(campaign_spec, "required_topics") and not hasattr(campaign_spec, "desired_topics"):
         campaign_spec = CampaignSpecification.from_campaign_brief(campaign_spec)
 
-    # 1. Required phrases / keywords
+    # 1. Required phrases / keywords (excluding SOP operational terms)
+    sop_exclude = {
+        "payout", "payouts", "submit", "submission", "rejection", "rejected",
+        "tier-1", "non-dedicated", "late", "consistent", "must", "required",
+        "rule", "rules", "guidelines", "sop", "eligible", "disqualified",
+    }
     required_phrases = []
     for item in campaign_spec.keywords:
         val = getattr(item, "value", str(item)).strip()
-        if val and val not in required_phrases:
+        if val and val.lower() not in sop_exclude and val not in required_phrases:
             required_phrases.append(val)
 
     # 2. Required mentions
@@ -100,6 +105,12 @@ def extract_campaign_seo_requirements(
     brand_name = campaign_spec.title if campaign_spec.title != "Normalized Campaign" else ""
     if not brand_name and campaign_spec.branding_rules:
         brand_name = getattr(campaign_spec.branding_rules[0], "value", "")
+    if not brand_name and getattr(campaign_spec, "name", None):
+        c_match = re.match(r"^([A-Z][a-zA-Z0-9\s]{1,25})\s*[-–—]", campaign_spec.name)
+        if c_match:
+            cand_b = c_match.group(1).strip()
+            if cand_b.lower() not in ("video", "campaign", "guideline", "brief"):
+                brand_name = cand_b
 
     return CampaignSEORequirements(
         campaign_id=campaign_spec.campaign_id,
