@@ -183,22 +183,22 @@ jobs:
           WORKER_MIN_DURATION_S: ${{ github.event.inputs.min_duration_s }}
           WORKER_MAX_DURATION_S: ${{ github.event.inputs.max_duration_s }}
           WORKER_JOB_SETTINGS: ${{ github.event.inputs.job_settings }}
+          INPUT_JOB_ID: ${{ github.event.inputs.job_id }}
+          INPUT_SOURCE_URL: ${{ github.event.inputs.source_url }}
+          INPUT_CAMPAIGN_BRIEF: ${{ github.event.inputs.campaign_brief }}
+          INPUT_CALLBACK_URL: ${{ github.event.inputs.callback_url }}
+          INPUT_CALLBACK_TOKEN: ${{ github.event.inputs.callback_token }}
+          INPUT_PUBLISH_TARGETS: ${{ github.event.inputs.publish_targets }}
+          INPUT_WHISPER_MODEL: ${{ github.event.inputs.whisper_model }}
+          INPUT_MAX_CLIPS: ${{ github.event.inputs.max_clips }}
+          INPUT_MIN_DURATION_S: ${{ github.event.inputs.min_duration_s }}
+          INPUT_MAX_DURATION_S: ${{ github.event.inputs.max_duration_s }}
+          INPUT_VISUAL_FILTER: ${{ github.event.inputs.visual_filter || 'original' }}
+          INPUT_CAPTION_STYLE: ${{ github.event.inputs.caption_style || 'classic_professional' }}
+          INPUT_BGM_ASSET_ID: ${{ github.event.inputs.bgm_asset_id || '' }}
+          INPUT_JOB_SETTINGS: ${{ github.event.inputs.job_settings }}
         run: |
-          python -m autoclip.jobs.worker_runner \
-            --job-id "${{ github.event.inputs.job_id }}" \
-            --source-url "${{ github.event.inputs.source_url }}" \
-            --campaign-brief '${{ github.event.inputs.campaign_brief }}' \
-            --callback-url "${{ github.event.inputs.callback_url }}" \
-            --callback-token "${{ github.event.inputs.callback_token }}" \
-            --publish-targets '${{ github.event.inputs.publish_targets }}' \
-            --whisper-model "${{ github.event.inputs.whisper_model }}" \
-            --max-clips "${{ github.event.inputs.max_clips }}" \
-            --min-duration "${WORKER_MIN_DURATION_S:-20}" \
-            --max-duration "${WORKER_MAX_DURATION_S:-30}" \
-            --visual-filter "${{ github.event.inputs.visual_filter || 'original' }}" \
-            --caption-style "${{ github.event.inputs.caption_style || 'classic_professional' }}" \
-            --bgm-asset-id "${{ github.event.inputs.bgm_asset_id || '' }}" \
-            --job-settings '${{ github.event.inputs.job_settings }}'
+          python -m autoclip.jobs.worker_runner
 
       - name: Container Logs (WARP & POT Provider)
         if: always()

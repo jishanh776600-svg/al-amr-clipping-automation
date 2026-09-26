@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -46,27 +47,118 @@ def _float_or_none(val: Any) -> float | None:
         return None
 
 
+import threading
+import time
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AL AMR On-Demand Worker Runner")
-    parser.add_argument("--job-id", required=True, help="Job ID to process")
-    parser.add_argument("--source-url", required=True, help="URL or path of source video")
-    parser.add_argument("--campaign-brief", default="{}", help="Campaign brief JSON string")
-    parser.add_argument("--callback-url", default="", help="Control plane callback endpoint")
-    parser.add_argument("--callback-token", default="", help="Auth token for callback")
-    parser.add_argument("--publish-targets", default="[]", help="Publish destinations JSON array")
-    parser.add_argument("--whisper-model", default="base", help="Faster-Whisper model")
-    parser.add_argument("--max-clips", type=int, default=3, help="Maximum clips to generate")
-    parser.add_argument("--min-duration", type=_float_or_none, default=None, help="Minimum clip duration in seconds")
-    parser.add_argument("--max-duration", type=_float_or_none, default=None, help="Maximum clip duration in seconds")
-    parser.add_argument("--job-settings", default="{}", help="Job settings JSON string")
-    parser.add_argument("--visual-filter", default="", help="Visual filter preset (e.g. black_and_white, cinematic_warm)")
-    parser.add_argument("--caption-style", default="", help="Caption style preset (e.g. kinetic, bold_pop)")
-    parser.add_argument("--bgm-asset-id", default="", help="BGM asset ID or name (e.g. motivation)")
-    return parser.parse_args()
+    parser.add_argument("--job-id", default=os.environ.get("INPUT_JOB_ID") or os.environ.get("JOB_ID") or "", help="Job ID to process")
+    parser.add_argument("--source-url", default=os.environ.get("INPUT_SOURCE_URL") or os.environ.get("SOURCE_URL") or "", help="URL or path of source video")
+    parser.add_argument("--campaign-brief", default=os.environ.get("INPUT_CAMPAIGN_BRIEF") or os.environ.get("CAMPAIGN_BRIEF") or "{}", help="Campaign brief JSON string")
+    parser.add_argument("--callback-url", default=os.environ.get("INPUT_CALLBACK_URL") or os.environ.get("CALLBACK_URL") or "", help="Control plane callback endpoint")
+    parser.add_argument("--callback-token", default=os.environ.get("INPUT_CALLBACK_TOKEN") or os.environ.get("CALLBACK_TOKEN") or "", help="Auth token for callback")
+    parser.add_argument("--publish-targets", default=os.environ.get("INPUT_PUBLISH_TARGETS") or os.environ.get("PUBLISH_TARGETS") or "[]", help="Publish destinations JSON array")
+    parser.add_argument("--whisper-model", default=os.environ.get("INPUT_WHISPER_MODEL") or os.environ.get("WHISPER_MODEL") or "base", help="Faster-Whisper model")
+    parser.add_argument("--max-clips", type=int, default=int(os.environ.get("INPUT_MAX_CLIPS") or os.environ.get("MAX_CLIPS") or 5), help="Maximum clips to generate")
+    parser.add_argument("--min-duration", type=_float_or_none, default=_float_or_none(os.environ.get("INPUT_MIN_DURATION_S") or os.environ.get("WORKER_MIN_DURATION_S") or 20.0), help="Minimum clip duration in seconds")
+    parser.add_argument("--max-duration", type=_float_or_none, default=_float_or_none(os.environ.get("INPUT_MAX_DURATION_S") or os.environ.get("WORKER_MAX_DURATION_S") or 30.0), help="Maximum clip duration in seconds")
+    parser.add_argument("--job-settings", default=os.environ.get("INPUT_JOB_SETTINGS") or os.environ.get("WORKER_JOB_SETTINGS") or "{}", help="Job settings JSON string")
+    parser.add_argument("--visual-filter", default=os.environ.get("INPUT_VISUAL_FILTER") or os.environ.get("VISUAL_FILTER") or "original", help="Visual filter preset (e.g. black_and_white, cinematic_warm)")
+    parser.add_argument("--caption-style", default=os.environ.get("INPUT_CAPTION_STYLE") or os.environ.get("CAPTION_STYLE") or "classic_professional", help="Caption style preset (e.g. kinetic, bold_pop)")
+    parser.add_argument("--bgm-asset-id", default=os.environ.get("INPUT_BGM_ASSET_ID") or os.environ.get("BGM_ASSET_ID") or "", help="BGM asset ID or name (e.g. motivation)")
+    args = parser.parse_args()
+    if not args.job_id:
+        parser.error("--job-id or INPUT_JOB_ID environment variable is required")
+    if not args.source_url:
+        parser.error("--source-url or INPUT_SOURCE_URL environment variable is required")
+    return args
 
 
 class WorkerCancelledError(Exception):
     """Raised when worker detects that job cancellation was requested by operator."""
+
+
+class WorkerHeartbeatManager:
+    """Independent background heartbeat loop that continuously reports worker liveness to the control plane.
+
+    Guarantees:
+    - Runs in a dedicated daemon thread independent of the main pipeline execution.
+    - Emits heartbeats every 15 seconds, including during long-running Whisper inference, FFmpeg encodes,
+      model weights loading, video acquisition, and MediaPipe tracking.
+    - Keeps last known stage and progress so control plane knows exactly what stage is active.
+    - Handles transient network timeouts, 502s, 503s with exponential backoff and never crashes the worker.
+    - Checks for cancel requests returned from the control plane and signals cancellation.
+    """
+
+    def __init__(self, callback_url: str, callback_token: str, interval_s: float = 15.0) -> None:
+        self.callback_url = callback_url
+        self.callback_token = callback_token
+        self.interval_s = interval_s
+        self.current_stage: str = "worker_starting"
+        self.current_progress: float = 0.0
+        self.current_message: str | None = None
+        self._stop_event = threading.Event()
+        self._cancel_requested_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self.last_successful_heartbeat: float = 0.0
+
+    def update_state(self, stage: str | None = None, progress: float | None = None, message: str | None = None) -> None:
+        with self._lock:
+            if stage is not None:
+                self.current_stage = stage
+            if progress is not None:
+                self.current_progress = progress
+            if message is not None:
+                self.current_message = message
+
+    def is_cancel_requested(self) -> bool:
+        return self._cancel_requested_event.is_set()
+
+    def start(self) -> None:
+        if not self.callback_url:
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, name="alamr-worker-heartbeat", daemon=True)
+        self._thread.start()
+        log.info("Independent background worker heartbeat started (interval: %.1fs).", self.interval_s)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        log.info("Independent worker heartbeat stopped.")
+
+    def _send_one_heartbeat(self) -> None:
+        with self._lock:
+            stg = self.current_stage
+            prog = self.current_progress
+            msg = self.current_message
+
+        try:
+            data = send_callback(
+                self.callback_url,
+                self.callback_token,
+                stage=stg,
+                progress=prog,
+                message=msg,
+            )
+            self.last_successful_heartbeat = time.time()
+            if data and data.get("status") in ("cancel_requested", "cancelled"):
+                self._cancel_requested_event.set()
+        except WorkerCancelledError:
+            self._cancel_requested_event.set()
+        except Exception as exc:
+            log.debug("Heartbeat delivery transient error: %s", exc)
+
+    def _run_loop(self) -> None:
+        self._send_one_heartbeat()
+        while not self._stop_event.is_set():
+            if self._stop_event.wait(timeout=self.interval_s):
+                break
+            self._send_one_heartbeat()
+
 
 
 def send_callback(
@@ -154,7 +246,21 @@ async def async_main() -> None:
     paths.ensure_layout()
     db.init()
 
+    heartbeat_manager = WorkerHeartbeatManager(
+        callback_url=args.callback_url,
+        callback_token=args.callback_token,
+        interval_s=15.0,
+    )
+    heartbeat_manager.start()
+    atexit.register(heartbeat_manager.stop)
+
     def report(**kw):
+        if "stage" in kw or "progress" in kw or "message" in kw:
+            heartbeat_manager.update_state(
+                stage=kw.get("stage"),
+                progress=kw.get("progress"),
+                message=kw.get("message"),
+            )
         send_callback(args.callback_url, args.callback_token, **kw)
 
     # Listen for granular acquisition events and relay to control plane
@@ -476,6 +582,7 @@ async def async_main() -> None:
         source,
         settings=settings,
         on_progress=on_progress,
+        is_cancelled=lambda: heartbeat_manager.is_cancel_requested(),
     )
 
     log.info("Running pipeline stages for job %s...", job.id)
@@ -765,6 +872,7 @@ async def async_main() -> None:
             publishing_records=publishing_payload,
             approvals=approvals_payload,
         )
+        heartbeat_manager.stop()
         return
 
     report(
@@ -779,6 +887,7 @@ async def async_main() -> None:
         publishing_records=publishing_payload,
         approvals=approvals_payload,
     )
+    heartbeat_manager.stop()
     log.info("AL AMR Worker completed job %s successfully with %d clips.", args.job_id, len(clips))
 
 

@@ -280,8 +280,39 @@ def sweep_stale_jobs(heartbeat_timeout_s: float = DEFAULT_HEARTBEAT_TIMEOUT_S) -
                 attempt=next_attempt,
                 progress=0.0,
                 last_heartbeat_at=None,
+                stale_at=None,
+                error=None,
+                started_at=None,
             )
             broker.publish(Event(type="retried", job_id=job.id, data={"attempt": next_attempt, "reason": "stale_recovery"}))
+
+            # Dispatch remote worker if running on GitHub Actions
+            if job.dispatch_mode == "github":
+                from .dispatcher import dispatch_job_to_github
+                source = store.get_source(job.source_id)
+                if source:
+                    # Cancel any prior GitHub run to guarantee no duplicate active workers
+                    if job.github_run_id:
+                        asyncio.create_task(cancel_github_workflow_run(job.github_run_id))
+
+                    delay_s = compute_backoff_delay(next_attempt)
+
+                    async def _retry_dispatch(j_id=job.id, src=source, delay=delay_s):
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        fresh_job = store.get_job(j_id)
+                        if fresh_job and fresh_job.status == "queued":
+                            log.info("Executing automated GitHub retry dispatch for job %s (attempt %d)...", j_id, next_attempt)
+                            try:
+                                await dispatch_job_to_github(fresh_job, src)
+                            except Exception as exc:
+                                log.exception("Automated GitHub retry dispatch failed for job %s: %s", j_id, exc)
+
+                    loop = broker._loop
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(_retry_dispatch(), loop)
+                    else:
+                        asyncio.create_task(_retry_dispatch())
         else:
             store.update_job(
                 job.id,

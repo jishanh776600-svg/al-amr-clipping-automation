@@ -247,17 +247,23 @@ async def dispatch_job_to_github(
 
     run_id = None
     run_url = None
-    try:
-        runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=3"
-        runs_resp = await client.get(runs_url, headers=headers)
-        if runs_resp.status_code == 200:
-            runs_data = runs_resp.json().get("workflow_runs", [])
-            if runs_data:
-                latest_run = runs_data[0]
-                run_id = str(latest_run.get("id"))
-                run_url = latest_run.get("html_url")
-    except Exception as exc:
-        log.debug("Could not immediately fetch GitHub run ID: %s", exc)
+    # Poll for the newly created workflow run up to 4 times with short backoff
+    for attempt in range(4):
+        await asyncio.sleep(1.5 if attempt > 0 else 0.5)
+        try:
+            runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?event=workflow_dispatch&per_page=5"
+            runs_resp = await client.get(runs_url, headers=headers)
+            if runs_resp.status_code == 200:
+                runs_data = runs_resp.json().get("workflow_runs", [])
+                if runs_data:
+                    active_runs = [r for r in runs_data if r.get("status") in ("queued", "in_progress")]
+                    selected_run = active_runs[0] if active_runs else runs_data[0]
+                    run_id = str(selected_run.get("id"))
+                    run_url = selected_run.get("html_url")
+                    log.info("Dispatched job %s associated with GitHub run ID %s (%s)", job.id, run_id, selected_run.get("status"))
+                    break
+        except Exception as exc:
+            log.debug("Could not fetch GitHub run ID (attempt %d/4): %s", attempt + 1, exc)
 
     update_payload: dict[str, Any] = {
         "status": "running",
