@@ -54,19 +54,19 @@ class PublishingService:
         # Multi-Account Resolution: YouTube
         if norm_platform == "youtube":
             ref_env = cfg.get("refresh_token_env")
-            refresh_token = (os.getenv(ref_env) if ref_env else None) or os.getenv(f"YOUTUBE_REFRESH_TOKEN_{clean_id}") or os.getenv("YOUTUBE_REFRESH_TOKEN")
+            refresh_token = (os.getenv(ref_env) if ref_env else None) or os.getenv(f"YOUTUBE_REFRESH_TOKEN_{clean_id}")
             cid_env = cfg.get("client_id_env")
-            client_id = (os.getenv(cid_env) if cid_env else None) or os.getenv(f"YOUTUBE_CLIENT_ID_{clean_id}") or os.getenv("YOUTUBE_CLIENT_ID")
+            client_id = (os.getenv(cid_env) if cid_env else None) or os.getenv(f"YOUTUBE_CLIENT_ID_{clean_id}")
             sec_env = cfg.get("client_secret_env")
-            client_secret = (os.getenv(sec_env) if sec_env else None) or os.getenv(f"YOUTUBE_CLIENT_SECRET_{clean_id}") or os.getenv("YOUTUBE_CLIENT_SECRET")
+            client_secret = (os.getenv(sec_env) if sec_env else None) or os.getenv(f"YOUTUBE_CLIENT_SECRET_{clean_id}")
             return YouTubePublisher(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
 
         # Multi-Account Resolution: Instagram
         elif norm_platform == "instagram":
             tok_env = cfg.get("access_token_env")
-            access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"META_ACCESS_TOKEN_{clean_id}") or os.getenv("META_ACCESS_TOKEN") or os.getenv("INSTAGRAM_ACCESS_TOKEN")
+            access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"META_ACCESS_TOKEN_{clean_id}")
             acc_env = cfg.get("account_id_env")
-            account_id = (os.getenv(acc_env) if acc_env else None) or cfg.get("account_id") or os.getenv(f"INSTAGRAM_ACCOUNT_ID_{clean_id}") or dest.account_identifier or os.getenv("INSTAGRAM_ACCOUNT_ID")
+            account_id = (os.getenv(acc_env) if acc_env else None) or cfg.get("account_id") or os.getenv(f"INSTAGRAM_ACCOUNT_ID_{clean_id}")
             return InstagramPublisher(access_token=access_token, account_id=account_id)
 
         # Multi-Account Resolution: Telegram

@@ -97,9 +97,9 @@ class YouTubePublisher(BasePublisher):
         except Exception:
             pass
 
-        self.client_id = (client_id or vault_client_id or os.getenv("YOUTUBE_CLIENT_ID", "")).strip()
-        self.client_secret = (client_secret or vault_client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
-        self.refresh_token = (refresh_token or vault_refresh or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
+        self.client_id = (vault_client_id or client_id or os.getenv("YOUTUBE_CLIENT_ID", "")).strip()
+        self.client_secret = (vault_client_secret or client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
+        self.refresh_token = (vault_refresh or refresh_token or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
 
     def is_configured(self) -> bool:
         return bool(self.refresh_token)

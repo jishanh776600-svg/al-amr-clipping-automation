@@ -67,14 +67,14 @@ class InstagramPublisher(BasePublisher):
             pass
 
         self.access_token = (
-            access_token
-            or vault_access
+            vault_access
+            or access_token
             or os.getenv("META_ACCESS_TOKEN")
             or os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
         ).strip()
         self.account_id = (
-            account_id
-            or vault_acc_id
+            vault_acc_id
+            or account_id
             or os.getenv("INSTAGRAM_ACCOUNT_ID")
             or os.getenv("META_ACCOUNT_ID", "")
         ).strip()
