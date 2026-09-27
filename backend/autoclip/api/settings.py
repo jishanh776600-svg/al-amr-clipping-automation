@@ -412,7 +412,13 @@ async def validate_secret(key: str, payload: SecretIn | None = None) -> Validate
     Does NOT expose the secret. Tests connectivity and permissions.
     """
     canon = config.canonical_secret_key(key) or key
-    valid = (*config.KEYED_PROVIDERS, config.HF_TOKEN_KEY, config.GITHUB_PAT_KEY)
+    valid = (
+        *config.KEYED_PROVIDERS,
+        config.HF_TOKEN_KEY,
+        config.GITHUB_PAT_KEY,
+        *config.PUBLISHING_SECRET_KEYS,
+        *config.GOOGLE_DRIVE_SECRET_KEYS,
+    )
     if canon not in valid:
         raise HTTPException(status_code=400, detail=f"Unknown secret '{key}'.")
 
