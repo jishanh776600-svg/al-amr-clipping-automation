@@ -19,20 +19,11 @@ YOUTUBE_UPLOAD_SCOPES = [
 
 
 def resolve_expected_youtube_channel_id(explicit: str | None = None) -> str | None:
-    """Resolve authoritative expected AL AMR YouTube Channel ID from explicit param, env, or vault."""
+    """Resolve authoritative expected AL AMR YouTube Channel ID from explicit param, vault, or env."""
     if explicit and explicit.strip():
         return explicit.strip()
 
-    # 1. Environment variables
-    env_id = (
-        os.getenv("AL_AMR_YOUTUBE_CHANNEL_ID")
-        or os.getenv("YOUTUBE_CHANNEL_ID")
-        or os.getenv("EXPECTED_YOUTUBE_CHANNEL_ID")
-    )
-    if env_id and env_id.strip():
-        return env_id.strip()
-
-    # 2. Encrypted Vault
+    # 1. Encrypted Vault (takes precedence over stale env)
     try:
         from ..security.vault import get_vault
         vault = get_vault()
@@ -46,7 +37,17 @@ def resolve_expected_youtube_channel_id(explicit: str | None = None) -> str | No
     except Exception:
         pass
 
-    return None
+    # 2. Environment variables
+    env_id = (
+        os.getenv("AL_AMR_YOUTUBE_CHANNEL_ID")
+        or os.getenv("YOUTUBE_CHANNEL_ID")
+        or os.getenv("EXPECTED_YOUTUBE_CHANNEL_ID")
+    )
+    if env_id and env_id.strip():
+        return env_id.strip()
+
+    # 3. Authoritative AL AMR channel fallback (Future Founders)
+    return "UCtaOzeFW2kEOexMoSNA75tA"
 
 
 def classify_youtube_error(exc: Exception) -> tuple[str, bool]:
@@ -84,22 +85,21 @@ class YouTubePublisher(BasePublisher):
         client_secret: str | None = None,
         refresh_token: str | None = None,
     ) -> None:
-        self.client_id = (client_id or os.getenv("YOUTUBE_CLIENT_ID", "")).strip()
-        self.client_secret = (client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
-        self.refresh_token = (refresh_token or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
+        vault_refresh = None
+        vault_client_id = None
+        vault_client_secret = None
+        try:
+            from ..security.vault import get_vault
+            vault = get_vault()
+            vault_refresh = vault.retrieve_secret("youtube_refresh_token") or vault.retrieve_secret("YOUTUBE_REFRESH_TOKEN")
+            vault_client_id = vault.retrieve_secret("youtube_client_id") or vault.retrieve_secret("YOUTUBE_CLIENT_ID")
+            vault_client_secret = vault.retrieve_secret("youtube_client_secret") or vault.retrieve_secret("YOUTUBE_CLIENT_SECRET")
+        except Exception:
+            pass
 
-        if not self.refresh_token or not self.client_id or not self.client_secret:
-            try:
-                from ..security.vault import get_vault
-                vault = get_vault()
-                if not self.refresh_token:
-                    self.refresh_token = (vault.retrieve_secret("youtube_refresh_token") or vault.retrieve_secret("YOUTUBE_REFRESH_TOKEN") or "").strip()
-                if not self.client_id:
-                    self.client_id = (vault.retrieve_secret("youtube_client_id") or vault.retrieve_secret("YOUTUBE_CLIENT_ID") or "").strip()
-                if not self.client_secret:
-                    self.client_secret = (vault.retrieve_secret("youtube_client_secret") or vault.retrieve_secret("YOUTUBE_CLIENT_SECRET") or "").strip()
-            except Exception:
-                pass
+        self.client_id = (client_id or vault_client_id or os.getenv("YOUTUBE_CLIENT_ID", "")).strip()
+        self.client_secret = (client_secret or vault_client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
+        self.refresh_token = (refresh_token or vault_refresh or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
 
     def is_configured(self) -> bool:
         return bool(self.refresh_token)

@@ -46,13 +46,35 @@ class InstagramPublisher(BasePublisher):
         account_id: str | None = None,
         control_plane_url: str | None = None,
     ) -> None:
+        vault_access = None
+        vault_acc_id = None
+        try:
+            from ..security.vault import get_vault
+            vault = get_vault()
+            vault_access = (
+                vault.retrieve_secret("meta_access_token")
+                or vault.retrieve_secret("META_ACCESS_TOKEN")
+                or vault.retrieve_secret("instagram_access_token")
+                or vault.retrieve_secret("INSTAGRAM_ACCESS_TOKEN")
+            )
+            vault_acc_id = (
+                vault.retrieve_secret("instagram_account_id")
+                or vault.retrieve_secret("INSTAGRAM_ACCOUNT_ID")
+                or vault.retrieve_secret("meta_account_id")
+                or vault.retrieve_secret("META_ACCOUNT_ID")
+            )
+        except Exception:
+            pass
+
         self.access_token = (
             access_token
+            or vault_access
             or os.getenv("META_ACCESS_TOKEN")
             or os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
         ).strip()
         self.account_id = (
             account_id
+            or vault_acc_id
             or os.getenv("INSTAGRAM_ACCOUNT_ID")
             or os.getenv("META_ACCOUNT_ID", "")
         ).strip()
@@ -61,28 +83,6 @@ class InstagramPublisher(BasePublisher):
             or os.getenv("CONTROL_PLANE_URL")
             or os.getenv("RENDER_EXTERNAL_URL", "")
         ).strip().rstrip("/")
-
-        if not self.access_token or not self.account_id:
-            try:
-                from ..security.vault import get_vault
-                vault = get_vault()
-                if not self.access_token:
-                    self.access_token = (
-                        vault.retrieve_secret("meta_access_token")
-                        or vault.retrieve_secret("META_ACCESS_TOKEN")
-                        or vault.retrieve_secret("instagram_access_token")
-                        or vault.retrieve_secret("INSTAGRAM_ACCESS_TOKEN")
-                        or ""
-                    ).strip()
-                if not self.account_id:
-                    self.account_id = (
-                        vault.retrieve_secret("instagram_account_id")
-                        or vault.retrieve_secret("INSTAGRAM_ACCOUNT_ID")
-                        or vault.retrieve_secret("meta_account_id")
-                        or vault.retrieve_secret("META_ACCOUNT_ID")
-                        or ""
-                    ).strip()
-            except Exception:
                 pass
 
     def is_configured(self) -> bool:

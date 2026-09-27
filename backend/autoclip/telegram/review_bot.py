@@ -1258,13 +1258,20 @@ async def _execute_auto_publish(
                 platforms_status=platforms_status,
                 has_caption=has_caption,
             )
+            if yt_ok and ig_ok:
+                kb = [[{"text": button_label, "callback_data": "tg:done"}]]
+            else:
+                kb = [
+                    [{"text": "🔄 Retry Publish", "callback_data": f"tg:appr:{clip_id}"}],
+                    [{"text": button_label, "callback_data": "tg:done"}],
+                ]
             await _safe_edit_telegram_message(
                 bot_token=bot_token,
                 chat_id=chat_id,
                 message_id=message_id,
                 text=final_card_text,
                 has_caption=has_caption,
-                reply_markup={"inline_keyboard": [[{"text": button_label, "callback_data": "tg:done"}]]},
+                reply_markup={"inline_keyboard": kb},
             )
 
         # Send follow-up confirmation message
