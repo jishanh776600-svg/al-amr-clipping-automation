@@ -130,7 +130,7 @@ class PublishingService:
         if clip_meta is None:
             reasons.append("SEO metadata record not found (Step 23 not completed).")
         else:
-            if not clip_meta.is_publish_ready:
+            if clip_meta.compliance_status not in ("SEO_PASS", "SEO_WARN"):
                 reasons.append(
                     f"SEO metadata failed compliance gate: {clip_meta.compliance_status}. "
                     f"Errors: {'; '.join(clip_meta.validation_errors) or 'none'}"

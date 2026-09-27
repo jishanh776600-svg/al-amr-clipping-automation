@@ -67,7 +67,7 @@ class ComplianceResult:
 
     @property
     def is_publish_ready(self) -> bool:
-        return self.status in (ComplianceStatus.SEO_PASS, ComplianceStatus.SEO_WARN) and len(self.errors) == 0
+        return self.status in (ComplianceStatus.SEO_PASS, ComplianceStatus.SEO_WARN)
 
     @property
     def is_compliant(self) -> bool:

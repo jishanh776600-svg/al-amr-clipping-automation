@@ -56,11 +56,19 @@ def extract_campaign_seo_requirements(
         "payout", "payouts", "submit", "submission", "rejection", "rejected",
         "tier-1", "non-dedicated", "late", "consistent", "must", "required",
         "rule", "rules", "guidelines", "sop", "eligible", "disqualified",
+        "ticket", "discord", "get-help", "no networks", "support",
     }
     required_phrases = []
     for item in campaign_spec.keywords:
         val = getattr(item, "value", str(item)).strip()
-        if val and val.lower() not in sop_exclude and val not in required_phrases:
+        val_lower = val.lower()
+        if (
+            val
+            and len(val) <= 45
+            and not any(ex in val_lower for ex in ("ticket", "get-help", "no networks", "discord"))
+            and val_lower not in sop_exclude
+            and val not in required_phrases
+        ):
             required_phrases.append(val)
 
     # 2. Required mentions

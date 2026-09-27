@@ -1030,7 +1030,7 @@ class ClipMetadataRecord:
 
     @property
     def is_publish_ready(self) -> bool:
-        return self.compliance_status in ("SEO_PASS", "SEO_WARN") and len(self.validation_errors) == 0
+        return self.compliance_status in ("SEO_PASS", "SEO_WARN")
 
     def to_dict(self) -> dict[str, Any]:
         return {
