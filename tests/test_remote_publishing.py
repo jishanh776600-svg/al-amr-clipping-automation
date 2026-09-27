@@ -272,13 +272,35 @@ class TestPlatformAdaptersMocked:
         meta = PublishingMetadata(title="Test Short")
 
         mock_build = MagicMock()
+        mock_channels = MagicMock()
+        mock_ch_list = MagicMock()
+        mock_ch_list.execute.return_value = {
+            "items": [{"id": "UC_AL_AMR_PROD", "snippet": {"title": "AL AMR Official"}}]
+        }
+        mock_channels.list.return_value = mock_ch_list
+        mock_build.return_value.channels.return_value = mock_channels
+
         mock_videos = MagicMock()
         mock_insert = MagicMock()
         mock_insert.execute.return_value = {"id": "yt-12345", "status": {"uploadStatus": "uploaded"}}
         mock_videos.insert.return_value = mock_insert
+
+        # Post-upload verification videos().list mock
+        mock_vid_list = MagicMock()
+        mock_vid_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "yt-12345",
+                    "snippet": {"channelId": "UC_AL_AMR_PROD", "channelTitle": "AL AMR Official", "title": "Test Short #Shorts"},
+                    "status": {"uploadStatus": "processed", "privacyStatus": "public", "publicStatsViewable": True},
+                    "contentDetails": {"duration": "PT25S"},
+                }
+            ]
+        }
+        mock_videos.list.return_value = mock_vid_list
         mock_build.return_value.videos.return_value = mock_videos
 
-        with patch.dict(os.environ, {"YOUTUBE_PUBLISH_LIVE": "true"}), \
+        with patch.dict(os.environ, {"YOUTUBE_PUBLISH_LIVE": "true", "AL_AMR_YOUTUBE_CHANNEL_ID": "UC_AL_AMR_PROD"}), \
              patch.object(pub, "_get_credentials", return_value=MagicMock()), \
              patch("google.auth.transport.requests.Request"), \
              patch("googleapiclient.discovery.build", mock_build):
@@ -288,6 +310,90 @@ class TestPlatformAdaptersMocked:
             assert res.status == "published"
             assert res.remote_media_id == "yt-12345"
             assert "youtube.com/shorts/yt-12345" in (res.permalink or "")
+            assert res.details.get("verification_status") == "VERIFIED_PUBLIC"
+
+    @pytest.mark.asyncio
+    async def test_youtube_channel_identity_guard_blocks_mismatch(self, tmp_path):
+        vid_file = tmp_path / "vid.mp4"
+        vid_file.write_bytes(b"\x00" * 1024)
+
+        pub = YouTubePublisher(client_id="cid", client_secret="csec", refresh_token="rtok")
+        meta = PublishingMetadata(title="Test Short")
+
+        mock_build = MagicMock()
+        mock_channels = MagicMock()
+        mock_ch_list = MagicMock()
+        mock_ch_list.execute.return_value = {
+            "items": [{"id": "UC_WRONG_CHANNEL_999", "snippet": {"title": "Wrong Account"}}]
+        }
+        mock_channels.list.return_value = mock_ch_list
+        mock_build.return_value.channels.return_value = mock_channels
+
+        mock_videos = MagicMock()
+        mock_build.return_value.videos.return_value = mock_videos
+
+        with patch.dict(os.environ, {"YOUTUBE_PUBLISH_LIVE": "true", "AL_AMR_YOUTUBE_CHANNEL_ID": "UC_AL_AMR_PROD"}), \
+             patch.object(pub, "_get_credentials", return_value=MagicMock()), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("googleapiclient.discovery.build", mock_build):
+
+            res = await pub.publish(vid_file, meta, dry_run=False)
+            assert res.success is False
+            assert res.status == "failed"
+            assert res.error_code == "channel_mismatch"
+            assert "channel mismatch" in res.error.lower()
+            # Must NOT call videos().insert
+            mock_videos.insert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_youtube_post_upload_verification_rejects_unlisted(self, tmp_path):
+        vid_file = tmp_path / "vid.mp4"
+        vid_file.write_bytes(b"\x00" * 1024)
+
+        pub = YouTubePublisher(client_id="cid", client_secret="csec", refresh_token="rtok")
+        meta = PublishingMetadata(title="Test Short")
+
+        mock_build = MagicMock()
+        mock_channels = MagicMock()
+        mock_ch_list = MagicMock()
+        mock_ch_list.execute.return_value = {
+            "items": [{"id": "UC_AL_AMR_PROD", "snippet": {"title": "AL AMR Official"}}]
+        }
+        mock_channels.list.return_value = mock_ch_list
+        mock_build.return_value.channels.return_value = mock_channels
+
+        mock_videos = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.return_value = {"id": "yt-unlisted-1", "status": {"uploadStatus": "uploaded"}}
+        mock_videos.insert.return_value = mock_insert
+
+        # Post-upload verification returns unlisted and fails correction
+        mock_vid_list = MagicMock()
+        mock_vid_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "yt-unlisted-1",
+                    "snippet": {"channelId": "UC_AL_AMR_PROD", "channelTitle": "AL AMR Official"},
+                    "status": {"uploadStatus": "processed", "privacyStatus": "unlisted"},
+                    "contentDetails": {"duration": "PT20S"},
+                }
+            ]
+        }
+        mock_videos.list.return_value = mock_vid_list
+        # update throws error or does not change
+        mock_videos.update.side_effect = Exception("Forbidden")
+        mock_build.return_value.videos.return_value = mock_videos
+
+        with patch.dict(os.environ, {"YOUTUBE_PUBLISH_LIVE": "true", "AL_AMR_YOUTUBE_CHANNEL_ID": "UC_AL_AMR_PROD"}), \
+             patch.object(pub, "_get_credentials", return_value=MagicMock()), \
+             patch("google.auth.transport.requests.Request"), \
+             patch("googleapiclient.discovery.build", mock_build):
+
+            res = await pub.publish(vid_file, meta, dry_run=False)
+            assert res.success is False
+            assert res.status == "failed"
+            assert res.error_code == "visibility_incorrect"
+            assert "unlisted" in res.error.lower()
 
     @pytest.mark.asyncio
     async def test_instagram_publisher_mocked_success(self, tmp_path):

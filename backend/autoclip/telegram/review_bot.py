@@ -1141,7 +1141,16 @@ async def _execute_auto_publish(
         results["youtube"] = yt_rec
 
         if yt_rec and yt_rec.status == "PUBLISHED":
-            platforms_status["YouTube Shorts"] = "✅ Published"
+            ch_name = (yt_rec.response_metadata or {}).get("channel_title") or (yt_rec.response_metadata or {}).get("channelTitle") or "YouTube"
+            platforms_status["YouTube Shorts"] = f"✅ Published ({ch_name})"
+        elif yt_rec and yt_rec.error_code == "channel_mismatch":
+            platforms_status["YouTube Shorts"] = "❌ Wrong channel — publication blocked"
+        elif yt_rec and yt_rec.error_code == "visibility_incorrect":
+            platforms_status["YouTube Shorts"] = "❌ Visibility is unlisted — publication not accepted"
+        elif yt_rec and (yt_rec.error_code == "processing_incomplete" or yt_rec.status in ("PROCESSING", "UPLOAD_ACCEPTED")):
+            platforms_status["YouTube Shorts"] = "⏳ Upload incomplete — still processing"
+        elif yt_rec and (yt_rec.error_code == "processing_failed" or "processing" in (yt_rec.error_message or "").lower()):
+            platforms_status["YouTube Shorts"] = "❌ Processing failed"
         else:
             err = (yt_rec.error_message if yt_rec else "Upload failed") or "Upload failed"
             platforms_status["YouTube Shorts"] = f"❌ Failed ({_sanitize_error(err)[:50]})"
@@ -1241,12 +1250,16 @@ async def _execute_auto_publish(
         if bot_token and chat_id:
             if yt_ok and ig_ok:
                 yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
+                yt_channel = (yt_pub.response_metadata or {}).get("channel_title") or (yt_pub.response_metadata or {}).get("channelTitle") or ""
                 ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
+                yt_line = f"📺 *YouTube Shorts:* [Watch on YouTube]({yt_url})" if yt_url else "📺 *YouTube Shorts:* ✅ Published"
+                if yt_channel:
+                    yt_line += f"\n   *Channel:* {yt_channel}"
                 followup_lines = [
                     "🎉 *Clip Successfully Published!*",
                     "",
                     f"🎬 *Clip ID:* `{clip_id}`",
-                    f"📺 *YouTube Shorts:* [Watch on YouTube]({yt_url})" if yt_url else "📺 *YouTube Shorts:* ✅ Published",
+                    yt_line,
                     f"📸 *Instagram Reels:* [Watch on Instagram]({ig_url})" if ig_url else "📸 *Instagram Reels:* ✅ Published",
                 ]
             elif yt_ok or ig_ok:
@@ -1257,10 +1270,13 @@ async def _execute_auto_publish(
                 ]
                 if yt_ok:
                     yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
-                    followup_lines.append(f"• *YouTube Shorts:* ✅ [Watch on YouTube]({yt_url})" if yt_url else "• *YouTube Shorts:* ✅ Published")
+                    yt_channel = (yt_pub.response_metadata or {}).get("channel_title") or (yt_pub.response_metadata or {}).get("channelTitle") or ""
+                    yt_line = f"• *YouTube Shorts:* ✅ [Watch on YouTube]({yt_url})" if yt_url else "• *YouTube Shorts:* ✅ Published"
+                    if yt_channel:
+                        yt_line += f" (Channel: {yt_channel})"
+                    followup_lines.append(yt_line)
                 else:
-                    yt_err = _sanitize_error(yt_pub.error_message if yt_pub else "Upload failed")
-                    followup_lines.append(f"• *YouTube Shorts:* ❌ `{yt_err}`")
+                    followup_lines.append(f"• *YouTube Shorts:* {platforms_status['YouTube Shorts']}")
 
                 if ig_ok:
                     ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
@@ -1269,14 +1285,12 @@ async def _execute_auto_publish(
                     ig_err = _sanitize_error(ig_pub.error_message if ig_pub else "Upload failed")
                     followup_lines.append(f"• *Instagram Reels:* ❌ `{ig_err}`")
             else:
-                yt_err = _sanitize_error(yt_pub.error_message if yt_pub else "Upload failed")
-                ig_err = _sanitize_error(ig_pub.error_message if ig_pub else "Upload failed")
                 followup_lines = [
                     "❌ *Clip Publishing Failed*",
                     "",
                     f"🎬 *Clip ID:* `{clip_id}`",
-                    f"• *YouTube Shorts:* ❌ `{yt_err}`",
-                    f"• *Instagram Reels:* ❌ `{ig_err}`",
+                    f"• *YouTube Shorts:* {platforms_status['YouTube Shorts']}",
+                    f"• *Instagram Reels:* {platforms_status['Instagram Reels']}",
                     "",
                     "Please verify platform credentials and media accessibility in Settings.",
                 ]

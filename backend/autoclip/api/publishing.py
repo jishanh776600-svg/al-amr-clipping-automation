@@ -132,7 +132,15 @@ async def get_publishing_platforms() -> list[PublishingPlatformInfo]:
                 yt_auth = True
                 yt_name = yt_val.get("channel_title")
                 yt_ident = yt_val.get("channel_id")
-                yt_details = f"Connected: {yt_name}"
+                exp_id = yt_val.get("expected_channel_id")
+                ch_match = yt_val.get("channel_match")
+                if exp_id:
+                    if ch_match:
+                        yt_details = f"Connected: {yt_name} (Channel Verified: {yt_ident})"
+                    else:
+                        yt_details = f"CHANNEL MISMATCH: Connected to {yt_name} ({yt_ident}), expected {exp_id}"
+                else:
+                    yt_details = f"Connected: {yt_name} (AL_AMR_YOUTUBE_CHANNEL_ID not configured)"
             else:
                 yt_err = yt_val.get("error")
                 yt_details = f"Configured (Auth failed: {yt_err})"

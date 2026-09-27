@@ -178,17 +178,49 @@ class PublishingService:
         if not adapter:
             raise ValueError(f"Unsupported publishing platform: '{platform}'")
 
-        # Check existing publication record for idempotency
+        # Check existing publication record for idempotency & retry safety
         existing = store.get_publication_by_idempotency_key(idempotency_key)
         if existing and existing.status == "PUBLISHED":
-            log.info(
-                "Clip %s already published to %s (%s) [id=%s]. Returning existing record.",
-                clip_id,
-                norm_platform,
-                dest,
-                existing.id,
-            )
-            return existing
+            # For YouTube, post-verify that the existing video is genuinely valid and public on the expected channel
+            if norm_platform == "youtube" and existing.remote_media_id and isinstance(adapter, YouTubePublisher):
+                try:
+                    from .youtube import resolve_expected_youtube_channel_id
+                    exp_ch = resolve_expected_youtube_channel_id()
+                    if exp_ch and adapter.is_configured():
+                        creds = adapter._get_credentials()
+                        from googleapiclient.discovery import build
+                        yt_service = build("youtube", "v3", credentials=creds, cache_discovery=False)
+                        verified, v_stat, v_info = await adapter.verify_video_publication(
+                            yt_service, existing.remote_media_id, exp_ch, wait_for_processing=False
+                        )
+                        if verified:
+                            log.info("Clip %s verified existing YouTube publication [id=%s].", clip_id, existing.id)
+                            return existing
+                        elif v_stat == "channel_mismatch":
+                            log.warning("Existing YouTube publication is on WRONG channel (%s). Automatic modification prohibited.", v_info.get("channelId"))
+                            existing.status = "FAILED_PERMANENT"
+                            existing.error_code = "channel_mismatch"
+                            existing.error_message = f"Existing video is on wrong channel ({v_info.get('channelId')}). Automatic modification prohibited."
+                            store.update_publication(existing)
+                            return existing
+                        elif v_stat == "visibility_incorrect":
+                            log.warning("Existing YouTube publication visibility is %s and could not be corrected.", v_info.get("privacyStatus"))
+                            existing.status = "FAILED_PERMANENT"
+                            existing.error_code = "visibility_incorrect"
+                            existing.error_message = f"Existing video visibility is '{v_info.get('privacyStatus')}'; expected public."
+                            store.update_publication(existing)
+                            return existing
+                except Exception as ex_ver:
+                    log.warning("Could not post-verify existing YouTube record: %s", ex_ver)
+            else:
+                log.info(
+                    "Clip %s already published to %s (%s) [id=%s]. Returning existing record.",
+                    clip_id,
+                    norm_platform,
+                    dest,
+                    existing.id,
+                )
+                return existing
 
         # Run Publishing Eligibility Gate (Steps 22-24)
         is_eligible, blocking_reasons, final_render, clip_meta = self.verify_publishing_eligibility(clip_id)
@@ -232,6 +264,7 @@ class PublishingService:
             title=title,
             description=desc,
             tags=tags,
+            privacy="public",
             destination=dest,
             extra={"clip_id": clip_id, "job_id": job_id},
         )
@@ -387,16 +420,26 @@ class PublishingService:
             pub_record.updated_at = now_end
             pub_record.response_metadata = result.details
 
-            if result.success:
-                pub_record.status = "PUBLISHED" if result.status == "published" else "PENDING"
+            if result.success and result.status == "published":
+                pub_record.status = "PUBLISHED"
                 pub_record.remote_media_id = result.remote_media_id or result.external_id
                 pub_record.remote_post_id = result.remote_post_id or result.external_id
                 pub_record.permalink = result.permalink or result.url
                 pub_record.published_at = result.published_at or now_end
                 pub_record.error_code = None
                 pub_record.error_message = None
+            elif result.error_code == "processing_incomplete" or result.status == "processing":
+                pub_record.status = "PROCESSING"
+                pub_record.remote_media_id = result.remote_media_id or result.external_id
+                pub_record.remote_post_id = result.remote_post_id or result.external_id
+                pub_record.permalink = result.permalink or result.url
+                pub_record.error_code = result.error_code
+                pub_record.error_message = result.error or "Upload accepted, video still processing"
             else:
                 pub_record.status = "FAILED_RETRYABLE" if result.retryable else "FAILED_PERMANENT"
+                pub_record.remote_media_id = result.remote_media_id or result.external_id
+                pub_record.remote_post_id = result.remote_post_id or result.external_id
+                pub_record.permalink = result.permalink or result.url
                 pub_record.error_code = result.error_code or "platform_error"
                 pub_record.error_message = result.error or result.error_message or "Publishing failed"
 

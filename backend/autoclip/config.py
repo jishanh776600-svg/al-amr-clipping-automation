@@ -49,6 +49,7 @@ TELEGRAM_CHAT_ID_KEY = "telegram_chat_id"
 YOUTUBE_CLIENT_ID_KEY = "youtube_client_id"
 YOUTUBE_CLIENT_SECRET_KEY = "youtube_client_secret"
 YOUTUBE_REFRESH_TOKEN_KEY = "youtube_refresh_token"
+AL_AMR_YOUTUBE_CHANNEL_ID_KEY = "al_amr_youtube_channel_id"
 INSTAGRAM_ACCESS_TOKEN_KEY = "instagram_access_token"
 INSTAGRAM_ACCOUNT_ID_KEY = "instagram_account_id"
 
@@ -71,6 +72,7 @@ PUBLISHING_SECRET_KEYS: tuple[str, ...] = (
     YOUTUBE_CLIENT_ID_KEY,
     YOUTUBE_CLIENT_SECRET_KEY,
     YOUTUBE_REFRESH_TOKEN_KEY,
+    AL_AMR_YOUTUBE_CHANNEL_ID_KEY,
     INSTAGRAM_ACCESS_TOKEN_KEY,
     INSTAGRAM_ACCOUNT_ID_KEY,
 )
@@ -95,6 +97,15 @@ def canonical_secret_key(key: str) -> str:
         return YOUTUBE_CLIENT_SECRET_KEY
     if k in ("youtube_refresh_token", "yt_refresh_token", "youtube_token"):
         return YOUTUBE_REFRESH_TOKEN_KEY
+    if k in (
+        "al_amr_youtube_channel_id",
+        "youtube_channel_id",
+        "yt_channel_id",
+        "channel_id",
+        "expected_youtube_channel_id",
+        "expected_channel_id",
+    ):
+        return AL_AMR_YOUTUBE_CHANNEL_ID_KEY
     if k in ("instagram_access_token", "meta_access_token", "ig_access_token", "instagram_token"):
         return INSTAGRAM_ACCESS_TOKEN_KEY
     if k in ("instagram_account_id", "meta_account_id", "ig_account_id", "instagram_account"):

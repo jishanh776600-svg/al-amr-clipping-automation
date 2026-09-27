@@ -17,6 +17,10 @@ ErrorCode = Literal[
     "network_error",
     "platform_error",
     "duplicate",
+    "channel_mismatch",
+    "visibility_incorrect",
+    "processing_incomplete",
+    "processing_failed",
     "unknown",
 ]
 
@@ -25,7 +29,7 @@ def is_error_retryable(error_code: str | None) -> bool:
     """Classify whether an error code represents a retryable condition."""
     if not error_code:
         return False
-    return error_code in ("rate_limit", "network_error", "platform_error")
+    return error_code in ("rate_limit", "network_error", "platform_error", "processing_incomplete")
 
 
 @dataclass
@@ -33,7 +37,7 @@ class PublishingMetadata:
     title: str
     description: str = ""
     tags: list[str] = field(default_factory=list)
-    privacy: Literal["public", "unlisted", "private"] = "unlisted"
+    privacy: Literal["public", "unlisted", "private"] = "public"
     destination: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -42,7 +46,7 @@ class PublishingMetadata:
 class PublishingResult:
     platform: str
     success: bool
-    status: Literal["published", "failed", "skipped", "ready_for_upload"]
+    status: Literal["published", "failed", "skipped", "ready_for_upload", "processing"]
     external_id: str | None = None
     url: str | None = None
     error: str | None = None
