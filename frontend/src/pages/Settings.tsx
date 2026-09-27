@@ -610,14 +610,33 @@ export function Settings() {
                 onError={setError}
               />
             </div>
-            {settings.keys_present?.youtube_refresh_token && (
-              <div className="rounded border border-ink-800/80 bg-ink-900/60 p-3 flex items-center justify-between text-xs">
-                <span className="text-ink-400">OAuth Refresh Token:</span>
-                <span className="text-emerald-400 font-mono">
-                  {settings.credentials_status?.youtube_refresh_token?.masked || '•••••••• Configured'}
-                </span>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SecretField
+                secretKey="al_amr_youtube_channel_id"
+                label="Target YouTube Channel ID (Expected: Future Founders)"
+                present={settings.keys_present?.al_amr_youtube_channel_id ?? false}
+                status={settings.credentials_status?.al_amr_youtube_channel_id}
+                onChanged={reload}
+                onError={setError}
+              />
+              <SecretField
+                secretKey="youtube_refresh_token"
+                label="OAuth Refresh Token (or connect via OAuth button above)"
+                present={settings.keys_present?.youtube_refresh_token ?? false}
+                status={settings.credentials_status?.youtube_refresh_token}
+                onChanged={reload}
+                onError={setError}
+              />
+            </div>
+            <div className="rounded border border-ink-800/80 bg-ink-900/40 p-3 text-xs text-ink-400 space-y-1">
+              <div className="font-semibold text-ink-300">Google Cloud Console Authorized Redirect URI:</div>
+              <div className="font-mono text-ink-200 select-all bg-ink-950 p-1.5 rounded border border-ink-800">
+                {typeof window !== 'undefined' ? `${window.location.origin}/settings` : 'https://al-amr-clipping-automation-6d0c.onrender.com/settings'}
               </div>
-            )}
+              <p className="text-[11px] text-ink-500">
+                Add this exact URL to &quot;Authorized redirect URIs&quot; under your OAuth 2.0 Client in Google Cloud Console to prevent Error 400 redirect_uri_mismatch.
+              </p>
+            </div>
           </div>
 
           {/* Instagram Reels */}
