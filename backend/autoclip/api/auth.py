@@ -34,6 +34,10 @@ PUBLIC_PREFIXES = (
     "/telegram/webhook",
     "/api/bgm",
     "/bgm",
+    "/api/media",
+    "/media",
+    "/api/exports",
+    "/exports",
 )
 
 

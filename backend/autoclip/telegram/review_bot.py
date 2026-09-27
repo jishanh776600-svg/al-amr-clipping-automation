@@ -1165,7 +1165,11 @@ async def _execute_auto_publish(
             platforms_status["YouTube Shorts"] = "❌ Processing failed"
         else:
             err = (yt_rec.error_message if yt_rec else "Upload failed") or "Upload failed"
-            platforms_status["YouTube Shorts"] = f"❌ Failed ({_sanitize_error(err)[:50]})"
+            clean_err = re.sub(r"^YouTube channel mismatch:\s*", "", err).strip()
+            sanitized = _sanitize_error(clean_err)
+            if len(sanitized) > 85:
+                sanitized = sanitized[:82] + "..."
+            platforms_status["YouTube Shorts"] = f"❌ Failed ({sanitized})"
 
         # -------------------------------------------------------------
         # 2. Publish to Instagram Reels
@@ -1218,7 +1222,12 @@ async def _execute_auto_publish(
             platforms_status["Instagram Reels"] = "✅ Published"
         else:
             err = (ig_rec.error_message if ig_rec else "Upload failed") or "Upload failed"
-            platforms_status["Instagram Reels"] = f"❌ Failed ({_sanitize_error(err)[:50]})"
+            clean_err = re.sub(r"^Failed to create Instagram Reel container \(\d+\):\s*", "", err).strip()
+            clean_err = re.sub(r"^Failed to publish Instagram Reel \(\d+\):\s*", "", clean_err).strip()
+            sanitized = _sanitize_error(clean_err)
+            if len(sanitized) > 85:
+                sanitized = sanitized[:82] + "..."
+            platforms_status["Instagram Reels"] = f"❌ Failed ({sanitized})"
 
         # -------------------------------------------------------------
         # 3. Compute Final Outcomes & Status

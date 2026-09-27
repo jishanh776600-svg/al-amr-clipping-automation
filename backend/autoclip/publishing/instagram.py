@@ -90,7 +90,8 @@ class InstagramPublisher(BasePublisher):
 
     def resolve_public_media_url(
         self,
-        export_id: str | None,
+        clip_id: str | None = None,
+        export_id: str | None = None,
         drive_link: str | None = None,
         auth_token: str | None = None,
     ) -> str | None:
@@ -98,11 +99,15 @@ class InstagramPublisher(BasePublisher):
 
         Meta requires a direct media stream URL (not an HTML preview page).
         Priority:
-        1. Render Control Plane streaming endpoint: /api/exports/{id}/stream?token=...
-        2. Google Drive direct download URL derived from file ID if available.
+        1. Direct public media endpoint: /api/media/{clip_id}
+        2. Render Control Plane streaming endpoint: /api/exports/{id}/stream
+        3. Google Drive direct download URL derived from file ID if available.
         """
+        if self.control_plane_url and clip_id:
+            return f"{self.control_plane_url}/api/media/{clip_id}"
+
         if self.control_plane_url and export_id:
-            query = f"?token={auth_token}" if auth_token else ""
+            query = f"?token={urllib.parse.quote(auth_token)}" if auth_token else ""
             return f"{self.control_plane_url}/api/exports/{export_id}/stream{query}"
 
         if drive_link and "drive.google.com/file/d/" in drive_link:
@@ -135,9 +140,15 @@ class InstagramPublisher(BasePublisher):
                 retryable=False,
             )
 
+        clip_id = metadata.extra.get("clip_id")
         export_id = metadata.extra.get("export_id")
         auth_token = metadata.extra.get("callback_token") or os.getenv("OPERATOR_TOKEN")
-        public_url = self.resolve_public_media_url(export_id, drive_link, auth_token)
+        public_url = self.resolve_public_media_url(
+            clip_id=clip_id,
+            export_id=export_id,
+            drive_link=drive_link,
+            auth_token=auth_token,
+        )
 
         # Dry run or validation
         is_live_disabled = os.getenv("META_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("META_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")
@@ -212,12 +223,38 @@ class InstagramPublisher(BasePublisher):
                 "media_type": "REELS",
                 "video_url": public_url,
                 "caption": caption,
+                "share_to_feed": "true",
                 "access_token": self.access_token,
             }
             create_resp = await client.post(create_url, data=create_params)
             if create_resp.status_code != 200:
-                err = f"Failed to create Instagram Reel container ({create_resp.status_code}): {create_resp.text}"
-                log.error(err)
+                meta_err_msg = ""
+                meta_err_type = ""
+                meta_err_code = None
+                meta_err_subcode = None
+                meta_trace_id = ""
+                try:
+                    meta_json = create_resp.json()
+                    meta_err_obj = meta_json.get("error", {})
+                    meta_err_msg = meta_err_obj.get("message") or ""
+                    meta_err_type = meta_err_obj.get("type") or ""
+                    meta_err_code = meta_err_obj.get("code")
+                    meta_err_subcode = meta_err_obj.get("error_subcode")
+                    meta_trace_id = meta_err_obj.get("fbtrace_id") or ""
+                except Exception:
+                    pass
+
+                err_summary = meta_err_msg or create_resp.text or f"HTTP {create_resp.status_code}"
+                err = f"Failed to create Instagram Reel container ({create_resp.status_code}): {err_summary}"
+                log.error(
+                    "Instagram container creation failed: status=%s type=%s code=%s subcode=%s trace=%s msg=%s",
+                    create_resp.status_code,
+                    meta_err_type,
+                    meta_err_code,
+                    meta_err_subcode,
+                    meta_trace_id,
+                    meta_err_msg,
+                )
                 code, retryable = classify_meta_error(create_resp.status_code, create_resp.text)
                 return PublishingResult(
                     platform=self.platform_name,
@@ -227,6 +264,15 @@ class InstagramPublisher(BasePublisher):
                     error=err,
                     error_code=code,
                     retryable=retryable,
+                    details={
+                        "http_status": create_resp.status_code,
+                        "error_type": meta_err_type,
+                        "error_code": meta_err_code,
+                        "error_subcode": meta_err_subcode,
+                        "fbtrace_id": meta_trace_id,
+                        "message": meta_err_msg,
+                        "public_url": public_url,
+                    },
                 )
 
             container_id = create_resp.json().get("id")

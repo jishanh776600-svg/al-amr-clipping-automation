@@ -314,14 +314,112 @@ async def stream_export(export_id: str, request: Request):
                 )
             except Exception as exc:
                 log.warning("Failed streaming Drive file %s: %s", record.drive_file_id, exc)
-        if record.drive_web_view_link:
-            return RedirectResponse(record.drive_web_view_link)
-        return RedirectResponse(f"https://drive.google.com/uc?export=download&id={record.drive_file_id}")
+        # If Google Drive storage is not configured, do not redirect to an HTML sign-in page
+        # which breaks external media crawlers (Meta Reels, Twitter, TikTok).
+        log.warning("Google Drive storage is not configured; cannot stream Drive file %s", record.drive_file_id)
 
     raise HTTPException(
         status_code=410,
         detail="The exported file is not present locally or on Google Drive.",
     )
+
+
+@router.get("/media/{clip_id}")
+async def public_clip_media(clip_id: str, request: Request):
+    """Serve direct MP4 media for a clip with Range header support.
+
+    Accessible publicly without authentication for platform publishing crawlers
+    (Meta Instagram Reels, YouTube Shorts preview, TikTok).
+    """
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+
+    # 1. Local exports
+    exports = await asyncio.to_thread(store.list_exports, clip_id)
+    for exp in exports:
+        if exp.path and Path(exp.path).is_file() and Path(exp.path).stat().st_size > 0:
+            p = Path(exp.path)
+            return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
+
+    # 2. Local final renders (Step 22)
+    final_renders = await asyncio.to_thread(store.list_final_renders, clip_id)
+    for fr in final_renders:
+        if fr.output_path and Path(fr.output_path).is_file() and Path(fr.output_path).stat().st_size > 0:
+            p = Path(fr.output_path)
+            return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
+
+    # 3. Persistent / Cached Telegram Video
+    cache_dir = paths.root() / "media_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_file = cache_dir / f"clip_{clip_id}.mp4"
+    if cached_file.is_file() and cached_file.stat().st_size > 1000:
+        return FileResponse(cached_file, media_type="video/mp4", filename=cached_file.name, content_disposition_type="inline")
+
+    # Lookup Telegram file ID from render or approval telemetry
+    tg_file_id = None
+    for fr in final_renders:
+        if fr.telemetry and fr.telemetry.get("telegram_file_id"):
+            tg_file_id = fr.telemetry["telegram_file_id"]
+            break
+    if not tg_file_id:
+        approval = await asyncio.to_thread(store.get_clip_approval, clip_id)
+        if approval and approval.telemetry and approval.telemetry.get("telegram_file_id"):
+            tg_file_id = approval.telemetry["telegram_file_id"]
+
+    if tg_file_id:
+        from ..telegram.review_bot import get_telegram_config
+        tg_token, _, _ = get_telegram_config()
+        if tg_token:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    info_resp = await client.get(
+                        f"https://api.telegram.org/bot{tg_token}/getFile",
+                        params={"file_id": tg_file_id},
+                    )
+                    if info_resp.status_code == 200 and info_resp.json().get("ok"):
+                        rel_path = info_resp.json()["result"].get("file_path")
+                        if rel_path:
+                            dl_url = f"https://api.telegram.org/file/bot{tg_token}/{rel_path}"
+                            async with client.stream("GET", dl_url) as stream_resp:
+                                if stream_resp.status_code == 200:
+                                    temp_download = cache_dir / f"clip_{clip_id}.tmp"
+                                    with open(temp_download, "wb") as f_out:
+                                        async for chunk in stream_resp.aiter_bytes(chunk_size=65536):
+                                            f_out.write(chunk)
+                                    if temp_download.stat().st_size > 1000:
+                                        temp_download.replace(cached_file)
+                                        return FileResponse(
+                                            cached_file,
+                                            media_type="video/mp4",
+                                            filename=cached_file.name,
+                                            content_disposition_type="inline",
+                                        )
+            except Exception as tg_err:
+                log.warning("Could not download Telegram video for clip %s: %s", clip_id, tg_err)
+
+    # 4. Google Drive direct stream (if configured)
+    for exp in exports:
+        if exp.drive_file_id:
+            drive_storage = GoogleDriveStorage()
+            if drive_storage.is_configured:
+                try:
+                    range_header = request.headers.get("Range")
+                    content_iter, status_code, headers = drive_storage.stream_range(
+                        exp.drive_file_id,
+                        range_header=range_header,
+                    )
+                    return StreamingResponse(
+                        content_iter,
+                        status_code=status_code,
+                        headers=headers,
+                        media_type="video/mp4",
+                    )
+                except Exception as exc:
+                    log.warning("Failed streaming Drive file %s: %s", exp.drive_file_id, exc)
+
+    raise HTTPException(status_code=404, detail="Clip media file is not accessible on server storage.")
 
 
 @router.get("/jobs/{job_id}/media")
