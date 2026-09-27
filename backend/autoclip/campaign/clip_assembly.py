@@ -842,6 +842,11 @@ class ClipAssemblyEngine:
                     telemetry={
                         "processing_time_s": round(time.time() - clip_start_t, 3),
                         "metrics": qg_result.metrics,
+                        "content_quality": cand.score_breakdown.get("content_quality", {}) if cand.score_breakdown else {},
+                        "hook_analysis": cand.score_breakdown.get("hook_analysis", {}) if cand.score_breakdown else {},
+                        "editorial_hook": cand.score_breakdown.get("editorial_hook", "") if cand.score_breakdown else "",
+                        "v2_engine_telemetry": cand.score_breakdown.get("v2_telemetry", {}) if cand.score_breakdown else {},
+                        "diversity_distance": cand.score_breakdown.get("diversity_distance", 1.0) if cand.score_breakdown else 1.0,
                     },
                     created_at=utcnow(),
                     updated_at=utcnow(),

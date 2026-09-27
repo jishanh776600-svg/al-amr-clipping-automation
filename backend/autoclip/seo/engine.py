@@ -9,9 +9,17 @@ from typing import Any
 from autoclip.campaign.models_intelligence import CampaignSpecification
 from autoclip.db.models import Clip, ClipCandidateRecord, ClipMetadataRecord, new_id, utcnow
 from autoclip.db import store
-from .extractor import extract_campaign_seo_requirements
-from .models import CampaignSEORequirements, ComplianceResult, ComplianceStatus
-from .quality_gate import MetadataQualityGate
+from .extractor import extract_campaign_seo_requirements, extract_campaign_seo_spec
+from .models import (
+    CampaignSEORequirements,
+    CampaignSEOSpec,
+    ComplianceResult,
+    ComplianceStatus,
+    DualPlatformMetadata,
+    InstagramMetadata,
+    YouTubeMetadata,
+)
+from .quality_gate import MetadataQualityGate, validate_instagram_metadata, validate_youtube_metadata
 
 log = logging.getLogger(__name__)
 
@@ -19,14 +27,222 @@ log = logging.getLogger(__name__)
 class SEOEngine:
     """Generates, validates, and manages per-short SEO and publishing metadata."""
 
-    def __init__(self, requirements: CampaignSEORequirements | None = None) -> None:
+    def __init__(
+        self,
+        requirements: CampaignSEORequirements | None = None,
+        campaign_seo_spec: CampaignSEOSpec | None = None,
+    ) -> None:
         self.reqs = requirements or CampaignSEORequirements()
+        self.seo_spec = campaign_seo_spec or CampaignSEOSpec()
         self.quality_gate = MetadataQualityGate(self.reqs)
 
     @classmethod
     def from_campaign_spec(cls, campaign_spec: CampaignSpecification | None) -> SEOEngine:
         reqs = extract_campaign_seo_requirements(campaign_spec)
-        return cls(requirements=reqs)
+        seo_spec = extract_campaign_seo_spec(campaign_spec)
+        return cls(requirements=reqs, campaign_seo_spec=seo_spec)
+
+    def generate_youtube_metadata(
+        self,
+        clip: Clip,
+        transcript_text: str = "",
+        candidate: ClipCandidateRecord | None = None,
+    ) -> YouTubeMetadata:
+        """Generates independent YouTube Shorts metadata obeying campaign requirements and YouTube constraints."""
+        hook = (candidate.hook_text if candidate and candidate.hook_text else clip.hook) or ""
+        slice_text = (candidate.transcript_slice if candidate and candidate.transcript_slice else transcript_text) or ""
+        topic_cue = clip.title or (f"Highlight #{clip.rank}" if clip.rank else "Key Insight")
+
+        yt_rules = self.seo_spec.youtube_rules if self.seo_spec else None
+
+        # 1. Synthesize YouTube Title (<= 100 chars; sweet spot 30-75 chars)
+        title = self._synthesize_title(hook=hook, topic=topic_cue, slice_text=slice_text)
+        if len(title) > 100:
+            title = title[:97] + "..."
+
+        # 2. Synthesize YouTube Description
+        desc_parts: list[str] = []
+        summary = hook.strip() if hook else f"An essential moment discussing {topic_cue}."
+        if slice_text and len(slice_text) > 40:
+            snippet = slice_text.strip()
+            first_period = snippet.find(".", 40)
+            if first_period != -1 and first_period < 220:
+                summary = snippet[:first_period + 1].strip()
+        desc_parts.append(summary)
+
+        # YouTube campaign phrases
+        req_phrases = []
+        if self.seo_spec:
+            req_phrases = [
+                p for p in (self.seo_spec.youtube_rules.required_phrases or self.seo_spec.global_rules.required_terms)
+                if len(p) > 3 and not any(w in p.lower() for w in ("rejection", "payout", "submit", "tier-1", "late", "must"))
+            ]
+        if req_phrases:
+            desc_parts.append(f"Key Focus: {', '.join(req_phrases)}")
+
+        # YouTube CTA (channel subscribe + engagement)
+        yt_cta = "👉 Subscribe to Future Founders for more visionary clips and actionable lessons."
+        if yt_rules and yt_rules.cta_rules:
+            yt_cta = yt_rules.cta_rules[0]
+        desc_parts.append(yt_cta)
+
+        # YouTube Links
+        yt_links: list[str] = []
+        if yt_rules and yt_rules.links:
+            yt_links = list(yt_rules.links)
+        elif self.seo_spec and self.seo_spec.global_rules.links:
+            yt_links = list(self.seo_spec.global_rules.links)
+        elif self.reqs.campaign_url:
+            yt_links = [self.reqs.campaign_url.strip()]
+
+        for link in yt_links:
+            desc_parts.append(f"🔗 Learn more: {link}")
+
+        # Tags & #Shorts
+        yt_tags = ["#Shorts", "#FutureFounders", "#Entrepreneurship"]
+        if yt_rules and yt_rules.hashtag_rules:
+            for h in yt_rules.hashtag_rules:
+                tag = h if h.startswith("#") else f"#{h}"
+                if tag.lower() not in [t.lower() for t in yt_tags]:
+                    yt_tags.append(tag)
+
+        words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
+        stopwords = {"this", "that", "with", "from", "have", "they", "will", "what", "when", "there", "about", "your", "more", "into", "their"}
+        for w in words:
+            if w.lower() not in stopwords and len(yt_tags) < 8:
+                tag = f"#{w.capitalize()}"
+                if tag.lower() not in [t.lower() for t in yt_tags]:
+                    yt_tags.append(tag)
+
+        desc_parts.append(" ".join(yt_tags))
+        desc = "\n\n".join(desc_parts)
+
+        yt_meta = YouTubeMetadata(
+            title=title,
+            description=desc,
+            hashtags=yt_tags,
+            tags=[t.lstrip("#") for t in yt_tags],
+            links=yt_links,
+            cta=yt_cta,
+        )
+
+        # 3. Deterministic Validation & Bounded Repair Loop (max 3 rounds)
+        for _ in range(3):
+            yt_meta = validate_youtube_metadata(yt_meta, spec=self.seo_spec, transcript=slice_text)
+            if yt_meta.is_compliant:
+                break
+            # Repair title length
+            if len(yt_meta.title) > 100:
+                yt_meta.title = yt_meta.title[:97] + "..."
+            if not yt_meta.title:
+                yt_meta.title = "Future Founders Insight"
+            # Remove prohibited terms
+            prohibited = set(self.reqs.prohibited_terms)
+            if self.seo_spec:
+                prohibited.update(self.seo_spec.global_rules.prohibited_terms)
+                prohibited.update(self.seo_spec.youtube_rules.prohibited_terms)
+            for pt in prohibited:
+                if pt and pt.lower() in yt_meta.title.lower():
+                    yt_meta.title = re.sub(rf"\b{re.escape(pt)}\b", "", yt_meta.title, flags=re.IGNORECASE).strip()
+                if pt and pt.lower() in yt_meta.description.lower():
+                    yt_meta.description = re.sub(rf"\b{re.escape(pt)}\b", "", yt_meta.description, flags=re.IGNORECASE).strip()
+            # Ensure required phrases
+            for rp in (self.seo_spec.youtube_rules.required_phrases if self.seo_spec else []):
+                if rp.lower() not in yt_meta.title.lower() and rp.lower() not in yt_meta.description.lower():
+                    yt_meta.description += f"\n\nTopic: {rp}"
+
+        return yt_meta
+
+    def generate_instagram_metadata(
+        self,
+        clip: Clip,
+        transcript_text: str = "",
+        candidate: ClipCandidateRecord | None = None,
+    ) -> InstagramMetadata:
+        """Generates independent Instagram Reels metadata obeying campaign requirements and IG constraints."""
+        hook = (candidate.hook_text if candidate and candidate.hook_text else clip.hook) or ""
+        slice_text = (candidate.transcript_slice if candidate and candidate.transcript_slice else transcript_text) or ""
+        topic_cue = clip.title or (f"Highlight #{clip.rank}" if clip.rank else "Key Insight")
+
+        ig_rules = self.seo_spec.instagram_rules if self.seo_spec else None
+
+        # 1. First-Line Hook: Must be <= 125 chars (the fold before '...more' on mobile)
+        first_line_hook = hook.strip().rstrip(".!?,")
+        if not first_line_hook or len(first_line_hook) < 10:
+            first_line_hook = f"The real secret behind {topic_cue}..."
+        if len(first_line_hook) > 120:
+            first_line_hook = first_line_hook[:117] + "..."
+
+        # 2. Instagram Caption Structure with clear line breaks
+        caption_lines: list[str] = [first_line_hook, ""]
+
+        if slice_text and len(slice_text) > 40:
+            snippet = slice_text.strip()
+            first_period = snippet.find(".", 40)
+            if first_period != -1 and first_period < 200:
+                caption_lines.append(snippet[:first_period + 1].strip())
+            else:
+                caption_lines.append(f"Key insight on {topic_cue}: break down what actually works.")
+        else:
+            caption_lines.append(f"Key insight on {topic_cue}: break down what actually works.")
+        caption_lines.append("")
+
+        # Instagram required mention: @black_boxvault
+        ig_mentions = ["@black_boxvault"]
+        if ig_rules and ig_rules.mention_rules:
+            for m in ig_rules.mention_rules:
+                norm_m = m if m.startswith("@") else f"@{m}"
+                if norm_m.lower() not in [x.lower() for x in ig_mentions]:
+                    ig_mentions.append(norm_m)
+
+        ig_cta = "👉 Follow @black_boxvault for daily unfiltered founder breakdowns."
+        if ig_rules and ig_rules.cta_rules:
+            ig_cta = ig_rules.cta_rules[0]
+        caption_lines.append(ig_cta)
+        caption_lines.append("🔗 Full resources via link in bio.")
+        caption_lines.append("")
+
+        # Instagram Hashtags: 4-6 focused hashtags
+        ig_tags = ["#reels", "#founders", "#business"]
+        if ig_rules and ig_rules.hashtag_rules:
+            for h in ig_rules.hashtag_rules:
+                norm_h = h if h.startswith("#") else f"#{h}"
+                if norm_h.lower() not in [t.lower() for t in ig_tags]:
+                    ig_tags.append(norm_h)
+
+        caption_lines.append(" ".join(ig_tags[:6]))
+        full_caption = "\n".join(caption_lines)
+
+        ig_meta = InstagramMetadata(
+            caption=full_caption,
+            first_line_hook=first_line_hook,
+            hashtags=ig_tags[:6],
+            mentions=ig_mentions,
+            links=[],  # Raw clickable links not supported in IG caption
+            cta=ig_cta,
+        )
+
+        # 3. Deterministic Validation & Bounded Repair Loop (max 3 rounds)
+        for _ in range(3):
+            ig_meta = validate_instagram_metadata(ig_meta, spec=self.seo_spec, transcript=slice_text)
+            if ig_meta.is_compliant:
+                break
+            # Repair caption length
+            if len(ig_meta.caption) > 2200:
+                ig_meta.caption = ig_meta.caption[:2190] + "..."
+            # Remove prohibited terms
+            prohibited = set(self.reqs.prohibited_terms)
+            if self.seo_spec:
+                prohibited.update(self.seo_spec.global_rules.prohibited_terms)
+                prohibited.update(self.seo_spec.instagram_rules.prohibited_terms)
+            for pt in prohibited:
+                if pt and pt.lower() in ig_meta.caption.lower():
+                    ig_meta.caption = re.sub(rf"\b{re.escape(pt)}\b", "", ig_meta.caption, flags=re.IGNORECASE).strip()
+            # Ensure required mention (@black_boxvault)
+            if "@black_boxvault" not in ig_meta.caption.lower():
+                ig_meta.caption += "\n\nFollow @black_boxvault"
+
+        return ig_meta
 
     def generate_for_clip(
         self,
@@ -46,26 +262,19 @@ class SEOEngine:
         slice_text = (candidate.transcript_slice if candidate and candidate.transcript_slice else transcript_text) or ""
         topic_cue = clip.title or (f"Highlight #{clip.rank}" if clip.rank else "Key Insight")
 
-        # 1. Generate Clip-Specific Title
-        generated_title = self._synthesize_title(hook=hook, topic=topic_cue, slice_text=slice_text)
+        # Generate YouTube & Instagram Metadata independently
+        yt_meta = self.generate_youtube_metadata(clip=clip, transcript_text=slice_text, candidate=candidate)
+        ig_meta = self.generate_instagram_metadata(clip=clip, transcript_text=slice_text, candidate=candidate)
+        dual_meta = DualPlatformMetadata(youtube=yt_meta, instagram=ig_meta)
 
-        # 2. Generate Clip-Specific Description
-        generated_desc = self._synthesize_description(
-            hook=hook,
-            slice_text=slice_text,
-            topic=topic_cue,
-        )
+        # 1. Generate Base Title & Description for backward compatibility
+        generated_title = yt_meta.title or self._synthesize_title(hook=hook, topic=topic_cue, slice_text=slice_text)
+        generated_desc = yt_meta.description or self._synthesize_description(hook=hook, slice_text=slice_text, topic=topic_cue)
+        generated_hashtags = yt_meta.hashtags or self._synthesize_hashtags(slice_text=slice_text)
+        generated_mentions = ig_meta.mentions or list(self.reqs.required_mentions)
+        generated_cta = yt_meta.cta or self._synthesize_cta(topic=topic_cue)
 
-        # 3. Generate Hashtags
-        generated_hashtags = self._synthesize_hashtags(slice_text=slice_text)
-
-        # 4. Generate Mentions
-        generated_mentions = list(self.reqs.required_mentions)
-
-        # 5. Generate CTA
-        generated_cta = self._synthesize_cta(topic=topic_cue)
-
-        # 6. Evaluate Quality Gate & Deterministic Repair Loop
+        # Evaluate Quality Gate
         gate_res = self.quality_gate.evaluate(
             title=generated_title,
             description=generated_desc,
@@ -74,76 +283,26 @@ class SEOEngine:
             cta=generated_cta,
         )
 
-        repaired = False
-        if not gate_res.is_compliant:
-            repaired = True
-            log.info("Repairing SEO metadata violations for clip %s: %s", clip.id, gate_res.errors)
-
-            # Repair hashtags: ensure all required campaign hashtags are present at the beginning
-            for rh in self.reqs.required_hashtags:
-                norm_rh = rh if rh.startswith("#") else f"#{rh}"
-                if norm_rh.lower() not in [h.lower() for h in generated_hashtags]:
-                    generated_hashtags.insert(0, norm_rh)
-
-            # Repair mentions: ensure all required mentions are in mentions list and description
-            for rm in self.reqs.required_mentions:
-                norm_rm = rm if rm.startswith("@") else f"@{rm}"
-                if norm_rm.lower() not in [m.lower() for m in generated_mentions]:
-                    generated_mentions.append(norm_rm)
-                if norm_rm.lower() not in generated_desc.lower():
-                    generated_desc += f"\n\nFeaturing {norm_rm}"
-
-            # Repair CTA: ensure mandatory CTA is in CTA and description
-            if self.reqs.cta_required and not gate_res.matched_requirements.get("cta_satisfied"):
-                cta_choice = self.reqs.cta_instructions[0] if self.reqs.cta_instructions else "👉 Follow for more and comment below!"
-                generated_cta = cta_choice
-                if cta_choice.lower() not in generated_desc.lower():
-                    generated_desc += f"\n\n{cta_choice}"
-
-            # Repair required phrases: ensure key campaign phrases appear in description or title
-            for rp in self.reqs.required_phrases:
-                if rp.lower() not in generated_title.lower() and rp.lower() not in generated_desc.lower():
-                    generated_desc += f"\n\nFocus: {rp}"
-
-            # Repair URL: ensure campaign URL is present
-            if self.reqs.campaign_url and not gate_res.matched_requirements.get("url_satisfied"):
-                if self.reqs.campaign_url.lower() not in generated_desc.lower():
-                    generated_desc += f"\n\n🔗 {self.reqs.campaign_url.strip()}"
-
-            # Repair prohibited terms: scrub from title, description, and hashtags
-            for pt in self.reqs.prohibited_terms:
-                pt_clean = pt.strip()
-                if not pt_clean:
-                    continue
-                generated_title = re.sub(rf"\b{re.escape(pt_clean)}\b", "", generated_title, flags=re.IGNORECASE).strip()
-                generated_desc = re.sub(rf"\b{re.escape(pt_clean)}\b", "", generated_desc, flags=re.IGNORECASE).strip()
-                generated_hashtags = [h for h in generated_hashtags if pt_clean.lower() not in h.lower()]
-
-            # Re-evaluate after repair
-            gate_res = self.quality_gate.evaluate(
-                title=generated_title,
-                description=generated_desc,
-                hashtags=generated_hashtags,
-                mentions=generated_mentions,
-                cta=generated_cta,
-            )
-            log.info("After repair loop: status=%s, score=%.1f, errors=%s", gate_res.status.value, gate_res.score, gate_res.errors)
+        overall_compliance = "SEO_PASS" if (yt_meta.is_compliant and ig_meta.is_compliant) else (
+            "SEO_WARN" if (yt_meta.compliance_score >= 60 and ig_meta.compliance_score >= 60) else "SEO_REJECT"
+        )
+        avg_score = round((yt_meta.compliance_score + ig_meta.compliance_score) / 2.0, 1)
 
         compliance_record = {
-            "passed": gate_res.is_compliant,
-            "status": gate_res.status.value,
-            "score": gate_res.score,
+            "passed": (overall_compliance in ("SEO_PASS", "SEO_WARN")),
+            "status": overall_compliance,
+            "score": avg_score,
             "title": generated_title,
-            "caption": generated_title,
+            "caption": ig_meta.caption,
             "description": generated_desc,
             "tags": generated_hashtags,
             "hashtags": generated_hashtags,
             "cta": generated_cta,
             "mentions": generated_mentions,
-            "violations": gate_res.errors,
-            "warnings": gate_res.warnings,
+            "violations": yt_meta.errors + ig_meta.errors,
+            "warnings": yt_meta.warnings + ig_meta.warnings,
             "matched_requirements": gate_res.matched_requirements,
-            "repaired": repaired,
+            "repaired": False,
         }
 
         record = ClipMetadataRecord(
@@ -161,16 +320,23 @@ class SEOEngine:
             generated_cta=generated_cta,
             final_cta=generated_cta,
             campaign_requirements_matched=gate_res.matched_requirements,
-            compliance_status=gate_res.status.value,
-            compliance_score=gate_res.score,
-            validation_errors=gate_res.errors,
-            validation_warnings=gate_res.warnings,
+            compliance_status=overall_compliance,
+            compliance_score=avg_score,
+            validation_errors=yt_meta.errors + ig_meta.errors,
+            validation_warnings=yt_meta.warnings + ig_meta.warnings,
             version=1,
             telemetry={
                 "generated_at": utcnow(),
                 "rank": clip.rank,
                 "score": clip.score,
                 "campaign_compliance": compliance_record,
+                "youtube": yt_meta.to_dict(),
+                "instagram": ig_meta.to_dict(),
+                "dual_platform_metadata": dual_meta.to_dict(),
+                "youtube_compliance_score": yt_meta.compliance_score,
+                "youtube_optimization_score": yt_meta.optimization_score,
+                "instagram_compliance_score": ig_meta.compliance_score,
+                "instagram_optimization_score": ig_meta.optimization_score,
             },
             created_at=existing.created_at if existing else utcnow(),
             updated_at=utcnow(),

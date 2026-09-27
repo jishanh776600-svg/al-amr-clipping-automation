@@ -22,6 +22,14 @@ from typing import Any, Callable, Sequence
 from ..db.models import Clip, ClipCandidateRecord, new_id, utcnow
 from ..pipeline.prepare import Silence
 from ..pipeline.transcript import Transcript, Word
+from .content_intelligence import (
+    ClipQualityModel,
+    DiversityOptimizer,
+    HookAnalysis,
+    QualityBreakdown,
+    SelectionRationale,
+    build_v2_engine_telemetry,
+)
 from .models import CampaignBrief
 from .models_intelligence import CampaignConflict, CampaignSpecification, RequirementItem
 
@@ -210,6 +218,8 @@ class CandidateDiscoveryEngine:
         )
 
         self._configure_limits()
+        self.quality_model = ClipQualityModel()
+        self.diversity_optimizer = DiversityOptimizer()
 
     def _configure_limits(self) -> None:
         if self.spec:
@@ -735,17 +745,34 @@ class CandidateDiscoveryEngine:
         max_overlap_iou: float = 0.35,
         max_text_similarity: float = 0.65,
     ) -> list[ClipCandidateRecord]:
-        """Greedily selects Top-N non-overlapping approved candidates and logs rejections."""
+        """Selects Top-N non-overlapping approved candidates optimized for quality and diversity (MMR)."""
         limit = target_count or self.target_clip_count
 
         # Separate approved vs rejected
         approved = [c for c in candidates if c.status != "rejected" and c.score > 0]
-        # Sort by total score descending
-        approved.sort(key=lambda c: c.score, reverse=True)
+        if not approved:
+            return candidates
+
+        # Wrap candidates for DiversityOptimizer
+        items = []
+        for c in approved:
+            items.append({
+                "candidate": c,
+                "text": c.transcript_slice,
+                "start_s": c.start_s,
+                "end_s": c.end_s,
+                "quality": type("ScoreHolder", (), {"composite_score": c.score})(),
+            })
+
+        # Run DiversityOptimizer to order pool by maximal marginal relevance (quality + diversity distance)
+        diverse_pool = self.diversity_optimizer.select_diverse_set(items, target_count=min(len(items), limit * 3))
 
         selected: list[ClipCandidateRecord] = []
 
-        for cand in approved:
+        for item in diverse_pool:
+            cand = item["candidate"]
+            div_dist = item.get("diversity_distance", 1.0)
+
             # Check overlap against already selected candidates
             conflict_reason: str | None = None
             for sel in selected:
@@ -774,13 +801,21 @@ class CandidateDiscoveryEngine:
                 cand.selected = True
                 cand.status = "selected"
                 cand.rank = len(selected) + 1
+                cand.score_breakdown["diversity_distance"] = round(div_dist, 3)
                 selected.append(cand)
             else:
                 cand.selected = False
                 cand.status = "scored"
 
+        # Mark any remaining approved candidates as scored
+        selected_ids = {s.id for s in selected}
+        for c in approved:
+            if c.id not in selected_ids and c.status != "rejected":
+                c.selected = False
+                c.status = "scored"
+
         log.info(
-            "CandidateDiscoveryEngine: Selected %d top candidate(s) out of %d evaluated.",
+            "CandidateDiscoveryEngine: Selected %d top diverse candidate(s) out of %d evaluated.",
             len(selected),
             len(candidates),
         )
@@ -834,15 +869,44 @@ class CandidateDiscoveryEngine:
             milestones = self.detect_milestones(cand_words, start_s, end_s)
             score_data = self.score_candidate(cand_words, start_s, end_s, milestones, silences)
 
+            # Evaluate with 9D Content Intelligence & Hook Optimization
+            quality_breakdown, hook_analysis = self.quality_model.evaluate_clip(
+                words=cand_words,
+                duration_s=end_s - start_s,
+                full_transcript_text=" ".join(w.text for w in transcript.words),
+            )
+
+            # Blend contradiction-aware campaign fit with content quality
+            if score_data.approved:
+                blended = (score_data.total_score * 0.40) + (quality_breakdown.composite_score * 0.60)
+                score_data.total_score = max(0.0, min(100.0, round(blended, 1)))
+
             cid = new_id()
             title = slice_text[:45].strip()
             if len(slice_text) > 45:
                 title += "..."
 
-            hook_snippet = milestones.hook_text[:60].strip()
+            hook_snippet = hook_analysis.native_hook[:60].strip() or milestones.hook_text[:60].strip()
+            editorial_headline = hook_analysis.editorial_hook
+
+            v2_telemetry = build_v2_engine_telemetry(
+                clip_id=cid,
+                start_s=start_s,
+                end_s=end_s,
+                hook=hook_analysis,
+                quality=quality_breakdown,
+            )
+
+            score_data.breakdown.update({
+                "content_quality": quality_breakdown.to_dict(),
+                "hook_analysis": hook_analysis.to_dict(),
+                "editorial_hook": editorial_headline,
+                "v2_telemetry": v2_telemetry,
+            })
 
             reason = (
-                f"Hook ({milestones.hook_type}, score: {milestones.hook_score:.1f}/10) | "
+                f"Hook ({hook_analysis.hook_type}): '{editorial_headline}' | "
+                f"Quality: {quality_breakdown.composite_score:.1f} | "
                 f"Speech density: {score_data.breakdown.get('words_per_second', 0):.1f} w/s | "
                 f"Campaign match: {score_data.explicit_match_score:.0f}%"
             )

@@ -6,7 +6,12 @@ import re
 from typing import Any
 
 from autoclip.campaign.models_intelligence import CampaignSpecification
-from .models import CampaignSEORequirements
+from .models import (
+    CampaignSEORequirements,
+    CampaignSEOSpec,
+    GlobalSEORules,
+    PlatformSEORules,
+)
 
 
 def _clean_term(term: str) -> str:
@@ -36,7 +41,9 @@ def extract_campaign_seo_requirements(
 
     from autoclip.campaign.models_intelligence import CampaignSpecification
 
+    raw_brand = ""
     if isinstance(campaign_spec, dict):
+        raw_brand = campaign_spec.get("brand_name", "") or campaign_spec.get("title", "")
         if "desired_topics" in campaign_spec and "campaign_id" in campaign_spec:
             campaign_spec = CampaignSpecification.from_dict(campaign_spec)
         else:
@@ -102,7 +109,9 @@ def extract_campaign_seo_requirements(
     ]
 
     # 7. Brand name from title or branding rules
-    brand_name = campaign_spec.title if campaign_spec.title != "Normalized Campaign" else ""
+    brand_name = raw_brand or getattr(campaign_spec, "brand_name", "") or ""
+    if not brand_name and campaign_spec.title and campaign_spec.title != "Normalized Campaign":
+        brand_name = campaign_spec.title
     if not brand_name and campaign_spec.branding_rules:
         brand_name = getattr(campaign_spec.branding_rules[0], "value", "")
     if not brand_name and getattr(campaign_spec, "name", None):
@@ -126,4 +135,168 @@ def extract_campaign_seo_requirements(
         title_patterns=title_patterns,
         description_guidelines=description_guidelines,
         platforms=list(campaign_spec.platforms) if campaign_spec.platforms else ["youtube", "instagram", "telegram"],
+    )
+
+
+def extract_campaign_seo_spec(
+    campaign_spec: Any | None,
+) -> CampaignSEOSpec:
+    """Authoritatively extracts a structured, multi-platform CampaignSEOSpec.
+
+    Guarantees strict separation of Global, YouTube, and Instagram requirements
+    without inventing or cross-contaminating rules.
+    """
+    reqs = extract_campaign_seo_requirements(campaign_spec)
+
+    # 1. Global rules
+    tone = ""
+    language = "en"
+    if campaign_spec and hasattr(campaign_spec, "tone"):
+        tone = str(getattr(campaign_spec.tone, "value", campaign_spec.tone) or "").strip()
+    if campaign_spec and hasattr(campaign_spec, "target_languages") and campaign_spec.target_languages:
+        language = str(campaign_spec.target_languages[0]).strip()
+
+    raw_guidelines = campaign_spec.get("guidelines", {}) if isinstance(campaign_spec, dict) else (
+        getattr(campaign_spec, "guidelines", {}) if hasattr(campaign_spec, "guidelines") else {}
+    )
+
+    global_prohibited = list(reqs.prohibited_terms)
+    global_required = list(reqs.required_phrases)
+    if raw_guidelines and "global" in raw_guidelines:
+        for p in raw_guidelines["global"].get("prohibited_terms", []):
+            if p not in global_prohibited:
+                global_prohibited.append(p)
+        for r in raw_guidelines["global"].get("required_terms", []):
+            if r not in global_required:
+                global_required.append(r)
+
+    global_links = [reqs.campaign_url.strip()] if reqs.campaign_url and reqs.campaign_url.strip() else []
+
+    global_rules = GlobalSEORules(
+        tone=tone,
+        language=language,
+        prohibited_terms=global_prohibited,
+        required_terms=global_required,
+        brand_terms=[reqs.brand_name] if reqs.brand_name else [],
+        cta_rules=list(reqs.cta_instructions),
+        link_rules=[f"Include campaign link: {url}" for url in global_links],
+        links=global_links,
+    )
+
+    # 2. YouTube-specific rules
+    yt_title_rules = list(reqs.title_patterns)
+    yt_title_rules.append("Under 50 characters before #Shorts tag")
+    yt_title_rules.append("Explicitly include #Shorts")
+    yt_title_rules.append("Truthful representation of spoken clip, no sensationalist clickbait")
+
+    yt_desc_rules = list(reqs.description_guidelines)
+    yt_desc_rules.append("Structured 3 to 5 sentences summary of clip")
+    if global_links:
+        yt_desc_rules.append(f"Include YouTube link: {global_links[0]}")
+
+    yt_cta_rules = list(reqs.cta_instructions) if reqs.cta_instructions else [
+        "Subscribe to Future Founders for daily entrepreneurial insights! Comment your thoughts below."
+    ]
+
+    yt_hashtags = list(reqs.required_hashtags)
+    if "#Shorts" not in yt_hashtags:
+        yt_hashtags.append("#Shorts")
+
+    if raw_guidelines and "youtube" in raw_guidelines:
+        yt_custom = raw_guidelines["youtube"]
+        if yt_custom.get("title_rules"):
+            yt_title_rules = yt_custom["title_rules"] + yt_title_rules
+        if yt_custom.get("hashtag_rules"):
+            for h in yt_custom["hashtag_rules"]:
+                if h not in yt_hashtags:
+                    yt_hashtags.append(h)
+        if yt_custom.get("cta_rules"):
+            yt_cta_rules = yt_custom["cta_rules"]
+
+    youtube_rules = PlatformSEORules(
+        title_rules=yt_title_rules,
+        description_rules=yt_desc_rules,
+        hashtag_rules=yt_hashtags,
+        keyword_rules=list(reqs.required_phrases),
+        tag_rules=list(reqs.required_phrases) + ["Shorts", "Future Founders"],
+        link_rules=[f"YouTube destination link: {u}" for u in global_links],
+        mention_rules=list(reqs.required_mentions),
+        cta_rules=yt_cta_rules,
+        formatting_rules=[
+            "Vertical 9:16 Shorts format",
+            "Title formatted with #Shorts at end",
+            "Double-spaced readable description paragraphs",
+        ],
+        character_limits={"title": 100, "description": 5000, "tags": 500},
+        required_phrases=list(reqs.required_phrases),
+        prohibited_terms=list(reqs.prohibited_terms),
+        links=list(global_links),
+    )
+
+    # 3. Instagram-specific rules
+    ig_caption_rules = [
+        "Punchy first-line hook optimized for the 125-character Instagram feed preview cutoff",
+        "Clean, visual paragraph spacing with bullet points or emojis where appropriate",
+        "Contextual explanation of the clip topic tailored for entrepreneurial audience",
+    ]
+    ig_mentions = list(reqs.required_mentions)
+    if "@black_boxvault" not in [m.lower() for m in ig_mentions]:
+        ig_mentions.append("@black_boxvault")
+
+    ig_cta_rules = list(reqs.cta_instructions) if reqs.cta_instructions else [
+        "Follow @black_boxvault for daily startup breakdowns! Save this Reel and share your takeaway in the comments 👇"
+    ]
+
+    ig_hashtags = list(reqs.required_hashtags)
+
+    if raw_guidelines and "instagram" in raw_guidelines:
+        ig_custom = raw_guidelines["instagram"]
+        if ig_custom.get("caption_rules"):
+            ig_caption_rules = ig_custom["caption_rules"]
+        if ig_custom.get("mention_rules"):
+            for m in ig_custom["mention_rules"]:
+                if m not in ig_mentions:
+                    ig_mentions.append(m)
+        if ig_custom.get("hashtag_rules"):
+            for h in ig_custom["hashtag_rules"]:
+                if h not in ig_hashtags:
+                    ig_hashtags.append(h)
+        if ig_custom.get("cta_rules"):
+            ig_cta_rules = ig_custom["cta_rules"]
+
+    ig_link_rules = [
+        "Refer to bio link for primary external action" if global_links else "Engage via comments and saves"
+    ]
+    if global_links:
+        ig_link_rules.append(f"Primary bio destination: {global_links[0]}")
+
+    instagram_rules = PlatformSEORules(
+        title_rules=[],
+        caption_rules=ig_caption_rules,
+        description_rules=ig_caption_rules,
+        hashtag_rules=ig_hashtags,
+        keyword_rules=list(reqs.required_phrases),
+        tag_rules=[],
+        link_rules=ig_link_rules,
+        mention_rules=ig_mentions,
+        cta_rules=ig_cta_rules,
+        formatting_rules=[
+            "First-line scroll-stopping headline",
+            "Clear readable line breaks (no wall of text)",
+            "Account mentions embedded organically",
+            "Hashtag cluster grouped cleanly at bottom",
+        ],
+        character_limits={"caption": 2200, "first_line": 125, "hashtags_count": 30},
+        required_phrases=list(reqs.required_phrases),
+        prohibited_terms=list(reqs.prohibited_terms),
+        links=list(global_links),
+    )
+
+    return CampaignSEOSpec(
+        campaign_id=reqs.campaign_id,
+        campaign_title=reqs.campaign_title,
+        brand_name=reqs.brand_name,
+        global_rules=global_rules,
+        youtube_rules=youtube_rules,
+        instagram_rules=instagram_rules,
     )

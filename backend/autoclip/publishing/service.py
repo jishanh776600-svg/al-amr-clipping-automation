@@ -247,10 +247,29 @@ class PublishingService:
             store.create_publication(failed_record)
             raise ValueError(f"Publishing blocked by quality/approval gates: {err_msg}")
 
-        # Assemble authoritative publishing metadata
+        # Assemble authoritative publishing metadata (platform-specific resolution)
         title = clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight")
         desc = clip_meta.final_description if clip_meta else (clip.hook or "")
         tags = clip_meta.final_hashtags if clip_meta else ["ALAMR", "Shorts"]
+
+        # Platform-specific resolution: NEVER assume YouTube SEO == Instagram SEO
+        if clip_meta and clip_meta.telemetry:
+            if norm_platform == "instagram":
+                ig_data = clip_meta.telemetry.get("instagram") or {}
+                if ig_data.get("caption"):
+                    desc = ig_data["caption"]
+                if ig_data.get("hashtags"):
+                    tags = list(ig_data["hashtags"])
+                if ig_data.get("first_line_hook"):
+                    title = ig_data["first_line_hook"]
+            elif norm_platform == "youtube":
+                yt_data = clip_meta.telemetry.get("youtube") or {}
+                if yt_data.get("title"):
+                    title = yt_data["title"]
+                if yt_data.get("description"):
+                    desc = yt_data["description"]
+                if yt_data.get("tags") or yt_data.get("hashtags"):
+                    tags = list(yt_data.get("tags") or yt_data.get("hashtags"))
 
         if metadata_override:
             if metadata_override.title:

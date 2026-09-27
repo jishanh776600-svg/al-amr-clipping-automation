@@ -377,12 +377,24 @@ async def send_clip_review(
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"
     quality_status = final_render.quality_status if final_render else "PENDING"
-    seo_score = f"{clip_meta.compliance_score:.1f}" if clip_meta else "N/A"
-    seo_status = clip_meta.compliance_status if clip_meta else "PENDING"
-    raw_title = clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight")
-    raw_desc = clip_meta.final_description if clip_meta else (clip.hook or "")
+    yt_data = (clip_meta.telemetry.get("youtube") if clip_meta and clip_meta.telemetry else {}) or {}
+    ig_data = (clip_meta.telemetry.get("instagram") if clip_meta and clip_meta.telemetry else {}) or {}
+
+    yt_comp = yt_data.get("compliance_score", clip_meta.compliance_score if clip_meta else 100.0)
+    ig_comp = ig_data.get("compliance_score", clip_meta.compliance_score if clip_meta else 100.0)
+    yt_badge = f"{yt_comp:.0f}%" if yt_data else f"{seo_score}"
+    ig_badge = f"{ig_comp:.0f}%" if ig_data else f"{seo_score}"
+
+    raw_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight"))
+    raw_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else (clip.hook or ""))
     safe_title = _escape_md(raw_title)
     safe_hook = _escape_md(clip.hook or "N/A")
+
+    ig_hook_raw = ig_data.get("first_line_hook") or clip.hook or "N/A"
+    safe_ig_hook = _escape_md(ig_hook_raw[:80] + ("..." if len(ig_hook_raw) > 80 else ""))
+
+    yt_tags_raw = " ".join(yt_data.get("hashtags", clip_meta.final_hashtags if clip_meta else ["#Shorts"])[:4])
+    safe_yt_tags = _escape_md(yt_tags_raw)
 
     caption_lines = [
         "🎬 *AL AMR Clip Review Required*",
@@ -391,20 +403,20 @@ async def send_clip_review(
         f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
         f"🎯 *Hook:* {safe_hook}",
         f"✨ *Quality:* {quality_score} ({quality_status})",
-        f"📋 *Campaign Compliance:* {compliance_badge}",
-        f"📈 *SEO Score:* {seo_score} ({seo_status})",
+        f"📋 *Compliance:* YT: {yt_badge} | IG: {ig_badge}",
         "",
-        f"🏷 *Proposed Title:* {safe_title}",
+        f"▶️ *YouTube (Future Founders):*",
+        f"• Title: {safe_title}",
+        f"• Tags: {safe_yt_tags}",
+        "",
+        f"📸 *Instagram (@black_boxvault):*",
+        f"• Hook: {safe_ig_hook}",
     ]
-    if clip_meta and clip_meta.final_hashtags:
-        caption_lines.append(f"🔖 *Hashtags:* {_escape_md(' '.join(clip_meta.final_hashtags[:6]))}")
-    if clip_meta and clip_meta.final_cta:
-        caption_lines.append(f"📣 *CTA:* {_escape_md(clip_meta.final_cta[:100])}")
-    if raw_desc:
-        short_desc = raw_desc[:200] + ("..." if len(raw_desc) > 200 else "")
-        caption_lines.append(f"📝 *Description:* {_escape_md(short_desc)}")
+    if ig_data.get("mentions"):
+        safe_mentions = _escape_md(" ".join(ig_data["mentions"][:3]))
+        caption_lines.append(f"• Mentions: {safe_mentions}")
     if drive_link:
-        caption_lines.append(f"🔗 [Watch / Download Clip on Drive]({drive_link})")
+        caption_lines.append(f"\n🔗 [Watch / Download Clip on Drive]({drive_link})")
 
     caption_text = "\n".join(caption_lines)
 

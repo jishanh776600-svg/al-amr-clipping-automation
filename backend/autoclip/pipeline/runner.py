@@ -1285,24 +1285,19 @@ class PipelineRunner:
             campaign_spec = CampaignSpecification.from_campaign_brief(self.job.settings["campaign"])
 
         seo_engine = SEOEngine.from_campaign_spec(campaign_spec)
+        cand_list = store.list_clip_candidates(self.job.id)
+        candidate_map = {c.id: c for c in cand_list}
+        specs_list = store.list_clip_specifications(self.job.id)
+        spec_to_cand = {s.id: candidate_map.get(s.candidate_id) for s in specs_list if s.candidate_id in candidate_map}
+
         seo_records = []
         for clip in clips:
             matching_render = next((r for r in final_render_records if r.clip_id == clip.id and r.is_approved), None)
             if matching_render is not None:
                 clip_words = transcript.slice(clip.start_word, clip.end_word)
-                sample_word = clip_words[0] if clip_words else None
-                sample_fields = [f.name for f in fields(sample_word)] if sample_word and is_dataclass(sample_word) else []
-                log.info(
-                    "Stage EXPORT/SEO: Generating SEO metadata for clip %s (word_range=[%d, %d], word_count=%d, sample_word_type=%s, available_fields=%s)",
-                    clip.id,
-                    clip.start_word,
-                    clip.end_word,
-                    len(clip_words),
-                    type(sample_word).__name__ if sample_word else "None",
-                    sample_fields,
-                )
+                matching_cand = candidate_map.get(clip.id) or spec_to_cand.get(clip.id)
                 slice_text = transcript.text_between(clip.start_word, clip.end_word)
-                meta_rec = seo_engine.generate_for_clip(clip, transcript_text=slice_text)
+                meta_rec = seo_engine.generate_for_clip(clip, transcript_text=slice_text, candidate=matching_cand)
                 seo_records.append(meta_rec)
 
         if seo_records:
