@@ -358,9 +358,8 @@ class CredentialVault:
                             if sval and not is_masked_secret(str(sval)):
                                 canon_k = canonical_secret_key(skey) or skey
                                 try:
-                                    if not self.retrieve_secret(canon_k):
-                                        self.store_secret(canon_k, str(sval))
-                                        log.info("Restored '%s' into durable SQLite vault from encrypted envelope on startup.", canon_k)
+                                    self.store_secret(canon_k, str(sval))
+                                    log.info("Restored '%s' into durable SQLite vault from encrypted envelope on startup.", canon_k)
                                 except Exception as exc:
                                     log.debug("Could not restore secret '%s' from envelope: %s", canon_k, exc)
                         continue
