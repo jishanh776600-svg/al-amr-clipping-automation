@@ -173,6 +173,13 @@ class SystemReport:
     @property
     def ready(self) -> bool:
         """True when the core pipeline can run (GPU and extras are optional)."""
+        try:
+            from .jobs.dispatcher import is_cloud_environment, is_github_dispatch_enabled
+            if is_cloud_environment() and is_github_dispatch_enabled():
+                return True
+        except Exception:
+            pass
+
         return (
             self.python_ok
             and self.ffmpeg.usable

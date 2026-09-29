@@ -89,7 +89,6 @@ class InstagramPublisher(BasePublisher):
             or os.getenv("CONTROL_PLANE_URL")
             or os.getenv("RENDER_EXTERNAL_URL", "")
         ).strip().rstrip("/")
-                pass
 
     def is_configured(self) -> bool:
         return bool(self.access_token and self.account_id)

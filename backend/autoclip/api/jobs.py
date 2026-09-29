@@ -1146,21 +1146,25 @@ async def retry_job(job_id: str) -> JobOut:
         )
 
     if job.attempt >= job.max_attempts:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Job {job_id} has exceeded maximum allowed attempts ({job.max_attempts}).",
-        )
+        # Manual operator retry override: reset attempt count so operator can re-run
+        next_attempt = 1
+        max_attempts = max(job.max_attempts, 3)
+    else:
+        next_attempt = job.attempt + 1
+        max_attempts = job.max_attempts
 
-    next_attempt = job.attempt + 1
     now = store.utcnow()
     await asyncio.to_thread(
         store.update_job,
         job_id,
         status="queued",
         attempt=next_attempt,
+        max_attempts=max_attempts,
         error=None,
         progress=0.0,
         current_stage="requeued",
+        github_run_id=None,
+        github_run_url=None,
         last_heartbeat_at=None,
         stale_at=None,
         failed_at=None,
