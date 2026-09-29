@@ -67,6 +67,8 @@ class PublishingService:
             access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"META_ACCESS_TOKEN_{clean_id}")
             acc_env = cfg.get("account_id_env")
             account_id = (os.getenv(acc_env) if acc_env else None) or cfg.get("account_id") or os.getenv(f"INSTAGRAM_ACCOUNT_ID_{clean_id}")
+            if dest and dest.account_identifier and dest.account_identifier not in ("Instagram Account", "default"):
+                account_id = account_id or dest.account_identifier
             return InstagramPublisher(access_token=access_token, account_id=account_id)
 
         # Multi-Account Resolution: Telegram

@@ -68,7 +68,7 @@ class PublishingOrchestrator:
                 id="dest-instagram-main",
                 platform="instagram",
                 display_name="Instagram Reels Main",
-                account_identifier=os.getenv("INSTAGRAM_ACCOUNT_ID", "Instagram Account"),
+                account_identifier=os.getenv("INSTAGRAM_ACCOUNT_ID", "17841439457167561"),
                 enabled=True,
                 priority=15,
                 config_metadata={"share_to_feed": True},

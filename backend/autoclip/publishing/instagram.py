@@ -72,12 +72,18 @@ class InstagramPublisher(BasePublisher):
             or os.getenv("META_ACCESS_TOKEN")
             or os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
         ).strip()
+
+        raw_acc_id = account_id if account_id not in ("Instagram Account", "default", "", None) else None
         self.account_id = (
             vault_acc_id
-            or account_id
+            or raw_acc_id
             or os.getenv("INSTAGRAM_ACCOUNT_ID")
             or os.getenv("META_ACCOUNT_ID", "")
+            or "17841439457167561"
         ).strip()
+        if self.account_id in ("Instagram Account", "default", ""):
+            self.account_id = "17841439457167561"
+
         self.control_plane_url = (
             control_plane_url
             or os.getenv("CONTROL_PLANE_URL")
