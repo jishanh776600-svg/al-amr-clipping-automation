@@ -124,9 +124,12 @@ class SEOEngine:
             desc_parts.append(f"Key Focus: {', '.join(req_phrases)}")
 
         # YouTube CTA (channel subscribe + engagement)
-        yt_cta = "👉 Subscribe to Future Founders for more visionary clips and actionable lessons."
         if yt_rules and yt_rules.cta_rules:
             yt_cta = yt_rules.cta_rules[0]
+        elif self.reqs.brand_name:
+            yt_cta = f"👉 Subscribe to {self.reqs.brand_name} for more exclusive drops and official updates."
+        else:
+            yt_cta = "👉 Subscribe for more highlights and official updates."
         desc_parts.append(yt_cta)
 
         # YouTube Links
@@ -139,20 +142,37 @@ class SEOEngine:
             yt_links = [self.reqs.campaign_url.strip()]
 
         for link in yt_links:
-            desc_parts.append(f"🔗 Learn more: {link}")
+            desc_parts.append(f"🔗 Official link: {link}")
+
+        # YouTube Mentions
+        yt_mentions: list[str] = []
+        if yt_rules and yt_rules.mention_rules:
+            yt_mentions = list(yt_rules.mention_rules)
+        elif self.reqs.required_mentions:
+            yt_mentions = list(self.reqs.required_mentions)
+        if yt_mentions:
+            desc_parts.append(f"Tagging {' '.join(yt_mentions)}")
 
         # Tags & #Shorts
-        yt_tags = ["#Shorts", "#FutureFounders", "#Entrepreneurship"]
+        yt_tags = ["#Shorts"]
+        custom_yt_tags = []
         if yt_rules and yt_rules.hashtag_rules:
-            for h in yt_rules.hashtag_rules:
+            custom_yt_tags = yt_rules.hashtag_rules
+        elif self.reqs.required_hashtags:
+            custom_yt_tags = self.reqs.required_hashtags
+
+        if custom_yt_tags:
+            for h in custom_yt_tags:
                 tag = h if h.startswith("#") else f"#{h}"
                 if tag.lower() not in [t.lower() for t in yt_tags]:
                     yt_tags.append(tag)
+        else:
+            yt_tags.extend(["#Trending", "#Viral"])
 
         words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
         stopwords = {"this", "that", "with", "from", "have", "they", "will", "what", "when", "there", "about", "your", "more", "into", "their"}
         for w in words:
-            if w.lower() not in stopwords and len(yt_tags) < 8:
+            if w.lower() not in stopwords and len(yt_tags) < 6:
                 tag = f"#{w.capitalize()}"
                 if tag.lower() not in [t.lower() for t in yt_tags]:
                     yt_tags.append(tag)
@@ -178,7 +198,7 @@ class SEOEngine:
             if len(yt_meta.title) > 100:
                 yt_meta.title = yt_meta.title[:97] + "..."
             if not yt_meta.title:
-                yt_meta.title = "Future Founders Insight"
+                yt_meta.title = "Key Insight & Breakdown"
             # Remove prohibited terms
             prohibited = set(self.reqs.prohibited_terms)
             if self.seo_spec:
@@ -230,28 +250,48 @@ class SEOEngine:
         caption_lines.append(ig_body)
         caption_lines.append("")
 
-        # Instagram required mention: @black_boxvault
-        ig_mentions = ["@black_boxvault"]
+        # Instagram required mentions
+        ig_mentions: list[str] = []
         if ig_rules and ig_rules.mention_rules:
             for m in ig_rules.mention_rules:
                 norm_m = m if m.startswith("@") else f"@{m}"
                 if norm_m.lower() not in [x.lower() for x in ig_mentions]:
                     ig_mentions.append(norm_m)
+        elif self.reqs.required_mentions:
+            for m in self.reqs.required_mentions:
+                norm_m = m if m.startswith("@") else f"@{m}"
+                if norm_m.lower() not in [x.lower() for x in ig_mentions]:
+                    ig_mentions.append(norm_m)
 
-        ig_cta = "👉 Follow @black_boxvault for daily unfiltered founder breakdowns."
+        target_handle = ig_mentions[0] if ig_mentions else (f"@{self.reqs.brand_name.lower().replace(' ', '')}" if self.reqs.brand_name else "")
         if ig_rules and ig_rules.cta_rules:
             ig_cta = ig_rules.cta_rules[0]
+        elif target_handle:
+            ig_cta = f"👉 Follow {target_handle} for daily show highlights and exclusive drops."
+        else:
+            ig_cta = "👉 Follow for daily highlights and exclusive drops."
         caption_lines.append(ig_cta)
-        caption_lines.append("🔗 Full resources via link in bio.")
+
+        if ig_mentions:
+            caption_lines.append(f"Tagging {' '.join(ig_mentions)}")
+
         caption_lines.append("")
 
-        # Instagram Hashtags: 4-6 focused hashtags
-        ig_tags = ["#reels", "#founders", "#business"]
+        # Instagram Hashtags
+        ig_tags: list[str] = ["#reels"]
+        custom_ig_tags = []
         if ig_rules and ig_rules.hashtag_rules:
-            for h in ig_rules.hashtag_rules:
+            custom_ig_tags = ig_rules.hashtag_rules
+        elif self.reqs.required_hashtags:
+            custom_ig_tags = self.reqs.required_hashtags
+
+        if custom_ig_tags:
+            for h in custom_ig_tags:
                 norm_h = h if h.startswith("#") else f"#{h}"
                 if norm_h.lower() not in [t.lower() for t in ig_tags]:
                     ig_tags.append(norm_h)
+        else:
+            ig_tags.extend(["#trending", "#viral"])
 
         caption_lines.append(" ".join(ig_tags[:6]))
         full_caption = sanitize_public_text("\n".join(caption_lines), is_title=False)
@@ -281,9 +321,10 @@ class SEOEngine:
             for pt in prohibited:
                 if pt and pt.lower() in ig_meta.caption.lower():
                     ig_meta.caption = re.sub(rf"\b{re.escape(pt)}\b", "", ig_meta.caption, flags=re.IGNORECASE).strip()
-            # Ensure required mention (@black_boxvault)
-            if "@black_boxvault" not in ig_meta.caption.lower():
-                ig_meta.caption += "\n\nFollow @black_boxvault"
+            # Ensure required mentions are present in caption
+            for req_m in ig_meta.mentions:
+                if req_m.lower() not in ig_meta.caption.lower():
+                    ig_meta.caption += f"\n\nFollow {req_m}"
 
         return ig_meta
 

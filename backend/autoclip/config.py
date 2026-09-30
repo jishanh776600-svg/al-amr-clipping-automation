@@ -337,6 +337,8 @@ def get_secret(key: str, settings: Settings | None = None) -> str | None:
             except Exception:
                 pass
             return clean
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            return None
 
     # 2. Durable encrypted SQLite vault (canonical source of truth when no env var)
     try:

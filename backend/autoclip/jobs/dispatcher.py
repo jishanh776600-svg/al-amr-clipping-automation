@@ -6,6 +6,7 @@ handing off Whisper, MediaPipe, AI evaluation, and FFmpeg processing to GitHub A
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os

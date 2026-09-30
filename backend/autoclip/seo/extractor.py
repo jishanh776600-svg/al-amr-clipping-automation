@@ -243,7 +243,7 @@ def extract_campaign_seo_spec(
         yt_desc_rules.append(f"Include YouTube link: {global_links[0]}")
 
     yt_cta_rules = list(reqs.cta_instructions) if reqs.cta_instructions else [
-        "Subscribe to Future Founders for daily entrepreneurial insights! Comment your thoughts below."
+        f"Subscribe to {reqs.brand_name or 'the channel'} for more official highlights! Comment your thoughts below."
     ]
 
     yt_hashtags = list(reqs.required_hashtags)
@@ -266,7 +266,7 @@ def extract_campaign_seo_spec(
         description_rules=yt_desc_rules,
         hashtag_rules=yt_hashtags,
         keyword_rules=list(reqs.required_phrases),
-        tag_rules=list(reqs.required_phrases) + ["Shorts", "Future Founders"],
+        tag_rules=list(reqs.required_phrases) + (["Shorts", reqs.brand_name] if reqs.brand_name else ["Shorts"]),
         link_rules=[f"YouTube destination link: {u}" for u in global_links],
         mention_rules=list(reqs.required_mentions),
         cta_rules=yt_cta_rules,
@@ -285,15 +285,13 @@ def extract_campaign_seo_spec(
     ig_caption_rules = [
         "Punchy first-line hook optimized for the 125-character Instagram feed preview cutoff",
         "Clean, visual paragraph spacing with bullet points or emojis where appropriate",
-        "Contextual explanation of the clip topic tailored for entrepreneurial audience",
+        "Contextual explanation of the clip topic tailored for audience",
     ]
     ig_mentions = list(reqs.required_mentions)
-    if "@black_boxvault" not in [m.lower() for m in ig_mentions]:
-        ig_mentions.append("@black_boxvault")
 
-    ig_cta_rules = list(reqs.cta_instructions) if reqs.cta_instructions else [
-        "Follow @black_boxvault for daily startup breakdowns! Save this Reel and share your takeaway in the comments 👇"
-    ]
+    target_handle = ig_mentions[0] if ig_mentions else (f"@{reqs.brand_name.lower().replace(' ', '')}" if reqs.brand_name else "")
+    default_ig_cta = f"Follow {target_handle} for daily highlights! Save this Reel and share your takeaway in the comments 👇" if target_handle else "Follow for daily highlights! Save this Reel and share your takeaway in the comments 👇"
+    ig_cta_rules = list(reqs.cta_instructions) if reqs.cta_instructions else [default_ig_cta]
 
     ig_hashtags = list(reqs.required_hashtags)
 

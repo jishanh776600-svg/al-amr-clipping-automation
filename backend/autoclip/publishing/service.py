@@ -310,7 +310,15 @@ class PublishingService:
         temp_file_to_clean: Path | None = None
         drive_link: str | None = None
 
+        cache_dir = paths.root() / "media_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cached_dest = cache_dir / f"clip_{clip_id}.mp4"
+
         has_media = media_path.is_file() and media_path.stat().st_size > 0
+        if not has_media and cached_dest.is_file() and cached_dest.stat().st_size > 1000:
+            media_path = cached_dest
+            has_media = True
+
         if not has_media:
             exports = store.list_exports(clip_id)
             drive_file_id = None

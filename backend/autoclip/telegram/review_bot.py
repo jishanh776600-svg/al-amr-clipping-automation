@@ -402,19 +402,22 @@ async def send_clip_review(
     ig_caption_snippet = ig_caption[:80] + ("..." if len(ig_caption) > 80 else "")
     safe_ig_caption = html.escape(ig_caption_snippet)
 
-    ig_tags_list = ig_data.get("hashtags") or ["#reels", "#founders", "#business"]
-    safe_ig_tags = html.escape(" ".join(ig_tags_list[:4]))
+    ig_tags_list = ig_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts", "#Trending"])
+    safe_ig_tags = html.escape(" ".join(ig_tags_list[:5]))
 
-    ig_mentions_list = ig_data.get("mentions") or ["@black_boxvault"]
-    safe_ig_mentions = html.escape(" ".join(ig_mentions_list[:2]))
+    ig_mentions_list = ig_data.get("mentions") or []
+    safe_ig_mentions = html.escape(" ".join(ig_mentions_list[:2])) if ig_mentions_list else "None"
 
-    ig_cta = ig_data.get("cta") or "👉 Follow @black_boxvault for founder insights."
+    ig_cta = ig_data.get("cta") or "👉 Follow for daily show highlights."
     safe_ig_cta = html.escape(ig_cta[:50] + ("..." if len(ig_cta) > 50 else ""))
 
     ig_comp = ig_data.get("compliance_score", 100.0)
     ig_opt = ig_data.get("optimization_score", 95.0)
 
     safe_hook = html.escape(clip.hook or "N/A")
+
+    yt_channel_display = html.escape(yt_data.get("channel") or yt_data.get("channel_title") or "YouTube Shorts")
+    ig_account_display = html.escape(ig_mentions_list[0] if ig_mentions_list else "Instagram Reels")
 
     caption_lines = [
         "🎬 <b>Clip Review Required</b>",
@@ -425,13 +428,13 @@ async def send_clip_review(
         f"✨ <b>Quality:</b> {quality_score} ({quality_status})",
         f"📋 <b>Campaign Compliance:</b> {compliance_badge}",
         "",
-        "▶️ <b>YOUTUBE (Future Founders):</b>",
+        f"▶️ <b>YOUTUBE ({yt_channel_display}):</b>",
         f"• Title: {safe_yt_title}",
         f"• Description: {safe_yt_desc}",
         f"• Hashtags: {safe_yt_tags}",
         f"• Compliance: {yt_comp:.0f}% | Opt: {yt_opt:.0f}/100",
         "",
-        "📸 <b>INSTAGRAM (@black_boxvault):</b>",
+        f"📸 <b>INSTAGRAM ({ig_account_display}):</b>",
         f"• Caption: {safe_ig_caption}",
         f"• Hashtags: {safe_ig_tags}",
         f"• Mentions: {safe_ig_mentions}",
@@ -460,6 +463,7 @@ async def send_clip_review(
 
     # Materialize video file for review delivery: local file if accessible, or download from Google Drive
     temp_file_to_clean: Path | None = None
+    preview_file_to_clean: Path | None = None
     effective_media_path: Path | None = None
 
     if media_path and media_path.is_file() and media_path.stat().st_size > 0:
@@ -488,15 +492,47 @@ async def send_clip_review(
         except Exception as exc:
             log.warning("Failed downloading clip %s from Google Drive for Telegram review: %s", clip_id, exc)
 
+    def _generate_tg_preview(source_p: Path) -> Path | None:
+        """Create a fast, lightweight MP4 (<=25MB) using ffmpeg for Telegram delivery."""
+        try:
+            import subprocess
+            with tempfile.NamedTemporaryFile(suffix="_tg_prev.mp4", delete=False) as prev_tf:
+                prev_path = Path(prev_tf.name)
+            cmd = [
+                "ffmpeg", "-y", "-i", str(source_p),
+                "-vf", "scale='min(720,iw)':-2",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+                "-movflags", "+faststart",
+                str(prev_path),
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
+            if res.returncode == 0 and prev_path.is_file() and prev_path.stat().st_size > 1000:
+                log.info("Compressed Telegram preview video created: %s (%.1f MB)", prev_path, prev_path.stat().st_size / (1024 * 1024))
+                return prev_path
+        except Exception as e_prev:
+            log.warning("Could not generate ffmpeg preview for Telegram: %s", e_prev)
+        return None
+
     try:
-        # Attempt 1: If effective video file is available and <= 48MB, send real video preview
+        # Attempt 1: Send real video preview (compress if > 48MB so 100% of clips get inline video)
         if effective_media_path and effective_media_path.exists():
             size_mb = effective_media_path.stat().st_size / (1024 * 1024)
+            video_to_upload = effective_media_path
+
+            if size_mb > 48:
+                log.info("Clip %s size (%.1f MB) exceeds Telegram 48MB direct limit. Generating fast preview...", clip_id, size_mb)
+                compressed = await asyncio.to_thread(_generate_tg_preview, effective_media_path)
+                if compressed:
+                    preview_file_to_clean = compressed
+                    video_to_upload = compressed
+                    size_mb = compressed.stat().st_size / (1024 * 1024)
+
             if size_mb <= 48:
                 try:
                     log.info("Sending clip review video to Telegram chat %s (%.1f MB)...", chat_id, size_mb)
                     async with httpx.AsyncClient(timeout=120.0) as client:
-                        with open(effective_media_path, "rb") as vf:
+                        with open(video_to_upload, "rb") as vf:
                             files = {"video": (f"clip_{clip_id}.mp4", vf, "video/mp4")}
                             data = {
                                 "chat_id": chat_id,
@@ -527,6 +563,22 @@ async def send_clip_review(
                                     tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
                                     _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
                                     return resp_json
+                                # If failed due to payload/size and hasn't been compressed yet, try compression
+                                if video_to_upload == effective_media_path and not preview_file_to_clean:
+                                    log.info("HTTP 400 on original video. Attempting preview compression for clip %s...", clip_id)
+                                    compressed = await asyncio.to_thread(_generate_tg_preview, effective_media_path)
+                                    if compressed:
+                                        preview_file_to_clean = compressed
+                                        with open(compressed, "rb") as cf:
+                                            files_c = {"video": (f"clip_{clip_id}.mp4", cf, "video/mp4")}
+                                            resp_c = await client.post(send_video_url, data=data_plain, files=files_c)
+                                            if resp_c.status_code == 200:
+                                                log.info("Telegram review video (compressed fallback) delivered for clip %s", clip_id)
+                                                resp_json = resp_c.json()
+                                                msg_id = resp_json.get("result", {}).get("message_id")
+                                                tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
+                                                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
+                                                return resp_json
                             log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
                 except Exception as exc:
                     log.warning("Failed sending video directly via Telegram API: %s", exc)
@@ -534,6 +586,11 @@ async def send_clip_review(
         if temp_file_to_clean and temp_file_to_clean.exists():
             try:
                 temp_file_to_clean.unlink(missing_ok=True)
+            except Exception:
+                pass
+        if preview_file_to_clean and preview_file_to_clean.exists():
+            try:
+                preview_file_to_clean.unlink(missing_ok=True)
             except Exception:
                 pass
 

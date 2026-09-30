@@ -318,22 +318,25 @@ class InstagramPublisher(BasePublisher):
             is_ready = False
             for attempt in range(30):
                 await asyncio.sleep(5)
-                stat_resp = await client.get(status_url, params={"fields": "status_code", "access_token": self.access_token})
+                stat_resp = await client.get(status_url, params={"fields": "status_code,status", "access_token": self.access_token})
                 if stat_resp.status_code == 200:
-                    status_code = stat_resp.json().get("status_code")
+                    stat_json = stat_resp.json()
+                    status_code = stat_json.get("status_code")
                     if status_code == "FINISHED":
                         is_ready = True
                         break
                     elif status_code == "ERROR":
-                        err = f"Instagram media container processing error: {stat_resp.text}"
+                        err_detail = stat_json.get("status") or stat_resp.text
+                        err = f"Instagram media container processing error: {err_detail}"
+                        is_transient = "2207082" in err_detail or "temporary" in err_detail.lower()
                         return PublishingResult(
                             platform=self.platform_name,
                             destination_id=destination_id,
                             success=False,
                             status="failed",
                             error=err,
-                            error_code="invalid_media",
-                            retryable=False,
+                            error_code="platform_error" if is_transient else "invalid_media",
+                            retryable=is_transient,
                         )
                 if (attempt + 1) % 4 == 0:
                     log.info("Still waiting for Instagram media container %s (attempt %d/30)...", container_id, attempt + 1)

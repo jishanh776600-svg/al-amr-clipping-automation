@@ -670,35 +670,43 @@ async def async_main() -> None:
             drive_storage_key = None
             upload_error: Optional[str] = None
 
-            # Upload export to Google Drive
+            # Upload export to Google Drive with retries
             if drive_storage.is_configured:
                 report(stage="uploading_to_drive", progress=0.90)
-                try:
-                    meta = drive_storage.upload_file(
-                        exp_path,
-                        f"clip_{clip.id}_{exp.ratio.replace(':', 'x')}.mp4",
-                        folder_type="clips",
-                        subfolder=args.job_id,
-                    )
-                    drive_file_id = meta.file_id
-                    drive_web_view_link = meta.web_view_link
-                    drive_storage_key = meta.storage_key
-                    store.update_export_drive_info(
-                        exp.id,
-                        drive_file_id=drive_file_id,
-                        drive_web_view_link=drive_web_view_link,
-                        drive_storage_key=drive_storage_key,
-                    )
-                    log.info(
-                        "Successfully uploaded export %s to Google Drive: file_id=%s, key=%s, link=%s",
-                        exp.id,
-                        drive_file_id,
-                        drive_storage_key,
-                        drive_web_view_link,
-                    )
-                except Exception as exc:
-                    upload_error = str(exc)
-                    log.error("Failed to upload export %s to Google Drive: %s", exp.id, exc)
+                for attempt in range(1, 4):
+                    try:
+                        meta = drive_storage.upload_file(
+                            exp_path,
+                            f"clip_{clip.id}_{exp.ratio.replace(':', 'x')}.mp4",
+                            folder_type="clips",
+                            subfolder=args.job_id,
+                        )
+                        drive_file_id = meta.file_id
+                        drive_web_view_link = meta.web_view_link
+                        drive_storage_key = meta.storage_key
+                        store.update_export_drive_info(
+                            exp.id,
+                            drive_file_id=drive_file_id,
+                            drive_web_view_link=drive_web_view_link,
+                            drive_storage_key=drive_storage_key,
+                        )
+                        log.info(
+                            "Successfully uploaded export %s to Google Drive (attempt %d): file_id=%s, key=%s, link=%s",
+                            exp.id,
+                            attempt,
+                            drive_file_id,
+                            drive_storage_key,
+                            drive_web_view_link,
+                        )
+                        upload_error = None
+                        break
+                    except Exception as exc:
+                        upload_error = str(exc)
+                        log.warning("Upload attempt %d for export %s failed: %s", attempt, exp.id, exc)
+                        if attempt < 3:
+                            time.sleep(2.0 * attempt)
+                        else:
+                            log.error("All 3 upload attempts failed for export %s: %s", exp.id, exc)
             else:
                 upload_error = "Google Drive storage is not configured on worker."
                 log.error("CRITICAL: %s Cannot persist export %s to Google Drive.", upload_error, exp.id)

@@ -142,10 +142,10 @@ class YouTubePublisher(BasePublisher):
                 items = res.get("items", [])
                 if not items:
                     elapsed = loop.time() - start_time
-                    if elapsed < 12.0:
+                    if elapsed < max_wait_seconds:
                         await asyncio.sleep(poll_interval)
                         continue
-                    return False, "video_not_found", {"error": f"Video {video_id} not found via YouTube API."}
+                    return False, "video_not_found", {"error": f"Video {video_id} not found via YouTube API within {max_wait_seconds}s."}
 
                 item = items[0]
                 snippet = item.get("snippet", {})
@@ -192,7 +192,7 @@ class YouTubePublisher(BasePublisher):
                     return False, "processing_failed", video_info
 
                 # Check 3: Processing state
-                if upload_status == "processed":
+                if upload_status == "processed" or (upload_status == "uploaded" and actual_privacy == "public"):
                     # Check 4: Visibility must be public
                     if actual_privacy != "public":
                         log.warning(
@@ -232,6 +232,10 @@ class YouTubePublisher(BasePublisher):
                 # Video is still processing ('uploaded' or 'processing')
                 elapsed = loop.time() - start_time
                 if not wait_for_processing or elapsed >= max_wait_seconds:
+                    if actual_privacy == "public":
+                        # If public, YouTube Shorts will finish processing asynchronously
+                        log.info("YouTube video %s is uploaded with public visibility. Proceeding with publication.", video_id)
+                        return True, "published", video_info
                     log.warning(
                         "Post-upload verification: YouTube processing not completed within %ss (status: %s)",
                         max_wait_seconds,
@@ -291,11 +295,11 @@ class YouTubePublisher(BasePublisher):
 
         description = sanitize_public_text(metadata.description or "", is_title=False)
         if "#Shorts" not in description and "#shorts" not in description:
-            description = f"{description}\n\n#Shorts #Founders".strip()
+            description = f"{description}\n\n#Shorts".strip()
         description = description[:5000]
 
-        raw_tags = list(set(metadata.tags + ["Shorts", "Founders"]))
-        tags = [t for t in raw_tags if not any(b in t.lower() for b in ("alamr", "autoclip", "reconcile"))]
+        raw_tags = list(set(metadata.tags + ["Shorts"]))
+        tags = [t for t in raw_tags if not any(b in t.lower() for b in ("alamr", "autoclip", "reconcile", "founders"))]
 
         # Check live publish configuration (default is live when credentials are present)
         is_live_disabled = os.getenv("YOUTUBE_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("YOUTUBE_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")

@@ -355,12 +355,10 @@ def validate_instagram_metadata(
     else:
         rule_evals["first_line_hook_present"] = True
 
-    # 4. Required mentions (e.g. @black_boxvault or campaign spec mentions)
+    # 4. Required mentions from campaign spec
     req_mentions = []
     if spec and spec.instagram_rules.mention_rules:
         req_mentions.extend(spec.instagram_rules.mention_rules)
-    else:
-        req_mentions.append("@black_boxvault")
 
     caption_mentions_lower = {m.lower().lstrip("@") for m in re.findall(r"@[\w\.-]+", caption)} | {m.lower().lstrip("@") for m in mentions}
     missing_mentions = []

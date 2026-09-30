@@ -314,8 +314,8 @@ async def stream_export(export_id: str, request: Request):
                 )
             except Exception as exc:
                 log.warning("Failed streaming Drive file %s: %s", record.drive_file_id, exc)
-        # If Google Drive storage is not configured, do not redirect to an HTML sign-in page
-        # which breaks external media crawlers (Meta Reels, Twitter, TikTok).
+        if record.drive_web_view_link:
+            return RedirectResponse(record.drive_web_view_link)
         log.warning("Google Drive storage is not configured; cannot stream Drive file %s", record.drive_file_id)
 
     raise HTTPException(
@@ -401,24 +401,35 @@ async def public_clip_media(clip_id: str, request: Request):
                 log.warning("Could not download Telegram video for clip %s: %s", clip_id, tg_err)
 
     # 4. Google Drive direct stream (if configured)
+    target_drive_id = None
     for exp in exports:
         if exp.drive_file_id:
-            drive_storage = GoogleDriveStorage()
-            if drive_storage.is_configured:
-                try:
-                    range_header = request.headers.get("Range")
-                    content_iter, status_code, headers = drive_storage.stream_range(
-                        exp.drive_file_id,
-                        range_header=range_header,
-                    )
-                    return StreamingResponse(
-                        content_iter,
-                        status_code=status_code,
-                        headers=headers,
-                        media_type="video/mp4",
-                    )
-                except Exception as exc:
-                    log.warning("Failed streaming Drive file %s: %s", exp.drive_file_id, exc)
+            target_drive_id = exp.drive_file_id
+            break
+    if not target_drive_id and final_render and final_render.telemetry:
+        target_drive_id = final_render.telemetry.get("drive_file_id")
+    if not target_drive_id:
+        approval = await asyncio.to_thread(store.get_clip_approval, clip_id)
+        if approval and approval.telemetry:
+            target_drive_id = approval.telemetry.get("drive_file_id")
+
+    if target_drive_id:
+        drive_storage = GoogleDriveStorage()
+        if drive_storage.is_configured:
+            try:
+                range_header = request.headers.get("Range")
+                content_iter, status_code, headers = drive_storage.stream_range(
+                    target_drive_id,
+                    range_header=range_header,
+                )
+                return StreamingResponse(
+                    content_iter,
+                    status_code=status_code,
+                    headers=headers,
+                    media_type="video/mp4",
+                )
+            except Exception as exc:
+                log.warning("Failed streaming Drive file %s: %s", target_drive_id, exc)
 
     raise HTTPException(status_code=404, detail="Clip media file is not accessible on server storage.")
 
