@@ -389,19 +389,11 @@ async def create_autonomous_job(
                 detail={"message": msg, "hint": hint},
             ) from exc
 
-        # Determine source type
-        from urllib.parse import urlparse as _urlparse
-        _netloc = _urlparse(clean_url).netloc.lower()
-        if any(h in _netloc for h in ("youtube.com", "youtu.be")):
-            _src_type = "youtube"
-        elif "drive.google.com" in _netloc:
-            _src_type = "drive"
-        else:
-            _src_type = "upload"
-
+        # In AutoClip schema, remote URLs use type='youtube' (which delegates to SourceAcquisitionRegistry
+        # for Google Drive, YouTube, Cobalt, etc.), while direct file uploads use type='upload'.
         source = Source(
             id=new_id(),
-            type=_src_type,
+            type="youtube",
             path="",
             title=clean_url,
             url=clean_url,

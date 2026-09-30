@@ -83,9 +83,10 @@ class GoogleDriveAcquisitionProvider(SourceAcquisitionProvider):
         if not is_drive_url(source_url):
             raise SourceAcquisitionError(
                 f"URL is not a Google Drive link: {source_url}",
-                code=SourceErrorCode.SOURCE_INVALID_URL,
+                code=SourceErrorCode.SOURCE_PROVIDER_UNAVAILABLE,
                 provider_name=self.provider_name,
             )
+
 
         file_id = _extract_drive_id(source_url)
         if not file_id:
