@@ -220,9 +220,16 @@ class RetentionEditingEngine:
                     clip.id, "; ".join(record.rejection_reasons)
                 )
 
-        # Rescue: If approved_clips is empty or below target count, rescue clips whose ONLY
+        effective_target = (
+            target_output_count
+            or (int(self.campaign_spec.output_count.value) if (self.campaign_spec and self.campaign_spec.output_count) else None)
+            or int(self.job_settings.get("max_clips", 0) or 0)
+            or len(clips)
+        )
+
+        # Rescue: If approved_clips is below effective target count, rescue clips whose ONLY
         # rejection was dead air / pacing, promoting them to FINAL_WARN so valid clips are never lost.
-        if len(approved_clips) < (target_output_count or 1) and clips:
+        if len(approved_clips) < effective_target and clips:
             for rec, clip in zip(all_records, clips):
                 if clip not in approved_clips:
                     hard_failures = [
@@ -241,7 +248,7 @@ class RetentionEditingEngine:
                             "Clip %s rescued by Final Quality Gate as FINAL_WARN (pacing/dead air only).",
                             clip.id,
                         )
-                        if len(approved_clips) >= (target_output_count or 5):
+                        if len(approved_clips) >= effective_target:
                             break
 
         # 6. Rank approved clips by final_score descending
@@ -249,10 +256,8 @@ class RetentionEditingEngine:
         approved_clips.sort(key=lambda c: record_by_clip.get(c.id, RetentionOptimizationRecord(id="", clip_id="", job_id="")).final_score, reverse=True)
 
         # Slice to configured target count
-        limit = (
-            target_output_count
-            or (int(self.campaign_spec.output_count.value) if (self.campaign_spec and self.campaign_spec.output_count) else len(approved_clips))
-        )
+        limit = effective_target
+
         final_clips = approved_clips[:limit]
 
         # Update ranks

@@ -903,6 +903,7 @@ class PipelineRunner:
         def on_retention_progress(substage: str, frac: float, meta: dict[str, Any]) -> None:
             self._emit(stage, frac, f"Optimizing retention ({substage})")
 
+        target_count = getattr(self.settings.clips, "max_clips", 5) or 5
         final_clips, final_crop_paths, records, telemetry = engine.optimize_and_rank(
             clips=clips,
             transcript=transcript,
@@ -911,7 +912,9 @@ class PipelineRunner:
             job_id=self.job.id,
             silences=silences,
             on_progress=on_retention_progress,
+            target_output_count=target_count,
         )
+
 
         # Persist retention optimizations in SQLite
         if records:

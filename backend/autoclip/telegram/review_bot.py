@@ -377,6 +377,9 @@ async def send_clip_review(
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"
     quality_status = final_render.quality_status if final_render else "PENDING"
+    meta_telemetry = (clip_meta.telemetry or {}) if clip_meta else {}
+    yt_data = meta_telemetry.get("youtube") or {}
+    ig_data = meta_telemetry.get("instagram") or {}
     yt_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")))
     yt_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", yt_title, flags=re.IGNORECASE)
     yt_title = re.sub(r"\b[0-9a-f]{8,}\b", "", yt_title).strip()
