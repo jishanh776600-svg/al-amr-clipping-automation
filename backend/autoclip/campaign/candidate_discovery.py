@@ -882,12 +882,14 @@ class CandidateDiscoveryEngine:
                 score_data.total_score = max(0.0, min(100.0, round(blended, 1)))
 
             cid = new_id()
-            title = slice_text[:45].strip()
-            if len(slice_text) > 45:
-                title += "..."
-
             hook_snippet = hook_analysis.native_hook[:60].strip() or milestones.hook_text[:60].strip()
             editorial_headline = hook_analysis.editorial_hook
+
+            raw_candidate_title = editorial_headline or hook_snippet or slice_text[:55].strip()
+            clean_cand_title = re.sub(r"\.{2,}", "", raw_candidate_title).strip().rstrip(".!?,;: ")
+            if clean_cand_title.islower():
+                clean_cand_title = clean_cand_title.title()
+            title = clean_cand_title or "Key Insight & Lesson"
 
             v2_telemetry = build_v2_engine_telemetry(
                 clip_id=cid,

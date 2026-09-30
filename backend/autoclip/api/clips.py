@@ -331,30 +331,34 @@ async def public_clip_media(clip_id: str, request: Request):
     Accessible publicly without authentication for platform publishing crawlers
     (Meta Instagram Reels, YouTube Shorts preview, TikTok).
     """
-    clip = await asyncio.to_thread(store.get_clip, clip_id)
-    if clip is None:
-        raise HTTPException(status_code=404, detail="Clip not found.")
+    # 1. Fast-path: Check cached media on local storage directly (instant 200/206 for crawlers)
+    cache_dir = paths.root() / "media_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_file = cache_dir / f"clip_{clip_id}.mp4"
+    if cached_file.is_file() and cached_file.stat().st_size > 1000:
+        return FileResponse(
+            cached_file,
+            media_type="video/mp4",
+            filename=cached_file.name,
+            content_disposition_type="inline",
+        )
 
-    # 1. Local exports
+    # 2. Check local exports and final renders
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+
+    # 3. Local exports
     exports = await asyncio.to_thread(store.list_exports, clip_id)
     for exp in exports:
         if exp.path and Path(exp.path).is_file() and Path(exp.path).stat().st_size > 0:
             p = Path(exp.path)
             return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
 
-    # 2. Local final renders (Step 22)
+    # 4. Local final renders (Step 22)
     final_renders = await asyncio.to_thread(store.list_final_renders, clip_id)
     for fr in final_renders:
         if fr.output_path and Path(fr.output_path).is_file() and Path(fr.output_path).stat().st_size > 0:
             p = Path(fr.output_path)
             return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
-
-    # 3. Persistent / Cached Telegram Video
-    cache_dir = paths.root() / "media_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached_file = cache_dir / f"clip_{clip_id}.mp4"
-    if cached_file.is_file() and cached_file.stat().st_size > 1000:
-        return FileResponse(cached_file, media_type="video/mp4", filename=cached_file.name, content_disposition_type="inline")
 
     # Lookup Telegram file ID from render or approval telemetry
     tg_file_id = None

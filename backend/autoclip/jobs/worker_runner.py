@@ -733,10 +733,15 @@ async def async_main() -> None:
                 if cta and cta not in desc:
                     desc = f"{desc}\n\n{cta}".strip()
 
+                raw_worker_title = clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")
+                raw_worker_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_worker_title, flags=re.IGNORECASE)
+                raw_worker_title = re.sub(r"\.{2,}", "", raw_worker_title).strip().rstrip(".!?,;: ")
+                worker_title = raw_worker_title.title() if raw_worker_title.islower() else raw_worker_title
+
                 meta = PublishingMetadata(
-                    title=clip.title or "AL AMR Highlight",
+                    title=worker_title or "Key Insight & Lesson",
                     description=desc,
-                    tags=["ALAMR", "Shorts"],
+                    tags=["Shorts", "Trending", "Viral"],
                     destination="",
                     extra={"export_id": exp.id},
                 )

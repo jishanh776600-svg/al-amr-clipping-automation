@@ -24,6 +24,49 @@ from .quality_gate import MetadataQualityGate, validate_instagram_metadata, vali
 log = logging.getLogger(__name__)
 
 
+def _extract_coherent_sentences(text: str, min_chars: int = 40, max_chars: int = 220) -> str:
+    """Extract complete sentences ending on punctuation boundaries without mid-word cut-offs."""
+    if not text:
+        return ""
+    clean = re.sub(r"\s+", " ", text).strip()
+    clean = re.sub(r"\.{2,}", "", clean)
+    sentences = re.split(r"(?<=[.!?])\s+", clean)
+    acc = []
+    total_len = 0
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        if total_len + len(s) + 1 <= max_chars:
+            acc.append(s)
+            total_len += len(s) + 1
+        else:
+            break
+    if acc:
+        res = " ".join(acc).strip()
+        if len(res) >= min_chars:
+            return res
+
+    words = clean.split()
+    chosen: list[str] = []
+    c_len = 0
+    for w in words:
+        if c_len + len(w) + 1 <= max_chars - 1:
+            chosen.append(w)
+            c_len += len(w) + 1
+        else:
+            break
+    while chosen and chosen[-1].lower() in (
+        "and", "or", "so", "the", "a", "an", "to", "of", "in", "for",
+        "with", "is", "at", "by", "that", "fo", "we", "he", "she", "it", "but"
+    ):
+        chosen.pop()
+    if not chosen:
+        return ""
+    res = " ".join(chosen).rstrip(",;:- ") + "."
+    return res[0].upper() + res[1:]
+
+
 class SEOEngine:
     """Generates, validates, and manages per-short SEO and publishing metadata."""
 
@@ -62,12 +105,12 @@ class SEOEngine:
 
         # 2. Synthesize YouTube Description
         desc_parts: list[str] = []
-        summary = hook.strip() if hook else f"An essential moment discussing {topic_cue}."
-        if slice_text and len(slice_text) > 40:
-            snippet = slice_text.strip()
-            first_period = snippet.find(".", 40)
-            if first_period != -1 and first_period < 220:
-                summary = snippet[:first_period + 1].strip()
+        summary = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
+        if not summary:
+            clean_h = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,")
+            summary = clean_h if clean_h else f"An essential breakdown on {topic_cue}."
+            if not summary.endswith("."):
+                summary += "."
         desc_parts.append(summary)
 
         # YouTube campaign phrases
@@ -167,24 +210,22 @@ class SEOEngine:
         ig_rules = self.seo_spec.instagram_rules if self.seo_spec else None
 
         # 1. First-Line Hook: Must be <= 125 chars (the fold before '...more' on mobile)
-        first_line_hook = hook.strip().rstrip(".!?,")
+        clean_hook = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,;: ")
+        if clean_hook.islower():
+            clean_hook = clean_hook.title()
+        first_line_hook = clean_hook
         if not first_line_hook or len(first_line_hook) < 10:
-            first_line_hook = f"The real secret behind {topic_cue}..."
+            first_line_hook = f"The Real Secret Behind {topic_cue}"
         if len(first_line_hook) > 120:
-            first_line_hook = first_line_hook[:117] + "..."
+            first_line_hook = first_line_hook[:120].rsplit(" ", 1)[0]
 
         # 2. Instagram Caption Structure with clear line breaks
         caption_lines: list[str] = [first_line_hook, ""]
 
-        if slice_text and len(slice_text) > 40:
-            snippet = slice_text.strip()
-            first_period = snippet.find(".", 40)
-            if first_period != -1 and first_period < 200:
-                caption_lines.append(snippet[:first_period + 1].strip())
-            else:
-                caption_lines.append(f"Key insight on {topic_cue}: break down what actually works.")
-        else:
-            caption_lines.append(f"Key insight on {topic_cue}: break down what actually works.")
+        ig_body = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
+        if not ig_body:
+            ig_body = f"Key insight on {topic_cue}: break down what actually works."
+        caption_lines.append(ig_body)
         caption_lines.append("")
 
         # Instagram required mention: @black_boxvault
@@ -374,26 +415,33 @@ class SEOEngine:
                     candidate_title = f"{candidate_title} - {phrase}"
                     break
 
-        # Filter prohibited terms
+        # Filter prohibited terms and pipeline/automation tokens
+        candidate_title = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", candidate_title, flags=re.IGNORECASE).strip()
+        candidate_title = re.sub(r"\b[0-9a-f]{8,}\b", "", candidate_title).strip()
+        candidate_title = re.sub(r"\.{2,}", "", candidate_title).strip().rstrip(".!?,;: ")
+
         for term in self.reqs.prohibited_terms:
             if term.lower() in candidate_title.lower():
                 candidate_title = re.sub(rf"\b{re.escape(term)}\b", "", candidate_title, flags=re.IGNORECASE).strip()
 
         if len(candidate_title) > self.reqs.max_title_length:
-            candidate_title = candidate_title[:self.reqs.max_title_length - 3] + "..."
+            candidate_title = candidate_title[:self.reqs.max_title_length].rsplit(" ", 1)[0]
 
-        return candidate_title or "AL AMR Insight"
+        if candidate_title.islower():
+            candidate_title = candidate_title.title()
+
+        return candidate_title or "Key Insight & Breakdown"
 
     def _synthesize_description(self, hook: str, slice_text: str, topic: str) -> str:
         """Synthesizes an informative, campaign-compliant description."""
         parts: list[str] = []
 
-        summary = hook.strip() if hook else f"An essential moment discussing {topic}."
-        if slice_text and len(slice_text) > 40:
-            snippet = slice_text.strip()
-            first_period = snippet.find(".", 40)
-            if first_period != -1 and first_period < 200:
-                summary = snippet[:first_period + 1].strip()
+        summary = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
+        if not summary:
+            clean_h = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,")
+            summary = clean_h if clean_h else f"An essential breakdown on {topic}."
+            if not summary.endswith("."):
+                summary += "."
         parts.append(summary)
 
         # Include genuine campaign topics/phrases naturally (avoiding SOP words)
@@ -422,17 +470,18 @@ class SEOEngine:
                     parts.append(clean_dg)
 
         if self.reqs.required_hashtags:
-            norm_tags = [h if h.startswith("#") else f"#{h}" for h in self.reqs.required_hashtags]
-            parts.append(" ".join(norm_tags))
+            norm_tags = [h if h.startswith("#") else f"#{h}" for h in self.reqs.required_hashtags if "alamr" not in h.lower()]
+            if norm_tags:
+                parts.append(" ".join(norm_tags))
 
         desc = "\n\n".join(parts)
         if len(desc) > self.reqs.max_description_length:
-            desc = desc[:self.reqs.max_description_length - 3] + "..."
+            desc = desc[:self.reqs.max_description_length].rsplit(" ", 1)[0]
         return desc
 
     def _synthesize_hashtags(self, slice_text: str) -> list[str]:
         """Synthesizes deduplicated hashtags starting with campaign-required hashtags."""
-        tags: list[str] = list(self.reqs.required_hashtags)
+        tags: list[str] = [t for t in self.reqs.required_hashtags if "alamr" not in t.lower()]
         clean_tags_lower = [t.lower().lstrip("#") for t in tags]
 
         words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
@@ -443,15 +492,15 @@ class SEOEngine:
         }
         prohibited_set = {p.lower().strip() for p in self.reqs.prohibited_terms}
 
-        candidate_tags = ["#Shorts", "#Reels", "#Viral", "#ALAMR"]
-        if self.reqs.brand_name:
+        candidate_tags = ["#Shorts", "#Reels", "#Viral", "#Founders", "#Mindset", "#Success"]
+        if self.reqs.brand_name and "alamr" not in self.reqs.brand_name.lower():
             b_tag = "#" + re.sub(r"[^\w]", "", self.reqs.brand_name)
             if b_tag.lower() not in [t.lower() for t in candidate_tags] and b_tag.lower().lstrip("#") not in clean_tags_lower:
                 candidate_tags.insert(0, b_tag)
 
         for w in words:
             wl = w.lower()
-            if wl not in stopwords and wl not in prohibited_set and wl not in clean_tags_lower:
+            if wl not in stopwords and wl not in prohibited_set and wl not in clean_tags_lower and "alamr" not in wl and "autoclip" not in wl:
                 candidate_tags.append(f"#{w.capitalize()}")
                 clean_tags_lower.append(wl)
                 if len(candidate_tags) >= 8:

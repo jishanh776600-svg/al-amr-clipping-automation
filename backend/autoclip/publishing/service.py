@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 
@@ -250,9 +251,23 @@ class PublishingService:
             raise ValueError(f"Publishing blocked by quality/approval gates: {err_msg}")
 
         # Assemble authoritative publishing metadata (platform-specific resolution)
-        title = clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight")
-        desc = clip_meta.final_description if clip_meta else (clip.hook or "")
-        tags = clip_meta.final_hashtags if clip_meta else ["ALAMR", "Shorts"]
+        raw_title = clip_meta.final_title if clip_meta else (clip.title or "Key Insight & Breakdown")
+        raw_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_title, flags=re.IGNORECASE)
+        raw_title = re.sub(r"\b[a-f0-9]{8,16}\b", "", raw_title).strip()
+        raw_title = re.sub(r"\.{2,}", "", raw_title).strip().rstrip(".!?,;: ")
+        if raw_title.islower():
+            raw_title = raw_title.title()
+        title = raw_title or (clip.hook.title() if clip and clip.hook else "Key Insight & Breakdown")
+
+        raw_desc = clip_meta.final_description if clip_meta else (clip.hook or "")
+        raw_desc = re.sub(r"Archive Backup:[^\n\r]+", "", raw_desc, flags=re.IGNORECASE).strip()
+        raw_desc = re.sub(r"Reconciled from Telegram[^\n\r]*", "", raw_desc, flags=re.IGNORECASE).strip()
+        desc = raw_desc or (clip.hook if clip else "")
+
+        raw_tags = clip_meta.final_hashtags if clip_meta else ["Shorts", "Trending", "Viral"]
+        tags = [t for t in raw_tags if not any(b in t.lower() for b in ("alamr", "autoclip"))]
+        if not tags:
+            tags = ["Shorts", "Trending", "Viral"]
 
         # Platform-specific resolution: NEVER assume YouTube SEO == Instagram SEO
         if clip_meta and clip_meta.telemetry:
@@ -403,6 +418,19 @@ class PublishingService:
             )
             store.create_publication(failed_pub)
             return failed_pub
+
+        # Ensure media is cached locally in media_cache for public platform crawlers (Meta Instagram Reels)
+        cache_dir = paths.root() / "media_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cached_dest = cache_dir / f"clip_{clip_id}.mp4"
+        if media_path and media_path.is_file() and media_path.stat().st_size > 1000:
+            if not cached_dest.is_file() or cached_dest.stat().st_size != media_path.stat().st_size:
+                try:
+                    import shutil
+                    shutil.copy2(media_path, cached_dest)
+                    log.info("Persisted clip %s media to %s (%d bytes)", clip_id, cached_dest, media_path.stat().st_size)
+                except Exception as c_err:
+                    log.warning("Could not copy clip %s to media_cache: %s", clip_id, c_err)
 
         # Create or update publication record in UPLOADING status
         now_start = models.utcnow()
@@ -603,10 +631,13 @@ class PublishingService:
             return existing
 
         if not metadata:
+            clean_title = (clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")).strip()
+            clean_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", clean_title, flags=re.IGNORECASE)
+            clean_title = re.sub(r"\.{2,}", "", clean_title).strip().rstrip(".!?,;: ")
             metadata = PublishingMetadata(
-                title=clip.title or "AL AMR Highlight",
+                title=clean_title.title() if clean_title.islower() else (clean_title or "Key Insight & Lesson"),
                 description=clip.hook or "",
-                tags=["ALAMR", "Shorts"],
+                tags=["Shorts", "Trending", "Viral"],
                 destination=dest,
                 extra={"export_id": export.id},
             )

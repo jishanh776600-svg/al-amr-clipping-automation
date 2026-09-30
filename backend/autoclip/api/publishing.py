@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -356,13 +357,23 @@ async def publish_export_endpoint(
                 detail=f"Cannot publish clip '{clip.id}': SEO metadata failed compliance check ({reasons}).",
             )
         # Authoritative operator final_* metadata takes precedence
-        title = request.title or clip_metadata.final_title or clip.title or "AL AMR Highlight"
+        raw_title = request.title or clip_metadata.final_title or clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")
+        clean_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_title, flags=re.IGNORECASE)
+        clean_title = re.sub(r"\.{2,}", "", clean_title).strip().rstrip(".!?,;: ")
+        title = clean_title.title() if clean_title.islower() else (clean_title or "Key Insight & Lesson")
         desc = request.description or clip_metadata.final_description or clip.hook or ""
-        tags = request.tags or clip_metadata.final_hashtags or ["ALAMR", "Shorts"]
+        tags = [t for t in (request.tags or clip_metadata.final_hashtags or ["Shorts", "Trending", "Viral"]) if "alamr" not in t.lower() and "autoclip" not in t.lower()]
+        if not tags:
+            tags = ["Shorts", "Trending", "Viral"]
     else:
-        title = request.title or clip.title or "AL AMR Highlight"
+        raw_title = request.title or clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")
+        clean_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_title, flags=re.IGNORECASE)
+        clean_title = re.sub(r"\.{2,}", "", clean_title).strip().rstrip(".!?,;: ")
+        title = clean_title.title() if clean_title.islower() else (clean_title or "Key Insight & Lesson")
         desc = request.description or clip.hook or ""
-        tags = request.tags or ["ALAMR", "Shorts"]
+        tags = [t for t in (request.tags or ["Shorts", "Trending", "Viral"]) if "alamr" not in t.lower() and "autoclip" not in t.lower()]
+        if not tags:
+            tags = ["Shorts", "Trending", "Viral"]
 
     # Step 24 Operator Approval Guard
     clip_approval = await asyncio.to_thread(store.get_clip_approval, clip.id)
@@ -827,9 +838,14 @@ async def retry_publishing(record_id: str) -> PublishingRecordOut:
         raise HTTPException(status_code=404, detail="Associated export not found.")
 
     clip = await asyncio.to_thread(store.get_clip, export.clip_id)
-    title = record.metadata.get("title") or (clip.title if clip else "AL AMR Highlight")
+    raw_title = record.metadata.get("title") or (clip.title if clip else (clip.hook.title() if clip and clip.hook else "Key Insight & Lesson"))
+    clean_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_title, flags=re.IGNORECASE)
+    clean_title = re.sub(r"\.{2,}", "", clean_title).strip().rstrip(".!?,;: ")
+    title = clean_title.title() if clean_title.islower() else (clean_title or "Key Insight & Lesson")
     desc = record.metadata.get("description") or (clip.hook if clip else "")
-    tags = record.metadata.get("tags") or ["ALAMR", "Shorts"]
+    tags = [t for t in (record.metadata.get("tags") or ["Shorts", "Trending", "Viral"]) if "alamr" not in t.lower() and "autoclip" not in t.lower()]
+    if not tags:
+        tags = ["Shorts", "Trending", "Viral"]
     dry_run = bool(record.metadata.get("dry_run", False))
 
     metadata = PublishingMetadata(

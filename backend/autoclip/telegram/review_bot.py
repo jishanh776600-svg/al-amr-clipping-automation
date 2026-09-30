@@ -385,7 +385,11 @@ async def send_clip_review(
     yt_badge = f"{yt_comp:.0f}%" if yt_data else f"{seo_score}"
     ig_badge = f"{ig_comp:.0f}%" if ig_data else f"{seo_score}"
 
-    raw_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or "AL AMR Highlight"))
+    extracted_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")))
+    extracted_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", extracted_title, flags=re.IGNORECASE)
+    extracted_title = re.sub(r"\b[0-9a-f]{8,}\b", "", extracted_title).strip()
+    extracted_title = re.sub(r"\.{2,}", "", extracted_title).strip().rstrip(".!?,;: ")
+    raw_title = extracted_title.title() if extracted_title.islower() else (extracted_title or "Key Insight & Lesson")
     raw_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else (clip.hook or ""))
     safe_title = _escape_md(raw_title)
     safe_hook = _escape_md(clip.hook or "N/A")
@@ -397,7 +401,7 @@ async def send_clip_review(
     safe_yt_tags = _escape_md(yt_tags_raw)
 
     caption_lines = [
-        "🎬 *AL AMR Clip Review Required*",
+        "🎬 *Clip Review Required*",
         "",
         f"📌 *Clip ID:* `{clip.id}`",
         f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
@@ -571,17 +575,26 @@ def _reconcile_remote_clip(
     text = message.get("caption") or message.get("text") or ""
     video = message.get("video") or {}
 
-    # Extract Title
-    title = f"AL AMR Highlight {clip_id[:8]}"
-    title_m = re.search(r"Proposed Title:\*?\s*([^\n\r]+)", text, re.IGNORECASE)
-    if title_m:
-        title = title_m.group(1).strip().strip("*`_")
-
     # Extract Hook
     hook = ""
-    hook_m = re.search(r"Hook:\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    hook_m = re.search(r"(?:🎯\s*\*?Hook:\*?|•\s*Hook:|Hook:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if hook_m:
         hook = hook_m.group(1).strip().strip("*`_")
+        hook = re.sub(r"\.{2,}", "", hook).strip()
+
+    # Extract Title (Support • Title:, Proposed Title:, Title:)
+    title = ""
+    title_m = re.search(r"(?:•\s*Title:|Proposed Title:|Title:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    if title_m:
+        title = title_m.group(1).strip().strip("*`_")
+    
+    # Clean automation tokens, hex clip IDs, and multiple trailing dots from title
+    title = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\.{2,}", "", title).strip()
+    if not title:
+        title = (hook.title() if hook else "Key Insight & Lesson").strip()
+    if title.islower():
+        title = title.title()
 
     # Extract Google Drive Link and File ID
     drive_file_id = ""
@@ -603,17 +616,22 @@ def _reconcile_remote_clip(
     if duration_s <= 0.0:
         duration_s = 24.0
 
-    # Extract Hashtags
-    tags = ["ALAMR", "Shorts"]
-    tags_m = re.search(r"Hashtags:\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    # Extract Hashtags / Tags (Support • Tags:, Hashtags:, Tags:)
+    tags = ["Shorts", "Trending", "Viral"]
+    tags_m = re.search(r"(?:•\s*Tags:|Hashtags:|Tags:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if tags_m:
-        tags = [t.strip().lstrip("#") for t in tags_m.group(1).split() if t.strip()]
+        extracted = [t.strip().lstrip("#") for t in tags_m.group(1).split() if t.strip()]
+        clean_extracted = [t for t in extracted if t.upper() not in ("ALAMR", "AUTOCLIP", "RECONCILE")]
+        if clean_extracted:
+            tags = clean_extracted
 
     # Extract Description
     desc = hook or title
     desc_m = re.search(r"Description:\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if desc_m:
         desc = desc_m.group(1).strip().strip("*`_")
+    desc = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", desc, flags=re.IGNORECASE).strip()
+    desc = re.sub(r"Archive Backup:[^\n\r]+", "", desc, flags=re.IGNORECASE).strip()
 
     source_id = "src_remote"
     if not store.get_source(source_id):
@@ -695,7 +713,8 @@ def _reconcile_remote_clip(
             log.warning("Could not persist reconciled approval %s: %s", clip_id, e)
 
     # Reconcile ClipMetadataRecord for publishing
-    if not store.get_clip_metadata(clip_id):
+    existing_meta = store.get_clip_metadata(clip_id)
+    if not existing_meta:
         meta = models.ClipMetadataRecord(
             id=models.new_id(),
             clip_id=clip_id,
@@ -715,6 +734,22 @@ def _reconcile_remote_clip(
             store.create_clip_metadata(meta)
         except Exception as e:
             log.warning("Could not persist reconciled clip metadata %s: %s", clip_id, e)
+    else:
+        needs_meta_update = False
+        if any(b in (existing_meta.final_title or "") for b in ("AL AMR", "Highlight")) or re.search(r"\b[0-9a-f]{8,}\b", existing_meta.final_title or ""):
+            existing_meta.final_title = title
+            needs_meta_update = True
+        if any(b in (existing_meta.final_description or "") for b in ("Archive Backup", "AL AMR")):
+            existing_meta.final_description = desc
+            needs_meta_update = True
+        if any("alamr" in t.lower() for t in (existing_meta.final_hashtags or [])):
+            existing_meta.final_hashtags = [t for t in existing_meta.final_hashtags if "alamr" not in t.lower()]
+            needs_meta_update = True
+        if needs_meta_update:
+            try:
+                store.create_clip_metadata(existing_meta)
+            except Exception as e:
+                log.warning("Could not update sanitized clip metadata %s: %s", clip_id, e)
 
     # Reconcile FinalRenderRecord and Export for publishing media resolution
     if not store.get_final_render(clip_id):

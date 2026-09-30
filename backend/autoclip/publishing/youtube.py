@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -280,19 +281,29 @@ class YouTubePublisher(BasePublisher):
 
         # Ensure #Shorts is present in title or description for vertical video formatting
         title = metadata.title.strip()
+        title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", title, flags=re.IGNORECASE)
+        title = re.sub(r"\b[a-f0-9]{8,16}\b", "", title)  # Remove hex IDs if accidentally present
+        title = re.sub(r"\.{2,}", "", title).strip().rstrip(".!?,;: ")  # Strip trailing multiple dots
+        if title.islower():
+            title = title.title()
+        if not title:
+            title = "Key Insight & Lesson"
         if "#Shorts" not in title and "#shorts" not in title:
             if len(title) <= 92:
                 title = f"{title} #Shorts"
         title = title[:100]
 
         description = metadata.description.strip()
-        if drive_link and drive_link not in description:
-            description = f"{description}\n\nArchive Backup: {drive_link}".strip()
+        # Clean internal backup links or automation labels from public descriptions
+        description = re.sub(r"Archive Backup:[^\n\r]+", "", description, flags=re.IGNORECASE).strip()
+        description = re.sub(r"Reconciled from Telegram[^\n\r]*", "", description, flags=re.IGNORECASE).strip()
+        description = re.sub(r"\bAL\s*AMR\b", "", description, flags=re.IGNORECASE).strip()
         if "#Shorts" not in description:
             description = f"{description}\n\n#Shorts #Viral".strip()
         description = description[:5000]
 
-        tags = list(set(metadata.tags + ["Shorts", "Viral"]))
+        raw_tags = list(set(metadata.tags + ["Shorts", "Viral"]))
+        tags = [t for t in raw_tags if not any(b in t.lower() for b in ("alamr", "autoclip", "reconcile"))]
 
         # Check live publish configuration (default is live when credentials are present)
         is_live_disabled = os.getenv("YOUTUBE_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("YOUTUBE_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")

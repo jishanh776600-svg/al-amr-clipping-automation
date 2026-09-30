@@ -339,22 +339,39 @@ class ClipQualityModel:
 
     def _generate_editorial_hook(self, native_hook: str, clip_text: str) -> str:
         """Synthesizes a high-impact, punchy on-screen headline (<=55 chars)."""
-        clean_native = native_hook.strip().rstrip(".!?,")
-        if len(clean_native) <= 50 and any(clean_native.lower().startswith(q) for q in ("why", "how", "what", "the", "never", "this")):
-            return clean_native
+        clean_native = re.sub(r"\.{2,}", "", native_hook).strip().rstrip(".!?,;: ")
+        # Strip common spoken conversational fillers from start
+        fillers = (
+            "so basically", "you know", "i mean", "like", "and so", "well,", "well",
+            "actually", "honestly", "look,", "listen,"
+        )
+        lower_native = clean_native.lower()
+        for f in fillers:
+            if lower_native.startswith(f):
+                clean_native = clean_native[len(f):].strip().lstrip(",;: ")
+                lower_native = clean_native.lower()
+                break
 
         # Look for peak phrase in native hook
-        m = re.search(r"\b(?:the secret|why you should|stop doing|the truth about|biggest mistake|how to)\s+[^.,?!]{5,35}", native_hook, re.IGNORECASE)
+        m = re.search(r"\b(?:the secret|why you should|stop doing|the truth about|biggest mistake|how to|the reason why|how we built|the key to)\s+[^.,?!]{5,35}", native_hook, re.IGNORECASE)
         if m:
-            headline = m.group(0).strip()
+            headline = m.group(0).strip().rstrip(".!?,;: ")
             return headline[:50].title()
 
-        # Fallback to concise native snippet
+        if len(clean_native) <= 50 and any(clean_native.lower().startswith(q) for q in ("why", "how", "what", "the", "never", "this")):
+            return clean_native.title() if clean_native.islower() else clean_native
+
+        # Fallback to concise native snippet without mid-sentence cut-offs
         words = clean_native.split()
-        short_snippet = " ".join(words[:6])
-        if len(short_snippet) > 48:
-            short_snippet = short_snippet[:45] + "..."
-        return short_snippet or "Unfiltered Insight"
+        if len(words) > 7:
+            words = words[:7]
+        # Drop dangling prepositions or conjunctions at the end
+        while words and words[-1].lower() in ("and", "or", "so", "the", "a", "an", "to", "of", "in", "for", "with", "is", "at", "by", "that"):
+            words.pop()
+        short_snippet = " ".join(words).strip()
+        if short_snippet.islower():
+            short_snippet = short_snippet.title()
+        return short_snippet or "Unfiltered Founder Insight"
 
 
 class DiversityOptimizer:

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any
 import urllib.parse
 
@@ -214,12 +215,30 @@ class InstagramPublisher(BasePublisher):
                 retryable=False,
             )
 
-        caption = metadata.title
+        raw_caption = metadata.title.strip()
+        raw_caption = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_caption, flags=re.IGNORECASE)
+        raw_caption = re.sub(r"\b[a-f0-9]{8,16}\b", "", raw_caption)
+        raw_caption = re.sub(r"\.{2,}", "", raw_caption).strip().rstrip(".!?,;: ")
+        if raw_caption.islower():
+            raw_caption = raw_caption.title()
+        if not raw_caption:
+            raw_caption = "Key Insight & Lesson"
+
+        caption_parts = [raw_caption]
         if metadata.description:
-            caption = f"{caption}\n\n{metadata.description}"
+            clean_desc = metadata.description.strip()
+            clean_desc = re.sub(r"Archive Backup:[^\n\r]+", "", clean_desc, flags=re.IGNORECASE).strip()
+            clean_desc = re.sub(r"Reconciled from Telegram[^\n\r]*", "", clean_desc, flags=re.IGNORECASE).strip()
+            clean_desc = re.sub(r"\bAL\s*AMR\b", "", clean_desc, flags=re.IGNORECASE).strip()
+            if clean_desc and clean_desc != raw_caption:
+                caption_parts.append(clean_desc)
+
         if metadata.tags:
-            caption = f"{caption}\n\n" + " ".join(f"#{t.lstrip('#')}" for t in metadata.tags)
-        caption = caption[:2200]
+            clean_tags = [t for t in metadata.tags if not any(b in t.lower() for b in ("alamr", "autoclip"))]
+            if clean_tags:
+                caption_parts.append(" ".join(f"#{t.lstrip('#')}" for t in clean_tags))
+
+        caption = "\n\n".join(caption_parts)[:2200]
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Step 1: Create media container
@@ -292,10 +311,10 @@ class InstagramPublisher(BasePublisher):
                     retryable=True,
                 )
 
-            # Step 2: Poll container status
+            # Step 2: Poll container status (up to 150s for transcoding & ingestion)
             status_url = f"{GRAPH_API_BASE}/{container_id}"
             is_ready = False
-            for _ in range(12):  # Poll up to 60s
+            for attempt in range(30):
                 await asyncio.sleep(5)
                 stat_resp = await client.get(status_url, params={"fields": "status_code", "access_token": self.access_token})
                 if stat_resp.status_code == 200:
@@ -314,6 +333,8 @@ class InstagramPublisher(BasePublisher):
                             error_code="invalid_media",
                             retryable=False,
                         )
+                if (attempt + 1) % 4 == 0:
+                    log.info("Still waiting for Instagram media container %s (attempt %d/30)...", container_id, attempt + 1)
 
             if not is_ready:
                 return PublishingResult(

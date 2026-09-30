@@ -928,8 +928,14 @@ def specifications_to_clips(
 
     for rank, spec in enumerate(specs, start=1):
         cand = cand_map.get(spec.candidate_id)
-        title = cand.title if cand and cand.title else f"Clip {rank}"
+        cand_editorial = cand.score_breakdown.get("editorial_hook") if (cand and cand.score_breakdown) else ""
+        raw_title = cand_editorial or (cand.title if cand and cand.title else f"Key Insight #{rank}")
+        clean_title = re.sub(r"\.{2,}", "", raw_title).strip().rstrip(".!?,;: ")
+        title = clean_title.title() if clean_title.islower() else clean_title
+        if not title:
+            title = f"Key Insight #{rank}"
         hook = cand.hook_text if cand and cand.hook_text else spec.hook_type
+        hook = re.sub(r"\.{2,}", "", hook).strip()
         reason = cand.reason if cand and cand.reason else f"Quality Score: {spec.quality_score:.1f}"
 
         clips.append(
