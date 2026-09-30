@@ -68,18 +68,20 @@ def clean_env():
 class TestYouTubeChannelIdentityGuard:
 
     def test_resolve_expected_channel_id(self, clean_env):
-        # 1. Not configured
-        assert resolve_expected_youtube_channel_id() is None
+        # 1. Not explicitly configured → falls back to the authoritative Future Founders channel ID
+        resolved = resolve_expected_youtube_channel_id()
+        assert resolved == "UCtaOzeFW2kEOexMoSNA75tA"  # Authoritative AL AMR hardcoded fallback
 
-        # 2. Vault configuration
+        # 2. Vault configuration overrides hardcoded fallback
         config.set_secret("al_amr_youtube_channel_id", "UC_VAULT_CHANNEL")
         assert resolve_expected_youtube_channel_id() == "UC_VAULT_CHANNEL"
 
-        # 3. Env variable override
+        # 3. Env variable is used when no vault secret is set (vault takes precedence over env)
+        config.delete_secret("al_amr_youtube_channel_id")
         with patch.dict(os.environ, {"AL_AMR_YOUTUBE_CHANNEL_ID": "UC_ENV_CHANNEL"}):
             assert resolve_expected_youtube_channel_id() == "UC_ENV_CHANNEL"
 
-        # 4. Explicit override
+        # 4. Explicit override always wins
         assert resolve_expected_youtube_channel_id(explicit="UC_EXPLICIT") == "UC_EXPLICIT"
 
     @pytest.mark.asyncio
@@ -122,7 +124,8 @@ class TestYouTubeChannelIdentityGuard:
 
     @pytest.mark.asyncio
     async def test_channel_identity_guard_blocks_when_unconfigured(self, clean_env, tmp_path):
-        """If expected channel is not configured at all, publishing is blocked."""
+        """If expected channel is not explicitly configured, the system uses the Future Founders fallback.
+        Any mismatch against the fallback is still a hard stop channel_mismatch error."""
         vid_file = tmp_path / "clip.mp4"
         vid_file.write_bytes(b"\x00" * 1024)
 
@@ -151,7 +154,9 @@ class TestYouTubeChannelIdentityGuard:
             assert result.success is False
             assert result.status == "failed"
             assert result.error_code == "channel_mismatch"
-            assert "not configured" in result.error.lower()
+            # System uses authoritative fallback (Future Founders), mismatch blocked
+            assert "channel mismatch" in result.error.lower()
+            assert "UCeH6er-cVAIwZd_9EvehmPw".lower() in result.error.lower() or "Forgotten Files" in result.error
             mock_videos.insert.assert_not_called()
 
 

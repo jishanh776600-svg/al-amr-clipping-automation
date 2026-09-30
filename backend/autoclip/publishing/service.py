@@ -11,6 +11,7 @@ import tempfile
 from typing import Any
 
 from ..db import models, store
+from .. import paths
 from ..storage.drive import GoogleDriveStorage
 from .base import BasePublisher, ErrorCode, PublicationResult, PublishingMetadata, PublishingResult, is_error_retryable
 from .instagram import InstagramPublisher

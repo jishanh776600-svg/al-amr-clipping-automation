@@ -14,6 +14,7 @@ from .models import (
     InstagramMetadata,
     YouTubeMetadata,
 )
+from .sanitizer import detect_internal_leakage, sanitize_public_text
 
 
 class MetadataQualityGate:
@@ -41,6 +42,11 @@ class MetadataQualityGate:
         }
 
         full_corpus = f"{title}\n{description}\n{' '.join(hashtags)}\n{' '.join(mentions)}\n{cta}".lower()
+
+        # 0. Zero internal pipeline leakage check (Hard violation)
+        leak_errors = detect_internal_leakage(f"{title}\n{description}\n{' '.join(hashtags)}\n{' '.join(mentions)}\n{cta}")
+        if leak_errors:
+            errors.extend(leak_errors)
 
         # 1. Prohibited terms validation (Hard violation)
         for term in self.reqs.prohibited_terms:
@@ -170,6 +176,14 @@ def validate_youtube_metadata(
     hashtags = metadata.hashtags or []
     tags = metadata.tags or []
 
+    # 0. Zero internal pipeline leakage check (Hard violation)
+    leak_errors = detect_internal_leakage(f"{title}\n{description}\n{' '.join(hashtags)}\n{' '.join(tags)}")
+    if leak_errors:
+        errors.extend(leak_errors)
+        rule_evals["zero_leakage_pass"] = False
+    else:
+        rule_evals["zero_leakage_pass"] = True
+
     # 1. Prohibited terms (from global + youtube rules)
     prohibited = set()
     if spec:
@@ -289,6 +303,14 @@ def validate_instagram_metadata(
     first_line_hook = (metadata.first_line_hook or "").strip()
     hashtags = metadata.hashtags or []
     mentions = metadata.mentions or []
+
+    # 0. Zero internal pipeline leakage check (Hard violation)
+    leak_errors = detect_internal_leakage(f"{caption}\n{' '.join(hashtags)}\n{' '.join(mentions)}")
+    if leak_errors:
+        errors.extend(leak_errors)
+        rule_evals["zero_leakage_pass"] = False
+    else:
+        rule_evals["zero_leakage_pass"] = True
 
     # 1. Prohibited terms (from global + instagram rules)
     prohibited = set()

@@ -354,18 +354,15 @@ async def public_clip_media(clip_id: str, request: Request):
             return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
 
     # 4. Local final renders (Step 22)
-    final_renders = await asyncio.to_thread(store.list_final_renders, clip_id)
-    for fr in final_renders:
-        if fr.output_path and Path(fr.output_path).is_file() and Path(fr.output_path).stat().st_size > 0:
-            p = Path(fr.output_path)
-            return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
+    final_render = await asyncio.to_thread(store.get_final_render, clip_id)
+    if final_render and final_render.output_path and Path(final_render.output_path).is_file() and Path(final_render.output_path).stat().st_size > 0:
+        p = Path(final_render.output_path)
+        return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
 
     # Lookup Telegram file ID from render or approval telemetry
     tg_file_id = None
-    for fr in final_renders:
-        if fr.telemetry and fr.telemetry.get("telegram_file_id"):
-            tg_file_id = fr.telemetry["telegram_file_id"]
-            break
+    if final_render and final_render.telemetry and final_render.telemetry.get("telegram_file_id"):
+        tg_file_id = final_render.telemetry["telegram_file_id"]
     if not tg_file_id:
         approval = await asyncio.to_thread(store.get_clip_approval, clip_id)
         if approval and approval.telemetry and approval.telemetry.get("telegram_file_id"):

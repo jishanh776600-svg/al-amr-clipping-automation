@@ -213,11 +213,13 @@ class SEOEngine:
         clean_hook = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,;: ")
         if clean_hook.islower():
             clean_hook = clean_hook.title()
-        first_line_hook = clean_hook
+        from .sanitizer import sanitize_public_text
+        first_line_hook = sanitize_public_text(clean_hook, is_title=True)
         if not first_line_hook or len(first_line_hook) < 10:
             first_line_hook = f"The Real Secret Behind {topic_cue}"
         if len(first_line_hook) > 120:
             first_line_hook = first_line_hook[:120].rsplit(" ", 1)[0]
+        first_line_hook = sanitize_public_text(first_line_hook, is_title=True)
 
         # 2. Instagram Caption Structure with clear line breaks
         caption_lines: list[str] = [first_line_hook, ""]
@@ -252,7 +254,7 @@ class SEOEngine:
                     ig_tags.append(norm_h)
 
         caption_lines.append(" ".join(ig_tags[:6]))
-        full_caption = "\n".join(caption_lines)
+        full_caption = sanitize_public_text("\n".join(caption_lines), is_title=False)
 
         ig_meta = InstagramMetadata(
             caption=full_caption,
@@ -415,10 +417,8 @@ class SEOEngine:
                     candidate_title = f"{candidate_title} - {phrase}"
                     break
 
-        # Filter prohibited terms and pipeline/automation tokens
-        candidate_title = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", candidate_title, flags=re.IGNORECASE).strip()
-        candidate_title = re.sub(r"\b[0-9a-f]{8,}\b", "", candidate_title).strip()
-        candidate_title = re.sub(r"\.{2,}", "", candidate_title).strip().rstrip(".!?,;: ")
+        from .sanitizer import sanitize_public_text
+        candidate_title = sanitize_public_text(candidate_title, is_title=True)
 
         for term in self.reqs.prohibited_terms:
             if term.lower() in candidate_title.lower():
@@ -427,9 +427,7 @@ class SEOEngine:
         if len(candidate_title) > self.reqs.max_title_length:
             candidate_title = candidate_title[:self.reqs.max_title_length].rsplit(" ", 1)[0]
 
-        if candidate_title.islower():
-            candidate_title = candidate_title.title()
-
+        candidate_title = sanitize_public_text(candidate_title, is_title=True)
         return candidate_title or "Key Insight & Breakdown"
 
     def _synthesize_description(self, hook: str, slice_text: str, topic: str) -> str:
@@ -477,7 +475,8 @@ class SEOEngine:
         desc = "\n\n".join(parts)
         if len(desc) > self.reqs.max_description_length:
             desc = desc[:self.reqs.max_description_length].rsplit(" ", 1)[0]
-        return desc
+        from .sanitizer import sanitize_public_text
+        return sanitize_public_text(desc, is_title=False)
 
     def _synthesize_hashtags(self, slice_text: str) -> list[str]:
         """Synthesizes deduplicated hashtags starting with campaign-required hashtags."""

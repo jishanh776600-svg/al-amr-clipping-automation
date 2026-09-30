@@ -215,30 +215,32 @@ class InstagramPublisher(BasePublisher):
                 retryable=False,
             )
 
-        raw_caption = metadata.title.strip()
-        raw_caption = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", raw_caption, flags=re.IGNORECASE)
-        raw_caption = re.sub(r"\b[a-f0-9]{8,16}\b", "", raw_caption)
-        raw_caption = re.sub(r"\.{2,}", "", raw_caption).strip().rstrip(".!?,;: ")
-        if raw_caption.islower():
-            raw_caption = raw_caption.title()
-        if not raw_caption:
-            raw_caption = "Key Insight & Lesson"
+        from ..seo.sanitizer import sanitize_public_text
+        clean_desc = sanitize_public_text(metadata.description or "", is_title=False)
+        clean_title = sanitize_public_text(metadata.title or "", is_title=True)
 
-        caption_parts = [raw_caption]
-        if metadata.description:
-            clean_desc = metadata.description.strip()
-            clean_desc = re.sub(r"Archive Backup:[^\n\r]+", "", clean_desc, flags=re.IGNORECASE).strip()
-            clean_desc = re.sub(r"Reconciled from Telegram[^\n\r]*", "", clean_desc, flags=re.IGNORECASE).strip()
-            clean_desc = re.sub(r"\bAL\s*AMR\b", "", clean_desc, flags=re.IGNORECASE).strip()
-            if clean_desc and clean_desc != raw_caption:
-                caption_parts.append(clean_desc)
+        if clean_desc:
+            if clean_title and clean_title.lower() in clean_desc.lower():
+                base_caption = clean_desc
+            elif clean_title:
+                base_caption = f"{clean_title}\n\n{clean_desc}"
+            else:
+                base_caption = clean_desc
+        else:
+            base_caption = clean_title or "Key Insight & Lesson"
 
         if metadata.tags:
-            clean_tags = [t for t in metadata.tags if not any(b in t.lower() for b in ("alamr", "autoclip"))]
+            existing_tags = set(re.findall(r"#\w+", base_caption.lower()))
+            clean_tags = [
+                f"#{t.lstrip('#')}"
+                for t in metadata.tags
+                if not any(b in t.lower() for b in ("alamr", "autoclip"))
+                and f"#{t.lstrip('#').lower()}" not in existing_tags
+            ]
             if clean_tags:
-                caption_parts.append(" ".join(f"#{t.lstrip('#')}" for t in clean_tags))
+                base_caption = f"{base_caption}\n\n{' '.join(clean_tags)}"
 
-        caption = "\n\n".join(caption_parts)[:2200]
+        caption = base_caption[:2200].strip()
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Step 1: Create media container

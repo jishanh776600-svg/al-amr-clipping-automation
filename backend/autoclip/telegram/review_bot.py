@@ -377,28 +377,40 @@ async def send_clip_review(
     duration = f"{clip.end_s - clip.start_s:.1f}" if clip.end_s > clip.start_s else "0.0"
     quality_score = f"{final_render.quality_score:.1f}" if final_render else "N/A"
     quality_status = final_render.quality_status if final_render else "PENDING"
-    yt_data = (clip_meta.telemetry.get("youtube") if clip_meta and clip_meta.telemetry else {}) or {}
-    ig_data = (clip_meta.telemetry.get("instagram") if clip_meta and clip_meta.telemetry else {}) or {}
+    yt_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")))
+    yt_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", yt_title, flags=re.IGNORECASE)
+    yt_title = re.sub(r"\b[0-9a-f]{8,}\b", "", yt_title).strip()
+    yt_title = re.sub(r"\.{2,}", "", yt_title).strip().rstrip(".!?,;: ")
+    yt_title = yt_title.title() if yt_title.islower() else (yt_title or "Key Insight & Lesson")
+    safe_yt_title = _escape_md(yt_title)
 
-    yt_comp = yt_data.get("compliance_score", clip_meta.compliance_score if clip_meta else 100.0)
-    ig_comp = ig_data.get("compliance_score", clip_meta.compliance_score if clip_meta else 100.0)
-    yt_badge = f"{yt_comp:.0f}%" if yt_data else f"{seo_score}"
-    ig_badge = f"{ig_comp:.0f}%" if ig_data else f"{seo_score}"
+    yt_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else "")
+    yt_desc_snippet = yt_desc[:80] + ("..." if len(yt_desc) > 80 else "")
+    safe_yt_desc = _escape_md(yt_desc_snippet)
 
-    extracted_title = yt_data.get("title") or (clip_meta.final_title if clip_meta else (clip.title or (clip.hook.title() if clip.hook else "Key Insight & Lesson")))
-    extracted_title = re.sub(r"\bAL\s*AMR\s*Highlight\b", "Key Insight", extracted_title, flags=re.IGNORECASE)
-    extracted_title = re.sub(r"\b[0-9a-f]{8,}\b", "", extracted_title).strip()
-    extracted_title = re.sub(r"\.{2,}", "", extracted_title).strip().rstrip(".!?,;: ")
-    raw_title = extracted_title.title() if extracted_title.islower() else (extracted_title or "Key Insight & Lesson")
-    raw_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else (clip.hook or ""))
-    safe_title = _escape_md(raw_title)
+    yt_tags_list = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts", "#Founders"])
+    safe_yt_tags = _escape_md(" ".join(yt_tags_list[:4]))
+
+    yt_comp = yt_data.get("compliance_score", 100.0)
+    yt_opt = yt_data.get("optimization_score", 95.0)
+
+    ig_caption = ig_data.get("caption") or (clip_meta.final_description if clip_meta else "")
+    ig_caption_snippet = ig_caption[:80] + ("..." if len(ig_caption) > 80 else "")
+    safe_ig_caption = _escape_md(ig_caption_snippet)
+
+    ig_tags_list = ig_data.get("hashtags") or ["#reels", "#founders", "#business"]
+    safe_ig_tags = _escape_md(" ".join(ig_tags_list[:4]))
+
+    ig_mentions_list = ig_data.get("mentions") or ["@black_boxvault"]
+    safe_ig_mentions = _escape_md(" ".join(ig_mentions_list[:2]))
+
+    ig_cta = ig_data.get("cta") or "👉 Follow @black_boxvault for founder insights."
+    safe_ig_cta = _escape_md(ig_cta[:50] + ("..." if len(ig_cta) > 50 else ""))
+
+    ig_comp = ig_data.get("compliance_score", 100.0)
+    ig_opt = ig_data.get("optimization_score", 95.0)
+
     safe_hook = _escape_md(clip.hook or "N/A")
-
-    ig_hook_raw = ig_data.get("first_line_hook") or clip.hook or "N/A"
-    safe_ig_hook = _escape_md(ig_hook_raw[:80] + ("..." if len(ig_hook_raw) > 80 else ""))
-
-    yt_tags_raw = " ".join(yt_data.get("hashtags", clip_meta.final_hashtags if clip_meta else ["#Shorts"])[:4])
-    safe_yt_tags = _escape_md(yt_tags_raw)
 
     caption_lines = [
         "🎬 *Clip Review Required*",
@@ -407,20 +419,22 @@ async def send_clip_review(
         f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
         f"🎯 *Hook:* {safe_hook}",
         f"✨ *Quality:* {quality_score} ({quality_status})",
-        f"📋 *Compliance:* YT: {yt_badge} | IG: {ig_badge}",
         "",
-        f"▶️ *YouTube (Future Founders):*",
-        f"• Title: {safe_title}",
-        f"• Tags: {safe_yt_tags}",
+        "▶️ *YOUTUBE (Future Founders):*",
+        f"• Title: {safe_yt_title}",
+        f"• Description: {safe_yt_desc}",
+        f"• Hashtags: {safe_yt_tags}",
+        f"• Compliance: {yt_comp:.0f}% | Opt: {yt_opt:.0f}/100",
         "",
-        f"📸 *Instagram (@black_boxvault):*",
-        f"• Hook: {safe_ig_hook}",
+        "📸 *INSTAGRAM (@black_boxvault):*",
+        f"• Caption: {safe_ig_caption}",
+        f"• Hashtags: {safe_ig_tags}",
+        f"• Mentions: {safe_ig_mentions}",
+        f"• CTA: {safe_ig_cta}",
+        f"• Compliance: {ig_comp:.0f}% | Opt: {ig_opt:.0f}/100",
     ]
-    if ig_data.get("mentions"):
-        safe_mentions = _escape_md(" ".join(ig_data["mentions"][:3]))
-        caption_lines.append(f"• Mentions: {safe_mentions}")
     if drive_link:
-        caption_lines.append(f"\n🔗 [Watch / Download Clip on Drive]({drive_link})")
+        caption_lines.append(f"\n🔗 [Drive Preview]({drive_link})")
 
     caption_text = "\n".join(caption_lines)
 
@@ -582,15 +596,15 @@ def _reconcile_remote_clip(
         hook = hook_m.group(1).strip().strip("*`_")
         hook = re.sub(r"\.{2,}", "", hook).strip()
 
-    # Extract Title (Support • Title:, Proposed Title:, Title:)
+    # Extract Title (Support • Title:, • *Title:*, Proposed Title:, Title:)
     title = ""
-    title_m = re.search(r"(?:•\s*Title:|Proposed Title:|Title:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    title_m = re.search(r"(?:•\s*\*?Title:\*?|Proposed Title:|Title:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if title_m:
         title = title_m.group(1).strip().strip("*`_")
     
     # Clean automation tokens, hex clip IDs, and multiple trailing dots from title
-    title = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", title, flags=re.IGNORECASE).strip()
-    title = re.sub(r"\.{2,}", "", title).strip()
+    from autoclip.seo.sanitizer import sanitize_public_text
+    title = sanitize_public_text(title, is_title=True)
     if not title:
         title = (hook.title() if hook else "Key Insight & Lesson").strip()
     if title.islower():
@@ -616,22 +630,21 @@ def _reconcile_remote_clip(
     if duration_s <= 0.0:
         duration_s = 24.0
 
-    # Extract Hashtags / Tags (Support • Tags:, Hashtags:, Tags:)
-    tags = ["Shorts", "Trending", "Viral"]
-    tags_m = re.search(r"(?:•\s*Tags:|Hashtags:|Tags:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    # Extract Hashtags / Tags (Support • Tags:, • *Tags:*, • Hashtags:, Hashtags:)
+    tags = ["Shorts", "Founders", "Trending"]
+    tags_m = re.search(r"(?:•\s*\*?Hashtags:\*?|•\s*\*?Tags:\*?|Hashtags:|Tags:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if tags_m:
         extracted = [t.strip().lstrip("#") for t in tags_m.group(1).split() if t.strip()]
         clean_extracted = [t for t in extracted if t.upper() not in ("ALAMR", "AUTOCLIP", "RECONCILE")]
         if clean_extracted:
             tags = clean_extracted
 
-    # Extract Description
+    # Extract Description / Caption (Support • Description:, • Caption:, Description:)
     desc = hook or title
-    desc_m = re.search(r"Description:\*?\s*([^\n\r]+)", text, re.IGNORECASE)
+    desc_m = re.search(r"(?:•\s*\*?Description:\*?|•\s*\*?Desc:\*?|•\s*\*?Caption:\*?|Description:|Caption:)\*?\s*([^\n\r]+)", text, re.IGNORECASE)
     if desc_m:
         desc = desc_m.group(1).strip().strip("*`_")
-    desc = re.sub(r"\bAL\s*AMR\b|\bHighlight\s+[0-9a-f]{6,}\b", "", desc, flags=re.IGNORECASE).strip()
-    desc = re.sub(r"Archive Backup:[^\n\r]+", "", desc, flags=re.IGNORECASE).strip()
+    desc = sanitize_public_text(desc, is_title=False)
 
     source_id = "src_remote"
     if not store.get_source(source_id):
