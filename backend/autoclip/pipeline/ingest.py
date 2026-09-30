@@ -123,6 +123,58 @@ def slugify(text: str, *, max_length: int = 60) -> str:
 # --------------------------------------------------------------------------
 
 
+def _get_drive_download_url(url: str) -> str:
+    """Resolve a Google Drive uc?export=download URL to the actual binary download URL.
+
+    For files >~25 MB, Google shows a virus-scan warning page and does not stream
+    the video directly. This function:
+    1. Makes a HEAD/GET request to detect if the response is HTML (warning page).
+    2. Extracts the real download URL from the warning page form action.
+    3. Returns the resolved URL that can be streamed directly as video bytes.
+    """
+    import re as _re
+    import httpx
+
+    # Add the confirm parameter that bypasses the virus scan page
+    if "confirm=" not in url:
+        url = url + ("&" if "?" in url else "?") + "confirm=t&uuid=1"
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
+            resp = client.get(url, headers=headers)
+            ct = resp.headers.get("content-type", "")
+            # If Google returned HTML — it's the virus-scan warning page
+            if "text/html" in ct and resp.status_code == 200:
+                html = resp.text
+                # Try to find the real download link in the page
+                # Pattern 1: <form action="...">
+                form_match = _re.search(r'action="(/uc\?[^"]+export=download[^"]*)"', html)
+                if form_match:
+                    real_path = form_match.group(1).replace("&amp;", "&")
+                    return f"https://drive.google.com{real_path}"
+                # Pattern 2: direct <a href> with confirm token
+                href_match = _re.search(r'href="(https://drive\.google\.com/uc[^"]+confirm=[^"]+)"', html)
+                if href_match:
+                    return href_match.group(1).replace("&amp;", "&")
+                # Pattern 3: "download anyway" link
+                anyway_match = _re.search(r'"(https://drive\.google\.com/uc\?[^"]*export=download[^"]*)"', html)
+                if anyway_match:
+                    return anyway_match.group(1).replace("&amp;", "&")
+                log.warning("Drive returned HTML but could not find real download URL; proceeding with original URL.")
+    except Exception as exc:
+        log.warning("Drive URL pre-flight failed (%s); proceeding with original URL.", exc)
+
+    return url
+
+
 def ingest_direct_url(
     url: str,
     settings: IngestSettings | None = None,
@@ -232,11 +284,14 @@ def ingest_url(
         log.info("Detected direct media URL: %s", url)
         return ingest_direct_url(url, settings, on_progress=on_progress)
 
-    # Google Drive uc?export=download — use direct HTTP streaming (faster than yt-dlp for Drive)
+    # Google Drive uc?export=download — resolve real binary URL first (bypasses virus-scan warning page)
     if "drive.google.com/uc" in url and "export=download" in url:
-        log.info("Detected Google Drive direct-download URL; using HTTP streaming: %s", url)
+        log.info("Detected Google Drive direct-download URL; resolving real binary stream: %s", url)
+        resolved_url = _get_drive_download_url(url)
+        if resolved_url != url:
+            log.info("Drive URL resolved to: %s", resolved_url[:120])
         try:
-            return ingest_direct_url(url, settings, on_progress=on_progress)
+            return ingest_direct_url(resolved_url, settings, on_progress=on_progress)
         except IngestError as exc:
             log.warning("Direct HTTP download of Drive file failed (%s); falling back to yt-dlp.", exc)
 
