@@ -159,7 +159,21 @@ def create_app() -> FastAPI:
                 elif request.query_params.get("token"):
                     token = request.query_params.get("token")
 
-                if not is_valid_token(token):
+                # Allow same-origin browser requests from the hosted SPA UI
+                sec_fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
+                referer = request.headers.get("referer", "")
+                host = request.headers.get("host", "")
+                is_same_origin = bool(
+                    sec_fetch_site in ("same-origin", "same-site")
+                    or (host and host in referer)
+                )
+
+                if not is_valid_token(token) and not is_same_origin:
+                    # Drain the request body so Starlette/Uvicorn does not abort the connection with ECONNRESET
+                    try:
+                        await request.body()
+                    except Exception:
+                        pass
                     return JSONResponse(
                         status_code=401,
                         content={"detail": "Unauthorized. Valid Bearer token or X-API-Key required."},
