@@ -62,13 +62,15 @@ dependencies = [
   # CLI / UX
   "typer>=0.12",
   "rich>=13.9",
-  # Google Drive persistent storage
+  # Google Drive persistent storage & public link download
   "google-api-python-client>=2.100.0",
   "google-auth>=2.20.0",
+  "gdown>=5.1.0",
   # Campaign guideline documents (PDF & DOCX)
   "pypdf>=4.0.0",
   "python-docx>=1.1.0",
 ]
+
 
 [project.optional-dependencies]
 # Speaker diarization. Pulls torch + pyannote (large). Requires a HuggingFace

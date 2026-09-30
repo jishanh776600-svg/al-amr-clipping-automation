@@ -19,6 +19,7 @@ from .base import (
     SourceErrorCode,
 )
 from .providers.cobalt_provider import CobaltAcquisitionProvider
+from .providers.gdrive_provider import GoogleDriveAcquisitionProvider, is_drive_url
 from .providers.http_api_provider import HttpApiAcquisitionProvider
 from .providers.invidious_provider import InvidiousAcquisitionProvider
 from .providers.piped_provider import PipedAcquisitionProvider
@@ -435,6 +436,7 @@ def get_default_registry(settings: IngestSettings | None = None) -> SourceAcquis
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = SourceAcquisitionRegistry(
             providers=[
+                GoogleDriveAcquisitionProvider(),
                 ServerDownloaderProvider(),
                 YtDlpAcquisitionProvider(settings=settings),
                 CobaltAcquisitionProvider(),
@@ -444,4 +446,5 @@ def get_default_registry(settings: IngestSettings | None = None) -> SourceAcquis
             ]
         )
     return _DEFAULT_REGISTRY
+
 
