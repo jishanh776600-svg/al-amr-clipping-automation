@@ -916,7 +916,8 @@ export const API_BASE_URL: string = (
 ).replace(/\/$/, '')
 
 export const API_KEY: string =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_KEY) || ''
+  (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_KEY) ||
+  'al amr jish2#ji'
 
 export function getStoredApiUrl(): string {
   if (typeof localStorage !== 'undefined') {
@@ -937,9 +938,10 @@ export function setStoredApiUrl(url: string | null): void {
 
 export function getStoredToken(): string {
   if (typeof localStorage !== 'undefined') {
-    return localStorage.getItem('alamr_api_key') || ''
+    const val = localStorage.getItem('alamr_api_key')
+    if (val && val.trim()) return val.trim()
   }
-  return ''
+  return API_KEY
 }
 
 export function getStoredPat(): string {

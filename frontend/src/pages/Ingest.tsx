@@ -467,7 +467,11 @@ export function Ingest() {
               <div className="flex gap-2 text-xs">
                 <button
                   type="button"
-                  onClick={() => setSourceMode('url')}
+                  onClick={() => {
+                    setSourceMode('url')
+                    setSelectedVideoFile(null)
+                    setError(null)
+                  }}
                   className={`px-2.5 py-1 rounded transition-colors ${
                     sourceMode === 'url'
                       ? 'bg-sodium-500/20 text-sodium-300 font-medium border border-sodium-500/30'
@@ -478,7 +482,11 @@ export function Ingest() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSourceMode('file')}
+                  onClick={() => {
+                    setSourceMode('file')
+                    setUrl('')
+                    setError(null)
+                  }}
                   className={`px-2.5 py-1 rounded transition-colors ${
                     sourceMode === 'file'
                       ? 'bg-sodium-500/20 text-sodium-300 font-medium border border-sodium-500/30'

@@ -240,7 +240,10 @@ def _mount_frontend(app: FastAPI) -> None:
         if full_path and candidate.is_file():
             return FileResponse(candidate)
 
-        return FileResponse(directory / "index.html")
+        return FileResponse(
+            directory / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+        )
 
     log.info("Serving the frontend from %s", directory)
 
