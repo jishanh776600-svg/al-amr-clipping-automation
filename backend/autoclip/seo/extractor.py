@@ -95,6 +95,37 @@ def extract_campaign_seo_requirements(
         val = getattr(item, "value", str(item)).strip()
         if val and val.lower() not in [p.lower() for p in prohibited_terms]:
             prohibited_terms.append(val)
+    prohibited_lower = {p.lower() for p in prohibited_terms}
+
+    # Clean required mentions against prohibited terms & stopwords
+    clean_mentions = []
+    for m in required_mentions:
+        clean_m = m.lstrip("@").lower()
+        if clean_m not in prohibited_lower and clean_m not in ("of", "in", "your", "content", "anywhere", "required", "mandatory"):
+            if m not in clean_mentions:
+                clean_mentions.append(m)
+    required_mentions = clean_mentions
+
+    # Clean required hashtags against prohibited terms & stopwords
+    clean_hashtags = []
+    for h in required_hashtags:
+        clean_h = h.lstrip("#").lower()
+        if not h.startswith("#@") and clean_h not in prohibited_lower and clean_h not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips"):
+            if h not in clean_hashtags:
+                clean_hashtags.append(h)
+    required_hashtags = clean_hashtags
+
+    # Clean required phrases (exclude table rows, headings)
+    clean_phrases = []
+    for p in required_phrases:
+        if p.startswith("|") or p.endswith("|") or " | " in p:
+            continue
+        p_l = p.lower()
+        if any(w in p_l for w in ("how to", "why posts", "rejected", "rejection", "trailers", "platforms")):
+            continue
+        if p_l not in prohibited_lower and p not in clean_phrases:
+            clean_phrases.append(p)
+    required_phrases = clean_phrases
 
     # 5. CTA requirements
     cta_req = bool(getattr(campaign_spec.cta_required, "value", False))
@@ -115,6 +146,15 @@ def extract_campaign_seo_requirements(
         for item in campaign_spec.description_guidelines
         if getattr(item, "value", str(item)).strip()
     ]
+
+    # Resolve campaign URL: check explicit campaign_url or search description_guidelines
+    campaign_url = getattr(campaign_spec, "campaign_url", "") or ""
+    if not campaign_url and description_guidelines:
+        for dg in description_guidelines:
+            url_match = re.search(r"https?://[^\s<>\"']+", dg)
+            if url_match:
+                campaign_url = url_match.group(0).strip()
+                break
 
     # 7. Brand name from title or branding rules
     brand_name = raw_brand or getattr(campaign_spec, "brand_name", "") or ""
@@ -139,7 +179,7 @@ def extract_campaign_seo_requirements(
         prohibited_terms=prohibited_terms,
         cta_required=cta_req,
         cta_instructions=cta_instructions,
-        campaign_url=campaign_spec.campaign_url,
+        campaign_url=campaign_url,
         title_patterns=title_patterns,
         description_guidelines=description_guidelines,
         platforms=list(campaign_spec.platforms) if campaign_spec.platforms else ["youtube", "instagram", "telegram"],

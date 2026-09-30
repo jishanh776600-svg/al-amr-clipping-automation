@@ -331,6 +331,12 @@ class SEOEngine:
         )
         avg_score = round((yt_meta.compliance_score + ig_meta.compliance_score) / 2.0, 1)
 
+        repaired = False
+        if self.reqs.prohibited_terms and any(pt.strip() and pt.lower() in (hook + " " + topic_cue + " " + slice_text).lower() for pt in self.reqs.prohibited_terms):
+            repaired = True
+        if not gate_res.is_compliant:
+            repaired = True
+
         compliance_record = {
             "passed": (overall_compliance in ("SEO_PASS", "SEO_WARN")),
             "status": overall_compliance,
@@ -345,7 +351,7 @@ class SEOEngine:
             "violations": yt_meta.errors + ig_meta.errors,
             "warnings": yt_meta.warnings + ig_meta.warnings,
             "matched_requirements": gate_res.matched_requirements,
-            "repaired": False,
+            "repaired": repaired,
         }
 
         record = ClipMetadataRecord(

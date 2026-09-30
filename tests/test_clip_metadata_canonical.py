@@ -1,4 +1,4 @@
-﻿"""Targeted regression test for canonical ClipMetadataRecord serialization,
+"""Targeted regression test for canonical ClipMetadataRecord serialization,
 worker runner payload generation, callback ingestion, and review bot formatting.
 Ensures ad-hoc jobs without campaign requirements generate valid SEO metadata
 and pass publish-readiness gates.
@@ -44,7 +44,7 @@ def test_clip_metadata_record_canonical_fields():
     assert "title_candidates" not in d
 
 
-def test_seo_engine_adhoc_video_without_campaign_requirements():
+def test_seo_engine_adhoc_video_without_campaign_requirements(initialised_db):
     """Verify ad-hoc videos without a campaign brief produce valid publish-ready metadata."""
     source_id = models.new_id()
     store.create_source(models.Source(id=source_id, type="upload", path="/tmp/test.mp4"))
@@ -89,7 +89,7 @@ def test_seo_engine_adhoc_video_without_campaign_requirements():
     assert stored.compliance_score == record.compliance_score
 
 
-def test_worker_runner_metadata_serialization():
+def test_worker_runner_metadata_serialization(initialised_db):
     """Verify worker_runner serializes clip metadata using to_dict() without AttributeError."""
     source_id = models.new_id()
     store.create_source(models.Source(id=source_id, type="upload", path="/tmp/worker.mp4"))
@@ -180,7 +180,7 @@ def test_telegram_review_formatting():
     assert seo_status == "SEO_PASS"
 
 
-def test_callback_clip_metadata_ingestion():
+def test_callback_clip_metadata_ingestion(initialised_db):
     """Verify callback ingestion in jobs.py constructs ClipMetadataRecord without error."""
     source_id = models.new_id()
     store.create_source(models.Source(id=source_id, type="upload", path="/tmp/cb.mp4"))

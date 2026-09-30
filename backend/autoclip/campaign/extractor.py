@@ -359,10 +359,13 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     for item in bullet_items:
         clean = item.strip()
         clean_lower = clean.lower()
+        if clean.startswith("|") or clean.endswith("|") or " | " in clean:
+            continue
         if 4 <= len(clean) <= 60 and not clean_lower.startswith(("page", "http", "www")):
             is_sop = any(re.search(rf"\b{re.escape(w)}\b", clean_lower) for w in (
                 "rejection", "submit", "payout", "payouts", "tier-1", "late", "non-dedicated",
-                "invoice", "deadline", "submission", "guideline", "payment"
+                "invoice", "deadline", "submission", "guideline", "payment", "mission", "brief",
+                "campaign", "rules", "trailers", "footage", "platforms", "how to edit", "rejected",
             ))
             if is_sop:
                 continue
@@ -377,15 +380,17 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         extracted = [w.strip() for w in re.split(r"[,;•|]+", kw_match.group(1)) if w.strip()]
         for kw in extracted:
             kw_l = kw.lower()
-            if kw and kw_l not in ENGLISH_STOPWORDS and not any(w in kw_l for w in ("rejection", "payout", "submit", "late", "deadline", "tier-1")):
+            if kw.startswith("|") or kw.endswith("|"):
+                continue
+            if kw and kw_l not in ENGLISH_STOPWORDS and not any(w in kw_l for w in ("rejection", "payout", "submit", "late", "deadline", "tier-1", "how to", "why posts")):
                 if kw not in required_topics:
                     required_topics.append(kw)
 
     # 5. Banned Words / Prohibited Topics
     banned_words: list[str] = []
-    # Search for banned words using explicit horizontal whitespace so newlines are not crossed
+    # Search for banned words using explicit horizontal whitespace, negative phrases, and emojis
     banned_matches = re.finditer(
-        r"(?:banned|avoid|prohibited|do\s+not\s+mention|exclude)[ \t]*[:\-]?[ \t]*([^\n\r]+)",
+        r"(?:🚫|⛔|❌)?\s*(?:never\s+mention|no\s+mention\s+of|do\s+not\s+mention|never\s+say|do\s+not\s+say|banned|avoid|prohibited|exclude)[ \t]*[:\-]?[ \t]*([^\n\r]+)",
         raw_text,
         re.IGNORECASE,
     )
@@ -396,6 +401,13 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
             r"^(?:the\s+)?(?:following\s+)?(?:words|topics|phrases|terms|content)?\s*[:\-]\s*",
             "",
             raw_captured,
+            flags=re.IGNORECASE,
+        ).strip()
+        # Strip trailing context like "anywhere in your content...", "in captions...", etc.
+        cleaned_lead = re.sub(
+            r"\s+(?:anywhere|in\s+your|in\s+content|in\s+caption|in\s+tags|in\s+description|or\s+description).*$",
+            "",
+            cleaned_lead,
             flags=re.IGNORECASE,
         ).strip()
         raw_items = re.split(r"[,;•|\t]+", cleaned_lead)
@@ -409,7 +421,7 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
 
     # Also check if there is a bulleted list immediately following a "banned/avoid" header
     header_match = re.search(
-        r"(?:banned|avoid|prohibited|do\s+not\s+say|do\s+not\s+mention)(?:\s+(?:the\s+)?(?:following\s+)?(?:words|topics|terms))?\s*:\s*\n((?:\s*[-*•\d+.]\s+[^\n\r]+\n?)+)",
+        r"(?:banned|avoid|prohibited|do\s+not\s+say|do\s+not\s+mention|never\s+mention)(?:\s+(?:the\s+)?(?:following\s+)?(?:words|topics|terms))?\s*:\s*\n((?:\s*[-*•\d+.]\s+[^\n\r]+\n?)+)",
         raw_text,
         re.IGNORECASE,
     )
@@ -502,22 +514,39 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     hashtags: list[str] = []
     raw_hash_matches = re.findall(r"#[A-Za-z0-9_]+", raw_text)
     for h in raw_hash_matches:
-        if h not in hashtags:
-            hashtags.append(h)
-    tag_heading_match = re.search(r"(?:hashtags?|tags?)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+        ch = h.lstrip("#").lower()
+        if ch not in ENGLISH_STOPWORDS and ch not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips"):
+            if h not in hashtags:
+                hashtags.append(h)
+
+    tag_heading_match = re.search(r"(?:^|\n)\s*(?:hashtags?|show\s+hashtags?)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
     if tag_heading_match:
         extra_tags = [t.strip() for t in re.split(r"[,;\s]+", tag_heading_match.group(1)) if t.strip()]
         for t in extra_tags:
-            norm_tag = t if t.startswith("#") else f"#{t}"
-            if norm_tag not in hashtags:
-                hashtags.append(norm_tag)
+            clean_t = t.lstrip("#@").lower()
+            if clean_t and clean_t not in ENGLISH_STOPWORDS and clean_t not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips") and not t.startswith("@"):
+                norm_tag = f"#{t.lstrip('#')}"
+                if norm_tag not in hashtags:
+                    hashtags.append(norm_tag)
+
     # Ensure brand tag is present if brand was discovered
     for b in branding_rules:
         clean_bt = re.sub(r"[^\w]", "", b)
-        if clean_bt:
+        if clean_bt and clean_bt.lower() not in ENGLISH_STOPWORDS:
             b_tag = f"#{clean_bt}"
             if b_tag not in hashtags:
                 hashtags.append(b_tag)
+
+    # Filter out garbage hashtags and banned words
+    banned_set = {b.lower().strip() for b in banned_words}
+    hashtags = [
+        h for h in hashtags
+        if not h.startswith("#@")
+        and len(h) > 2
+        and h.lstrip("#").lower() not in ENGLISH_STOPWORDS
+        and h.lstrip("#").lower() not in banned_set
+        and h.lstrip("#").lower() not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips")
+    ]
 
     # 11. Title Patterns extraction
     title_patterns: list[str] = []
@@ -548,17 +577,40 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
 
     # 13. Required Mentions extraction
     required_mentions: list[str] = []
-    raw_mention_matches = re.findall(r"@[A-Za-z0-9_.]+", raw_text)
+    raw_mention_matches = re.findall(r"@[A-Za-z0-9_]+", raw_text)
     for m in raw_mention_matches:
-        if m not in required_mentions:
-            required_mentions.append(m)
-    mention_heading_match = re.search(r"(?:mention|handle|tag\s+account)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
+        clean_m = m.lstrip("@").lower()
+        if clean_m not in ENGLISH_STOPWORDS and clean_m not in banned_set and clean_m not in ("of", "in", "your", "content", "anywhere", "the", "and", "required", "mandatory", "tag", "tags"):
+            if m not in required_mentions:
+                required_mentions.append(m)
+
+    # Extract platform-specific handles if listed like "YouTube: @HardScopeTV", "Instagram: @hardscope"
+    for pm in re.finditer(r"(?:YouTube|Instagram|TikTok|Twitter|X|Facebook)[:\s-]+(@[A-Za-z0-9_]+)", raw_text, re.IGNORECASE):
+        h = pm.group(1).strip()
+        clean_h = h.lstrip("@").lower()
+        if clean_h not in banned_set and clean_h not in ENGLISH_STOPWORDS:
+            if h not in required_mentions:
+                required_mentions.append(h)
+
+    # If general mention heading exists without negative context
+    mention_heading_match = re.search(r"(?:^|\n)\s*(?:mentions?|handles?|social\s+handles?|tag\s+account)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
     if mention_heading_match:
-        extra_mentions = [m.strip() for m in re.split(r"[,;\s]+", mention_heading_match.group(1)) if m.strip()]
+        cand_line = mention_heading_match.group(1).strip()
+        extra_mentions = [m.strip() for m in re.split(r"[,;\s]+", cand_line) if m.strip()]
         for m in extra_mentions:
-            norm_m = m if m.startswith("@") else f"@{m}"
-            if norm_m not in required_mentions:
-                required_mentions.append(norm_m)
+            clean_m = m.lstrip("@").lower()
+            if clean_m not in ENGLISH_STOPWORDS and clean_m not in banned_set and clean_m not in ("of", "in", "your", "content", "anywhere", "required", "mandatory"):
+                norm_m = m if m.startswith("@") else f"@{m}"
+                if norm_m not in required_mentions:
+                    required_mentions.append(norm_m)
+
+    # Final purge of banned terms from mentions
+    required_mentions = [
+        m for m in required_mentions
+        if m.lstrip("@").lower() not in banned_set
+        and m.lstrip("@").lower() not in ENGLISH_STOPWORDS
+        and m.lstrip("@").lower() not in ("of", "in", "your", "content", "anywhere", "required", "mandatory")
+    ]
 
     # 14. Mandatory vs Preference Rules classification
     mandatory_rules: list[str] = []

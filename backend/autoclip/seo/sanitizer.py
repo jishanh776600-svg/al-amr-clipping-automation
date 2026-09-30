@@ -115,26 +115,27 @@ def sanitize_public_text(text: str, is_title: bool = False) -> str:
     cleaned = _UUID_PATTERN.sub("", cleaned)
     cleaned = re.sub(r"\b(?:clip_|job_|export_|appr_|spec_|cand_)[0-9a-f]{8,}\b", "", cleaned, flags=re.IGNORECASE)
 
-    # Scrub standalone hex tokens (with digits)
-    tokens = cleaned.split()
-    retained = []
-    for t in tokens:
-        stripped_t = t.strip(".,!?:;\"'()[]{}#@")
-        if _HEX_ID_PATTERN.fullmatch(stripped_t) and stripped_t.lower() not in ("black_boxvault", "futurefounders"):
-            continue
-        retained.append(t)
-    cleaned = " ".join(retained)
+    # Scrub standalone hex tokens (with digits) while preserving line breaks
+    new_lines = []
+    for line in cleaned.splitlines():
+        tokens = line.split()
+        retained = []
+        for t in tokens:
+            stripped_t = t.strip(".,!?:;\"'()[]{}#@")
+            if _HEX_ID_PATTERN.fullmatch(stripped_t) and stripped_t.lower() not in ("black_boxvault", "futurefounders"):
+                continue
+            retained.append(t)
+        new_lines.append(" ".join(retained))
+    cleaned = "\n".join(new_lines)
 
     # Clean multiple consecutive dots (e.g. '.....')
     cleaned = re.sub(r"\.{2,}", "", cleaned)
 
     # Normalize whitespace
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in cleaned.split("\n")]
-    cleaned = "\n".join(line for line in lines if line or not is_title).strip()
-
+    raw_lines = [re.sub(r"[ \t]+", " ", line).strip() for line in cleaned.split("\n")]
     if is_title:
-        # Title specific cleaning: drop trailing dangling connectors
-        words = cleaned.split()
+        # Title specific cleaning: drop trailing dangling connectors and flatten
+        words = (" ".join(line for line in raw_lines if line)).split()
         while words and words[-1].lower() in (
             "and", "or", "so", "the", "a", "an", "to", "of", "in", "for", "with", "is", "at", "by", "that", "fo", "we"
         ):
@@ -142,6 +143,10 @@ def sanitize_public_text(text: str, is_title: bool = False) -> str:
         cleaned = " ".join(words).strip().rstrip(".,!?:; ")
         if cleaned.islower():
             cleaned = cleaned.title()
+    else:
+        # Preserve paragraph breaks for captions and descriptions (max 2 consecutive newlines)
+        joined = "\n".join(raw_lines).strip()
+        cleaned = re.sub(r"\n{3,}", "\n\n", joined)
 
     return cleaned
 

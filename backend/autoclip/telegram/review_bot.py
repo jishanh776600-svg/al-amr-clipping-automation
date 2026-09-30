@@ -1537,6 +1537,13 @@ async def setup_telegram_bot_lifecycle() -> dict[str, Any] | None:
         or ""
     ).strip().rstrip("/")
 
+    # Guard against dummy / test domains or empty strings overwriting live Telegram webhook
+    DUMMY_DOMAINS = ("al-amr-test", "localhost", "127.0.0.1", "example.com", "test.com")
+    if any(dummy in public_url.lower() for dummy in DUMMY_DOMAINS):
+        public_url = "https://al-amr-clipping-automation-6d0c.onrender.com"
+    elif not public_url:
+        public_url = "https://al-amr-clipping-automation-6d0c.onrender.com"
+
     force_polling = os.getenv("TELEGRAM_POLLING") == "1"
 
     if public_url and not force_polling:
