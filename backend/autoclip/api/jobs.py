@@ -377,7 +377,7 @@ async def create_autonomous_job(
             tmp_path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=f"Failed to process uploaded video: {exc}") from exc
     elif url and str(url).strip():
-        clean_url = ingest.normalize_url(str(url).strip())
+        clean_url = str(url).strip()
         from ..pipeline.source_acquisition.security import validate_remote_url
         try:
             validate_remote_url(clean_url)
@@ -389,10 +389,15 @@ async def create_autonomous_job(
                 detail={"message": msg, "hint": hint},
             ) from exc
 
-        # Determine source type from normalized URL
+        # Determine source type
         from urllib.parse import urlparse as _urlparse
         _netloc = _urlparse(clean_url).netloc.lower()
-        _src_type = "youtube" if any(h in _netloc for h in ("youtube.com", "youtu.be")) else "upload"
+        if any(h in _netloc for h in ("youtube.com", "youtu.be")):
+            _src_type = "youtube"
+        elif "drive.google.com" in _netloc:
+            _src_type = "drive"
+        else:
+            _src_type = "upload"
 
         source = Source(
             id=new_id(),

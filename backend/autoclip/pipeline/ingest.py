@@ -268,9 +268,6 @@ def ingest_url(
     """Ingest any media URL — YouTube, streaming sites via yt-dlp, or direct HTTP files."""
     from urllib.parse import urlparse
 
-    # Normalize Drive view/share links → direct download URLs before anything else
-    url = normalize_url(url)
-
     try:
         parsed = urlparse(url)
         if not parsed.scheme or parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -284,18 +281,9 @@ def ingest_url(
         log.info("Detected direct media URL: %s", url)
         return ingest_direct_url(url, settings, on_progress=on_progress)
 
-    # Google Drive uc?export=download — resolve real binary URL first (bypasses virus-scan warning page)
-    if "drive.google.com/uc" in url and "export=download" in url:
-        log.info("Detected Google Drive direct-download URL; resolving real binary stream: %s", url)
-        resolved_url = _get_drive_download_url(url)
-        if resolved_url != url:
-            log.info("Drive URL resolved to: %s", resolved_url[:120])
-        try:
-            return ingest_direct_url(resolved_url, settings, on_progress=on_progress)
-        except IngestError as exc:
-            log.warning("Direct HTTP download of Drive file failed (%s); falling back to yt-dlp.", exc)
-
-    # Try yt-dlp for YouTube and other supported streaming services
+    # Try yt-dlp for YouTube, Google Drive, and other supported streaming services
+    # NOTE: yt-dlp handles Google Drive URLs natively — do NOT pre-convert them or
+    # bypass yt-dlp with direct HTTP, as Drive requires cookie/session handling.
     try:
         return ingest_youtube(url, settings, job_id=job_id, on_progress=on_progress)
     except IngestError as exc:
