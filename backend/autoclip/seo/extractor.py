@@ -261,6 +261,14 @@ def extract_campaign_seo_spec(
         if yt_custom.get("cta_rules"):
             yt_cta_rules = yt_custom["cta_rules"]
 
+    platform_mentions = getattr(campaign_spec, "platform_mentions", {}) or {}
+    show_mappings = getattr(campaign_spec, "show_mappings", []) or []
+
+    yt_mentions = list(platform_mentions.get("youtube") or [])
+    if not yt_mentions:
+        tv_mentions = [m for m in reqs.required_mentions if "tv" in m.lower()]
+        yt_mentions = tv_mentions if tv_mentions else list(reqs.required_mentions)
+
     youtube_rules = PlatformSEORules(
         title_rules=yt_title_rules,
         description_rules=yt_desc_rules,
@@ -268,7 +276,7 @@ def extract_campaign_seo_spec(
         keyword_rules=list(reqs.required_phrases),
         tag_rules=list(reqs.required_phrases) + (["Shorts", reqs.brand_name] if reqs.brand_name else ["Shorts"]),
         link_rules=[f"YouTube destination link: {u}" for u in global_links],
-        mention_rules=list(reqs.required_mentions),
+        mention_rules=yt_mentions,
         cta_rules=yt_cta_rules,
         formatting_rules=[
             "Vertical 9:16 Shorts format",
@@ -287,7 +295,10 @@ def extract_campaign_seo_spec(
         "Clean, visual paragraph spacing with bullet points or emojis where appropriate",
         "Contextual explanation of the clip topic tailored for audience",
     ]
-    ig_mentions = list(reqs.required_mentions)
+    ig_mentions = list(platform_mentions.get("instagram") or [])
+    if not ig_mentions:
+        non_tv = [m for m in reqs.required_mentions if "tv" not in m.lower()]
+        ig_mentions = non_tv if non_tv else list(reqs.required_mentions)
 
     target_handle = ig_mentions[0] if ig_mentions else (f"@{reqs.brand_name.lower().replace(' ', '')}" if reqs.brand_name else "")
     default_ig_cta = f"Follow {target_handle} for daily highlights! Save this Reel and share your takeaway in the comments 👇" if target_handle else "Follow for daily highlights! Save this Reel and share your takeaway in the comments 👇"
@@ -345,4 +356,5 @@ def extract_campaign_seo_spec(
         global_rules=global_rules,
         youtube_rules=youtube_rules,
         instagram_rules=instagram_rules,
+        show_mappings=show_mappings,
     )

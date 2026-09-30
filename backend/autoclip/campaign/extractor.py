@@ -390,7 +390,7 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     banned_words: list[str] = []
     # Search for banned words using explicit horizontal whitespace, negative phrases, and emojis
     banned_matches = re.finditer(
-        r"(?:🚫|⛔|❌)?\s*(?:never\s+mention|no\s+mention\s+of|do\s+not\s+mention|never\s+say|do\s+not\s+say|banned|avoid|prohibited|exclude)[ \t]*[:\-]?[ \t]*([^\n\r]+)",
+        r"(?:🚫|⛔|❌|✕|✖)?\s*(?:never\s+mention|no\s+mention\s+of|any\s+mention\s+of|do\s+not\s+mention|never\s+say|do\s+not\s+say|banned\s*(?:words|terms|topics|keywords)?\s*[:\-]|avoid\b|prohibited\s*(?:words|terms|topics)?\s*[:\-]|exclude\b)[ \t]*[:\-]?[ \t]*([^\n\r]+)",
         raw_text,
         re.IGNORECASE,
     )
@@ -415,6 +415,8 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
             # Strip parenthetical clarifications (e.g. "eligible (bachelor)" -> "eligible")
             base_term = re.sub(r"\(.*?\)", "", w).strip().lower()
             base_term = re.sub(r"^[^\w]+|[^\w]+$", "", base_term)
+            if base_term in ("from both", "from", "both", "all"):
+                continue
             if base_term and len(base_term) > 2 and base_term not in ENGLISH_STOPWORDS:
                 if base_term not in banned_words:
                     banned_words.append(base_term)
@@ -430,6 +432,8 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         for line in bullet_lines:
             base_term = re.sub(r"\(.*?\)", "", line).strip().lower()
             base_term = re.sub(r"^[^\w]+|[^\w]+$", "", base_term)
+            if base_term in ("from both", "from", "both", "all"):
+                continue
             if base_term and len(base_term) > 2 and base_term not in ENGLISH_STOPWORDS:
                 if base_term not in banned_words:
                     banned_words.append(base_term)
@@ -585,12 +589,43 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
                 required_mentions.append(m)
 
     # Extract platform-specific handles if listed like "YouTube: @HardScopeTV", "Instagram: @hardscope"
+    platform_mentions: dict[str, list[str]] = {}
     for pm in re.finditer(r"(?:YouTube|Instagram|TikTok|Twitter|X|Facebook)[:\s-]+(@[A-Za-z0-9_]+)", raw_text, re.IGNORECASE):
+        plat = pm.group(0).split(":")[0].strip().lower()
+        if plat == "x":
+            plat = "twitter"
         h = pm.group(1).strip()
         clean_h = h.lstrip("@").lower()
         if clean_h not in banned_set and clean_h not in ENGLISH_STOPWORDS:
+            if plat not in platform_mentions:
+                platform_mentions[plat] = []
+            if h not in platform_mentions[plat]:
+                platform_mentions[plat].append(h)
             if h not in required_mentions:
                 required_mentions.append(h)
+
+    # Extract show-specific mapping table (e.g. "R3born | Neon | #r3born", "Trailer | Who | Hashtag")
+    show_mappings: list[dict[str, str]] = []
+    for line in lines:
+        if "#" in line and "|" in line:
+            parts = [p.strip() for p in line.split("|") if p.strip()]
+            if len(parts) >= 3:
+                tag_idx = -1
+                for idx, pt in enumerate(parts):
+                    if pt.startswith("#"):
+                        tag_idx = idx
+                        break
+                if tag_idx != -1:
+                    tag = parts[tag_idx]
+                    other_parts = [parts[i] for i in range(len(parts)) if i != tag_idx]
+                    show_name = other_parts[0] if other_parts else ""
+                    talent = other_parts[1] if len(other_parts) > 1 else ""
+                    if show_name and not any(kw in show_name.lower() for kw in ("trailer", "show", "who", "header")):
+                        show_mappings.append({
+                            "show": show_name,
+                            "talent": talent,
+                            "hashtag": tag if tag.startswith("#") else f"#{tag}",
+                        })
 
     # If general mention heading exists without negative context
     mention_heading_match = re.search(r"(?:^|\n)\s*(?:mentions?|handles?|social\s+handles?|tag\s+account)[:\s-]+([^\n\r]+)", raw_text, re.IGNORECASE)
@@ -657,6 +692,8 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
         title_patterns=title_patterns,
         description_guidelines=description_guidelines,
         required_mentions=required_mentions,
+        platform_mentions=platform_mentions,
+        show_mappings=show_mappings,
         cta_instructions=cta_instructions,
         cta_text=cta_text,
         branding_rules=branding_rules,

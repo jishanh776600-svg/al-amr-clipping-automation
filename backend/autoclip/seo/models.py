@@ -158,6 +158,7 @@ class CampaignSEOSpec:
     global_rules: GlobalSEORules = field(default_factory=GlobalSEORules)
     youtube_rules: PlatformSEORules = field(default_factory=PlatformSEORules)
     instagram_rules: PlatformSEORules = field(default_factory=PlatformSEORules)
+    show_mappings: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +168,7 @@ class CampaignSEOSpec:
             "global_rules": self.global_rules.to_dict(),
             "youtube_rules": self.youtube_rules.to_dict(),
             "instagram_rules": self.instagram_rules.to_dict(),
+            "show_mappings": self.show_mappings,
         }
 
 
@@ -178,6 +180,7 @@ class YouTubeMetadata:
     description: str = ""
     hashtags: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    mentions: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
     cta: str = ""
     compliance_score: float = 100.0  # Document compliance (0-100)
@@ -197,6 +200,7 @@ class YouTubeMetadata:
             "description": self.description,
             "hashtags": self.hashtags,
             "tags": self.tags,
+            "mentions": self.mentions,
             "links": self.links,
             "cta": self.cta,
             "compliance_score": self.compliance_score,

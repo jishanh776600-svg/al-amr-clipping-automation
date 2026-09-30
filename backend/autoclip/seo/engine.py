@@ -85,6 +85,69 @@ class SEOEngine:
         seo_spec = extract_campaign_seo_spec(campaign_spec)
         return cls(requirements=reqs, campaign_seo_spec=seo_spec)
 
+    def _resolve_clip_hashtags(
+        self,
+        platform: str,
+        clip: Clip,
+        slice_text: str,
+        raw_tags: list[str],
+    ) -> list[str]:
+        """Resolve precise hashtags avoiding cross-show spam tagging."""
+        content_text = f"{clip.title or ''} {clip.hook or ''} {slice_text}".lower()
+        show_mappings = getattr(self.seo_spec, "show_mappings", []) or []
+
+        matched_show_tag: str | None = None
+        other_show_tags: set[str] = set()
+
+        if show_mappings:
+            for mapping in show_mappings:
+                show_h = mapping.get("hashtag", "").lower()
+                show_name = mapping.get("show", "").lower()
+                talent = mapping.get("talent", "").lower()
+
+                # Check if this show or talent is mentioned
+                is_match = False
+                if talent and talent in content_text:
+                    is_match = True
+                elif show_name and show_name in content_text:
+                    is_match = True
+                elif show_h and show_h.lstrip("#") in content_text:
+                    is_match = True
+
+                if is_match and not matched_show_tag:
+                    matched_show_tag = mapping.get("hashtag")
+                else:
+                    if mapping.get("hashtag"):
+                        other_show_tags.add(mapping["hashtag"].lower())
+
+        # If none matched yet, check against show hashtags in content
+        if not matched_show_tag and show_mappings:
+            for mapping in show_mappings:
+                h = mapping.get("hashtag", "")
+                if h and h.lower().lstrip("#") in content_text:
+                    matched_show_tag = h
+                    break
+            if not matched_show_tag and show_mappings:
+                matched_show_tag = show_mappings[0].get("hashtag")
+
+        base_platform_tag = "#Shorts" if platform == "youtube" else "#reels"
+        resolved: list[str] = [base_platform_tag]
+
+        if matched_show_tag:
+            norm_m = matched_show_tag if matched_show_tag.startswith("#") else f"#{matched_show_tag}"
+            if norm_m.lower() not in [t.lower() for t in resolved]:
+                resolved.append(norm_m)
+
+        for t in raw_tags:
+            norm_t = t if t.startswith("#") else f"#{t}"
+            # Skip if this tag belongs to a DIFFERENT show in show_mappings!
+            if norm_t.lower() in other_show_tags and norm_t.lower() != (matched_show_tag or "").lower():
+                continue
+            if norm_t.lower() not in [x.lower() for x in resolved]:
+                resolved.append(norm_t)
+
+        return resolved
+
     def generate_youtube_metadata(
         self,
         clip: Clip,
@@ -149,25 +212,29 @@ class SEOEngine:
         if yt_rules and yt_rules.mention_rules:
             yt_mentions = list(yt_rules.mention_rules)
         elif self.reqs.required_mentions:
-            yt_mentions = list(self.reqs.required_mentions)
+            tv_m = [m for m in self.reqs.required_mentions if "tv" in m.lower()]
+            yt_mentions = tv_m if tv_m else list(self.reqs.required_mentions)
+
+        seen_yt_m = set()
+        clean_yt_mentions = []
+        for m in yt_mentions:
+            norm_m = m if m.startswith("@") else f"@{m}"
+            if norm_m.lower() not in seen_yt_m:
+                seen_yt_m.add(norm_m.lower())
+                clean_yt_mentions.append(norm_m)
+        yt_mentions = clean_yt_mentions
+
         if yt_mentions:
             desc_parts.append(f"Tagging {' '.join(yt_mentions)}")
 
         # Tags & #Shorts
-        yt_tags = ["#Shorts"]
         custom_yt_tags = []
         if yt_rules and yt_rules.hashtag_rules:
             custom_yt_tags = yt_rules.hashtag_rules
         elif self.reqs.required_hashtags:
             custom_yt_tags = self.reqs.required_hashtags
 
-        if custom_yt_tags:
-            for h in custom_yt_tags:
-                tag = h if h.startswith("#") else f"#{h}"
-                if tag.lower() not in [t.lower() for t in yt_tags]:
-                    yt_tags.append(tag)
-        else:
-            yt_tags.extend(["#Trending", "#Viral"])
+        yt_tags = self._resolve_clip_hashtags("youtube", clip, slice_text, custom_yt_tags)
 
         words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
         stopwords = {"this", "that", "with", "from", "have", "they", "will", "what", "when", "there", "about", "your", "more", "into", "their"}
@@ -185,6 +252,7 @@ class SEOEngine:
             description=desc,
             hashtags=yt_tags,
             tags=[t.lstrip("#") for t in yt_tags],
+            mentions=yt_mentions,
             links=yt_links,
             cta=yt_cta,
         )
@@ -213,6 +281,10 @@ class SEOEngine:
             for rp in (self.seo_spec.youtube_rules.required_phrases if self.seo_spec else []):
                 if rp.lower() not in yt_meta.title.lower() and rp.lower() not in yt_meta.description.lower():
                     yt_meta.description += f"\n\nTopic: {rp}"
+            # Ensure required mentions
+            for req_m in yt_meta.mentions:
+                if req_m.lower() not in yt_meta.description.lower():
+                    yt_meta.description += f"\n\nTagging {req_m}"
 
         return yt_meta
 
@@ -252,16 +324,20 @@ class SEOEngine:
 
         # Instagram required mentions
         ig_mentions: list[str] = []
+        raw_ig_candidates = []
         if ig_rules and ig_rules.mention_rules:
-            for m in ig_rules.mention_rules:
-                norm_m = m if m.startswith("@") else f"@{m}"
-                if norm_m.lower() not in [x.lower() for x in ig_mentions]:
-                    ig_mentions.append(norm_m)
+            raw_ig_candidates = list(ig_rules.mention_rules)
         elif self.reqs.required_mentions:
-            for m in self.reqs.required_mentions:
-                norm_m = m if m.startswith("@") else f"@{m}"
-                if norm_m.lower() not in [x.lower() for x in ig_mentions]:
-                    ig_mentions.append(norm_m)
+            raw_ig_candidates = list(self.reqs.required_mentions)
+
+        # Exclude handles with "TV" (which are YouTube handles) unless no other handles exist
+        non_tv_candidates = [m for m in raw_ig_candidates if "tv" not in m.lower()]
+        chosen_candidates = non_tv_candidates if non_tv_candidates else raw_ig_candidates
+
+        for m in chosen_candidates:
+            norm_m = m if m.startswith("@") else f"@{m}"
+            if norm_m.lower() not in [x.lower() for x in ig_mentions]:
+                ig_mentions.append(norm_m)
 
         target_handle = ig_mentions[0] if ig_mentions else (f"@{self.reqs.brand_name.lower().replace(' ', '')}" if self.reqs.brand_name else "")
         if ig_rules and ig_rules.cta_rules:
@@ -278,20 +354,13 @@ class SEOEngine:
         caption_lines.append("")
 
         # Instagram Hashtags
-        ig_tags: list[str] = ["#reels"]
         custom_ig_tags = []
         if ig_rules and ig_rules.hashtag_rules:
             custom_ig_tags = ig_rules.hashtag_rules
         elif self.reqs.required_hashtags:
             custom_ig_tags = self.reqs.required_hashtags
 
-        if custom_ig_tags:
-            for h in custom_ig_tags:
-                norm_h = h if h.startswith("#") else f"#{h}"
-                if norm_h.lower() not in [t.lower() for t in ig_tags]:
-                    ig_tags.append(norm_h)
-        else:
-            ig_tags.extend(["#trending", "#viral"])
+        ig_tags = self._resolve_clip_hashtags("instagram", clip, slice_text, custom_ig_tags)
 
         caption_lines.append(" ".join(ig_tags[:6]))
         full_caption = sanitize_public_text("\n".join(caption_lines), is_title=False)

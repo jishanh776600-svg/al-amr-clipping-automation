@@ -238,6 +238,18 @@ def validate_youtube_metadata(
             malformed = True
     rule_evals["urls_valid"] = not malformed
 
+    # 4b. Required YouTube mentions validation
+    yt_mentions = spec.youtube_rules.mention_rules if (spec and spec.youtube_rules) else []
+    missing_mentions = []
+    for m in yt_mentions:
+        if m.lower() not in full_text:
+            missing_mentions.append(m)
+    if missing_mentions:
+        errors.append(f"Required YouTube mentions missing from metadata: {', '.join(missing_mentions)}")
+        rule_evals["required_mentions_pass"] = False
+    else:
+        rule_evals["required_mentions_pass"] = True
+
     # 5. Compliance score
     comp_score = 100.0 - (len(errors) * 40.0)
     metadata.compliance_score = max(0.0, min(100.0, round(comp_score, 1)))

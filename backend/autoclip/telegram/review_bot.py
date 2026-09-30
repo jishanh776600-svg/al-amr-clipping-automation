@@ -389,32 +389,41 @@ async def send_clip_review(
     safe_yt_title = html.escape(yt_title)
 
     yt_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else "")
-    yt_desc_snippet = yt_desc[:80] + ("..." if len(yt_desc) > 80 else "")
+    yt_desc_snippet = yt_desc[:70] + ("..." if len(yt_desc) > 70 else "")
     safe_yt_desc = html.escape(yt_desc_snippet)
 
-    yt_tags_list = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts", "#Founders"])
+    yt_tags_list = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts"])
     safe_yt_tags = html.escape(" ".join(yt_tags_list[:4]))
+
+    yt_mentions_list = yt_data.get("mentions") or []
+    if not yt_mentions_list and yt_desc:
+        yt_mentions_list = [m for m in re.findall(r"@[A-Za-z0-9_]+", yt_desc) if "tv" in m.lower()] or re.findall(r"@[A-Za-z0-9_]+", yt_desc)
+    safe_yt_mentions = html.escape(" ".join(yt_mentions_list[:2])) if yt_mentions_list else "@HardScopeTV"
 
     yt_comp = yt_data.get("compliance_score", 100.0)
     yt_opt = yt_data.get("optimization_score", 95.0)
 
     ig_caption = ig_data.get("caption") or (clip_meta.final_description if clip_meta else "")
-    ig_caption_snippet = ig_caption[:80] + ("..." if len(ig_caption) > 80 else "")
+    ig_caption_snippet = ig_caption[:70] + ("..." if len(ig_caption) > 70 else "")
     safe_ig_caption = html.escape(ig_caption_snippet)
 
-    ig_tags_list = ig_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts", "#Trending"])
-    safe_ig_tags = html.escape(" ".join(ig_tags_list[:5]))
+    ig_tags_list = ig_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#reels"])
+    safe_ig_tags = html.escape(" ".join(ig_tags_list[:4]))
 
     ig_mentions_list = ig_data.get("mentions") or []
-    safe_ig_mentions = html.escape(" ".join(ig_mentions_list[:2])) if ig_mentions_list else "None"
+    if not ig_mentions_list and ig_caption:
+        ig_mentions_list = [m for m in re.findall(r"@[A-Za-z0-9_]+", ig_caption) if "tv" not in m.lower()] or re.findall(r"@[A-Za-z0-9_]+", ig_caption)
+    safe_ig_mentions = html.escape(" ".join(ig_mentions_list[:2])) if ig_mentions_list else "@hardscope"
 
     ig_cta = ig_data.get("cta") or "👉 Follow for daily show highlights."
-    safe_ig_cta = html.escape(ig_cta[:50] + ("..." if len(ig_cta) > 50 else ""))
+    safe_ig_cta = html.escape(ig_cta[:45] + ("..." if len(ig_cta) > 45 else ""))
 
     ig_comp = ig_data.get("compliance_score", 100.0)
     ig_opt = ig_data.get("optimization_score", 95.0)
 
     safe_hook = html.escape(clip.hook or "N/A")
+    if len(safe_hook) > 50:
+        safe_hook = safe_hook[:47] + "..."
 
     yt_channel_display = html.escape(yt_data.get("channel") or yt_data.get("channel_title") or "YouTube Shorts")
     ig_account_display = html.escape(ig_mentions_list[0] if ig_mentions_list else "Instagram Reels")
@@ -431,13 +440,14 @@ async def send_clip_review(
         f"▶️ <b>YOUTUBE ({yt_channel_display}):</b>",
         f"• Title: {safe_yt_title}",
         f"• Description: {safe_yt_desc}",
+        f"• Mentions: {safe_yt_mentions}",
         f"• Hashtags: {safe_yt_tags}",
         f"• Compliance: {yt_comp:.0f}% | Opt: {yt_opt:.0f}/100",
         "",
         f"📸 <b>INSTAGRAM ({ig_account_display}):</b>",
         f"• Caption: {safe_ig_caption}",
-        f"• Hashtags: {safe_ig_tags}",
         f"• Mentions: {safe_ig_mentions}",
+        f"• Hashtags: {safe_ig_tags}",
         f"• CTA: {safe_ig_cta}",
         f"• Compliance: {ig_comp:.0f}% | Opt: {ig_opt:.0f}/100",
     ]
@@ -462,33 +472,42 @@ async def send_clip_review(
     send_msg_url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
 
     # Materialize video file for review delivery: local file if accessible, or download from Google Drive
-    temp_file_to_clean: Path | None = None
     preview_file_to_clean: Path | None = None
     effective_media_path: Path | None = None
 
+    cache_dir = paths.root() / "media_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached_clip = cache_dir / f"clip_{clip_id}.mp4"
+
     if media_path and media_path.is_file() and media_path.stat().st_size > 0:
         effective_media_path = media_path
+        if not cached_clip.is_file() or cached_clip.stat().st_size != media_path.stat().st_size:
+            try:
+                import shutil
+                shutil.copy2(media_path, cached_clip)
+            except Exception:
+                pass
+    elif cached_clip.is_file() and cached_clip.stat().st_size > 1000:
+        effective_media_path = cached_clip
     elif drive_file_id:
         try:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-                temp_file_to_clean = Path(tf.name)
             from ..storage.drive import GoogleDriveStorage
             drive_storage = GoogleDriveStorage()
             if drive_storage.is_configured:
-                log.info("Downloading clip %s media from Google Drive (%s) for Telegram review...", clip_id, drive_file_id)
-                await asyncio.to_thread(drive_storage.download_file, drive_file_id, temp_file_to_clean)
-                if temp_file_to_clean.is_file() and temp_file_to_clean.stat().st_size > 0:
-                    effective_media_path = temp_file_to_clean
+                log.info("Downloading clip %s media from Google Drive (%s) to %s for Telegram review...", clip_id, drive_file_id, cached_clip)
+                await asyncio.to_thread(drive_storage.download_file, drive_file_id, cached_clip)
+                if cached_clip.is_file() and cached_clip.stat().st_size > 1000:
+                    effective_media_path = cached_clip
 
             # Direct download fallback
             if not effective_media_path or not effective_media_path.exists() or effective_media_path.stat().st_size == 0:
                 direct_url = f"https://drive.google.com/uc?export=download&id={drive_file_id}"
-                log.info("Attempting direct HTTP download from Google Drive %s for Telegram review...", direct_url)
+                log.info("Attempting direct HTTP download from Google Drive %s to %s for Telegram review...", direct_url, cached_clip)
                 async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as dl_client:
                     resp = await dl_client.get(direct_url)
                     if resp.status_code == 200 and len(resp.content) > 1000:
-                        temp_file_to_clean.write_bytes(resp.content)
-                        effective_media_path = temp_file_to_clean
+                        cached_clip.write_bytes(resp.content)
+                        effective_media_path = cached_clip
         except Exception as exc:
             log.warning("Failed downloading clip %s from Google Drive for Telegram review: %s", clip_id, exc)
 
@@ -550,9 +569,10 @@ async def send_clip_review(
                                 _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
                                 return resp_json
                             elif resp.status_code == 400:
-                                # Retry video without html parse_mode
+                                # Retry video without html parse_mode and with sanitized plain text
                                 data_plain = dict(data)
                                 data_plain.pop("parse_mode", None)
+                                data_plain["caption"] = re.sub(r"<[^>]+>", "", caption_text)[:1024]
                                 vf.seek(0)
                                 files_plain = {"video": (f"clip_{clip_id}.mp4", vf, "video/mp4")}
                                 resp_plain = await client.post(send_video_url, data=data_plain, files=files_plain)
@@ -570,24 +590,19 @@ async def send_clip_review(
                                     if compressed:
                                         preview_file_to_clean = compressed
                                         with open(compressed, "rb") as cf:
-                                            files_c = {"video": (f"clip_{clip_id}.mp4", cf, "video/mp4")}
-                                            resp_c = await client.post(send_video_url, data=data_plain, files=files_c)
-                                            if resp_c.status_code == 200:
-                                                log.info("Telegram review video (compressed fallback) delivered for clip %s", clip_id)
-                                                resp_json = resp_c.json()
-                                                msg_id = resp_json.get("result", {}).get("message_id")
-                                                tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
-                                                _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
-                                                return resp_json
+                                             files_c = {"video": (f"clip_{clip_id}.mp4", cf, "video/mp4")}
+                                             resp_c = await client.post(send_video_url, data=data_plain, files=files_c)
+                                             if resp_c.status_code == 200:
+                                                 log.info("Telegram review video (compressed fallback) delivered for clip %s", clip_id)
+                                                 resp_json = resp_c.json()
+                                                 msg_id = resp_json.get("result", {}).get("message_id")
+                                                 tg_fid = (resp_json.get("result", {}).get("video") or {}).get("file_id")
+                                                 _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
+                                                 return resp_json
                             log.warning("Telegram sendVideo returned HTTP %s: %s", resp.status_code, resp.text)
                 except Exception as exc:
                     log.warning("Failed sending video directly via Telegram API: %s", exc)
     finally:
-        if temp_file_to_clean and temp_file_to_clean.exists():
-            try:
-                temp_file_to_clean.unlink(missing_ok=True)
-            except Exception:
-                pass
         if preview_file_to_clean and preview_file_to_clean.exists():
             try:
                 preview_file_to_clean.unlink(missing_ok=True)
@@ -613,9 +628,10 @@ async def send_clip_review(
                 _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=False)
                 return resp_json
             elif resp.status_code == 400:
-                # Retry message as plain text
+                # Retry message as clean plain text without broken HTML tags
                 data_plain = dict(data)
                 data_plain.pop("parse_mode", None)
+                data_plain["text"] = re.sub(r"<[^>]+>", "", caption_text)[:4096]
                 resp2 = await client.post(send_msg_url, json=data_plain)
                 if resp2.status_code == 200:
                     log.info("Telegram review message (plain fallback) delivered for clip %s", clip_id)

@@ -76,6 +76,8 @@ class CampaignBrief(BaseModel):
     title_patterns: list[str] = Field(default_factory=list)
     description_guidelines: list[str] = Field(default_factory=list)
     required_mentions: list[str] = Field(default_factory=list)
+    platform_mentions: dict[str, list[str]] = Field(default_factory=dict)
+    show_mappings: list[dict[str, str]] = Field(default_factory=list)
     cta_instructions: list[str] = Field(default_factory=list)
     cta_text: str = ""
     branding_rules: list[str] = Field(default_factory=list)
