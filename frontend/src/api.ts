@@ -1026,8 +1026,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       let hint: string
       if (isOffline) {
         hint = 'Your browser appears offline. Check your internet connection.'
-      } else if (init?.body instanceof FormData) {
+      } else if (init?.body instanceof FormData && init.body.get('video_file') instanceof File) {
         hint = 'The upload was aborted or rejected by the cloud proxy (payload limit or connection reset). For large files (>100 MB), use a video link (YouTube or Google Drive) instead of direct browser upload.'
+      } else if (init?.body instanceof FormData && init.body.get('url')) {
+        hint = `Could not reach AL AMR server at ${fullUrl}. The server may be waking from sleep — wait ~45 seconds and try again. Your Google Drive link is valid; no changes needed.`
       } else {
         hint = `Could not reach AL AMR server at ${fullUrl}. Ensure the server is online (allow ~45s if waking from sleep) and CORS/API URL are correct.`
       }
