@@ -1158,6 +1158,12 @@ export const api = {
       body: form,
     }),
 
+  createAutonomousJobJson: (payload: Record<string, any>) =>
+    request<Job>('/api/jobs/create-autonomous', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   createJob: (
     sourceId: string,
     settings: JobSettingsOverrides = {},

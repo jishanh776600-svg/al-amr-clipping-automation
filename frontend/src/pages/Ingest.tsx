@@ -365,6 +365,26 @@ export function Ingest() {
         destinations: publishDestinations,
       }
 
+      // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id or track name -> Exact Track
+      const effectiveBgmId = (selectedBgmId || '').trim()
+
+      // Fast path for URL ingestion without file uploads (prevents multipart cloud proxy drops)
+      if (sourceMode === 'url' && guidelineFiles.length === 0) {
+        const payload: Record<string, any> = {
+          url: url.trim(),
+          campaign_url: campaignUrl.trim() || undefined,
+          drive_guideline_urls: driveUrl.trim() ? [driveUrl.trim()] : undefined,
+          destinations: publishDestinations,
+          caption_style: captionStyle,
+          visual_filter: visualFilter,
+          bgm_asset_id: effectiveBgmId || null,
+          overrides: jobOverrides,
+        }
+        const job = await api.createAutonomousJobJson(payload)
+        navigate(`/jobs/${job.id}`)
+        return
+      }
+
       const form = new FormData()
       if (sourceMode === 'file' && selectedVideoFile) {
         form.append('video_file', selectedVideoFile)
@@ -384,8 +404,6 @@ export function Ingest() {
       form.append('visual_filter', visualFilter)
       jobOverrides.visual_filter = visualFilter
 
-      // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id or track name -> Exact Track
-      const effectiveBgmId = (selectedBgmId || '').trim()
       form.append('bgm_asset_id', effectiveBgmId)
       jobOverrides.bgm_asset_id = effectiveBgmId || null
 
