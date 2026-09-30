@@ -178,18 +178,27 @@ export function Ingest() {
     }))
   }
 
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
   // Handle Multi-Document Guideline Selection & Analysis
   const handleAddGuidelineFiles = (files: FileList | File[]) => {
     const validFiles: File[] = []
     for (let i = 0; i < files.length; i++) {
       const f = files[i]
       const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase()
-      if (ext === '.pdf' || ext === '.docx') {
+      if (ext === '.pdf' || ext === '.docx' || ext === '.doc' || ext === '.txt' || ext === '.md' || !f.name.includes('.')) {
         validFiles.push(f)
       }
     }
     if (validFiles.length === 0) {
-      setError(new Error('Please provide PDF (.pdf) or Word (.docx) guideline documents.'))
+      setError(new Error('Please provide PDF (.pdf), Word (.docx), or text guideline documents.'))
       return
     }
     setError(null)
@@ -216,12 +225,18 @@ export function Ingest() {
     setSpecExtracting(true)
     setError(null)
     try {
-      const form = new FormData()
-      files.forEach((f) => form.append('files', f))
-      if (cUrl.trim()) form.append('campaign_url', cUrl.trim())
-      if (dUrl.trim()) form.append('drive_urls', dUrl.trim())
-
-      const spec = await api.extractCampaignIntelligence(form)
+      const docsBase64 = await Promise.all(
+        files.map(async (f) => ({
+          filename: f.name,
+          mime_type: f.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          data: await readFileAsBase64(f),
+        }))
+      )
+      const spec = await api.extractCampaignIntelligence({
+        campaign_url: cUrl.trim() || undefined,
+        drive_urls: dUrl.trim() ? [dUrl.trim()] : undefined,
+        guideline_documents: docsBase64,
+      })
       setCampaignSpec(spec)
 
       // Layer duration / clips overrides if parsed
@@ -368,12 +383,21 @@ export function Ingest() {
       // BGM Selection: '' -> Default Canonical BGM, 'none' -> Explicitly No BGM, asset_id or track name -> Exact Track
       const effectiveBgmId = (selectedBgmId || '').trim()
 
-      // Fast path for URL ingestion without file uploads (prevents multipart cloud proxy drops)
-      if (sourceMode === 'url' && guidelineFiles.length === 0) {
+      // Fast path for URL ingestion: packages guidelines into JSON to prevent multipart cloud proxy drops
+      if (sourceMode === 'url') {
+        const guidelineDocsBase64 = await Promise.all(
+          guidelineFiles.map(async (f) => ({
+            filename: f.name,
+            mime_type: f.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            data: await readFileAsBase64(f),
+          }))
+        )
+
         const payload: Record<string, any> = {
           url: url.trim(),
           campaign_url: campaignUrl.trim() || undefined,
           drive_guideline_urls: driveUrl.trim() ? [driveUrl.trim()] : undefined,
+          guideline_documents: guidelineDocsBase64.length > 0 ? guidelineDocsBase64 : undefined,
           destinations: publishDestinations,
           caption_style: captionStyle,
           visual_filter: visualFilter,
@@ -386,10 +410,8 @@ export function Ingest() {
       }
 
       const form = new FormData()
-      if (sourceMode === 'file' && selectedVideoFile) {
+      if (selectedVideoFile) {
         form.append('video_file', selectedVideoFile)
-      } else if (sourceMode === 'url' && url.trim()) {
-        form.append('url', url.trim())
       }
 
       // Campaign materials: multiple files, campaign URL, drive URLs
@@ -716,7 +738,7 @@ export function Ingest() {
                   type="file"
                   multiple
                   className="hidden"
-                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  accept=".pdf,.docx,.doc,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,text/markdown"
                   onChange={(e) => {
                     if (e.target.files?.length) {
                       handleAddGuidelineFiles(e.target.files)

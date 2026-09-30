@@ -132,6 +132,21 @@ async def extract_campaign_intelligence(
         drive_urls = [str(u).strip() for u in raw_drive if str(u).strip()]
         raw_gids = body.get("guideline_ids") or []
         guideline_ids = [str(g).strip() for g in raw_gids if str(g).strip()]
+
+        raw_b64_docs = body.get("guideline_documents") or body.get("files") or body.get("guideline_files_base64") or []
+        if isinstance(raw_b64_docs, list):
+            import base64
+            for item in raw_b64_docs:
+                if isinstance(item, dict) and item.get("data"):
+                    fname = item.get("filename") or "guideline.docx"
+                    raw_b64 = str(item["data"])
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    try:
+                        content_bytes = base64.b64decode(raw_b64)
+                        file_tuples.append((fname, content_bytes))
+                    except Exception as err:
+                        log.warning("Could not decode base64 file %s: %s", fname, err)
     elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
         form = await request.form()
         raw_url = form.get("campaign_url")

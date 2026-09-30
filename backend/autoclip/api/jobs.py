@@ -257,6 +257,23 @@ async def create_autonomous_job(
             bgm_asset_id = overrides.get("bgm_asset_id")
         if not visual_filter and isinstance(overrides, dict):
             visual_filter = overrides.get("visual_filter")
+
+        # Base64-encoded guideline documents uploaded in JSON payload
+        raw_b64_docs = body.get("guideline_documents") or body.get("guideline_files_base64") or []
+        if isinstance(raw_b64_docs, list):
+            import base64
+            for item in raw_b64_docs:
+                if isinstance(item, dict) and item.get("data"):
+                    fname = item.get("filename") or "guideline.docx"
+                    raw_b64 = str(item["data"])
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    try:
+                        content_bytes = base64.b64decode(raw_b64)
+                        mime = item.get("mime_type") or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        guideline_files.append((fname, content_bytes, mime))
+                    except Exception as b64_err:
+                        log.warning("Could not decode base64 guideline document %s: %s", fname, b64_err)
     else:
         form = await request.form()
         raw_url = form.get("url") or form.get("video_url")
@@ -397,9 +414,12 @@ async def create_autonomous_job(
     # 2a. Process uploaded guideline files
     for gfile in guideline_files:
         try:
-            content = await gfile.read()
-            filename = gfile.filename or "guideline.pdf"
-            mime_type = getattr(gfile, "content_type", None) or "application/octet-stream"
+            if isinstance(gfile, tuple):
+                filename, content, mime_type = gfile
+            else:
+                content = await gfile.read()
+                filename = gfile.filename or "guideline.pdf"
+                mime_type = getattr(gfile, "content_type", None) or "application/octet-stream"
 
             docs = normalizer.ingest_files([(filename, content)])
             ingested_docs.extend(docs)
@@ -412,7 +432,12 @@ async def create_autonomous_job(
             raw_text = docs[0].raw_text if docs and docs[0].status == "extracted" else ""
             err = docs[0].error if docs and docs[0].status == "failed" else None
             ext = Path(filename).suffix.lower()
-            source_type = "upload_pdf" if ext == ".pdf" else "upload_docx"
+            if ext == ".pdf":
+                source_type = "upload_pdf"
+            elif ext in (".docx", ".doc"):
+                source_type = "upload_docx"
+            else:
+                source_type = "upload_text"
 
             brief_dict = {}
             if raw_text:

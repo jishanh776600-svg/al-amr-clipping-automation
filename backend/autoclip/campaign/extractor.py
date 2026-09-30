@@ -26,7 +26,7 @@ SUPPORTED_MIME_TYPES = {
     "application/octet-stream",
 }
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
 
 ENGLISH_STOPWORDS: set[str] = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
@@ -113,6 +113,8 @@ def validate_guideline_file(filename: str, content_bytes: bytes, mime_type: str 
                 f"The file '{filename}' has a .docx extension but is not a valid Word document container.",
                 hint="Save the file as a modern Word (.docx) document and try again.",
             )
+    elif ext in (".txt", ".md"):
+        pass
 
     return ext
 
@@ -279,6 +281,8 @@ def extract_guideline_text(filename: str, content_bytes: bytes) -> tuple[str, st
         text = extract_text_from_pdf(content_bytes)
     elif ext == ".docx":
         text = extract_text_from_docx(content_bytes)
+    elif ext in (".txt", ".md"):
+        text = content_bytes.decode("utf-8", errors="replace").strip()
     else:
         raise GuidelineExtractionError(f"Unsupported format: {ext}")
     return _normalize_extracted_text(text), ext
