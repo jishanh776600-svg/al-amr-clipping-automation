@@ -70,6 +70,47 @@ def is_direct_media_url(url: str) -> bool:
     return any(path.endswith(ext) for ext in ACCEPTED_SUFFIXES)
 
 
+def normalize_url(url: str) -> str:
+    """Normalize a URL before ingestion.
+
+    Converts Google Drive share/view links to direct download URLs so that
+    yt-dlp and the HTTP streaming downloader can fetch the file without
+    hitting the Drive preview page.
+
+    Examples::
+
+        >>> normalize_url("https://drive.google.com/file/d/FILE_ID/view?usp=sharing")
+        'https://drive.google.com/uc?export=download&confirm=t&id=FILE_ID'
+        >>> normalize_url("https://drive.google.com/open?id=FILE_ID")
+        'https://drive.google.com/uc?export=download&confirm=t&id=FILE_ID'
+    """
+    import re as _re
+    from urllib.parse import parse_qs, urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    if parsed.netloc not in ("drive.google.com", "docs.google.com"):
+        return url
+
+    # Pattern 1: /file/d/<FILE_ID>/view  or  /file/d/<FILE_ID>/edit
+    match = _re.search(r"/(?:file|document|spreadsheets|presentation)/d/([A-Za-z0-9_-]+)", parsed.path)
+    if match:
+        file_id = match.group(1)
+        return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+
+    # Pattern 2: /open?id=<FILE_ID>  or  /uc?id=<FILE_ID> (already uc but missing export)
+    qs = parse_qs(parsed.query)
+    file_id = (qs.get("id") or [None])[0]
+    if file_id:
+        return f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}"
+
+    return url
+
+
+
 def slugify(text: str, *, max_length: int = 60) -> str:
     """Turn a title into a filesystem- and URL-safe slug."""
     slug = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip().lower()
@@ -175,16 +216,29 @@ def ingest_url(
     """Ingest any media URL — YouTube, streaming sites via yt-dlp, or direct HTTP files."""
     from urllib.parse import urlparse
 
+    # Normalize Drive view/share links → direct download URLs before anything else
+    url = normalize_url(url)
+
     try:
         parsed = urlparse(url)
         if not parsed.scheme or parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise IngestError(f"Invalid URL: {url}", hint="URLs must start with http:// or https://")
+    except IngestError:
+        raise
     except Exception as exc:
         raise IngestError(f"Invalid URL: {url}") from exc
 
     if is_direct_media_url(url):
         log.info("Detected direct media URL: %s", url)
         return ingest_direct_url(url, settings, on_progress=on_progress)
+
+    # Google Drive uc?export=download — use direct HTTP streaming (faster than yt-dlp for Drive)
+    if "drive.google.com/uc" in url and "export=download" in url:
+        log.info("Detected Google Drive direct-download URL; using HTTP streaming: %s", url)
+        try:
+            return ingest_direct_url(url, settings, on_progress=on_progress)
+        except IngestError as exc:
+            log.warning("Direct HTTP download of Drive file failed (%s); falling back to yt-dlp.", exc)
 
     # Try yt-dlp for YouTube and other supported streaming services
     try:
