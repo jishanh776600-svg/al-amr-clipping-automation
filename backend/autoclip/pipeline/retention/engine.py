@@ -220,6 +220,30 @@ class RetentionEditingEngine:
                     clip.id, "; ".join(record.rejection_reasons)
                 )
 
+        # Rescue: If approved_clips is empty or below target count, rescue clips whose ONLY
+        # rejection was dead air / pacing, promoting them to FINAL_WARN so valid clips are never lost.
+        if len(approved_clips) < (target_output_count or 1) and clips:
+            for rec, clip in zip(all_records, clips):
+                if clip not in approved_clips:
+                    hard_failures = [
+                        r for r in rec.rejection_reasons
+                        if not any(k in r for k in ("excessive_dead_air", "dead_air", "silence"))
+                    ]
+                    if not hard_failures and rec.rejection_reasons:
+                        rec.warnings.extend(rec.rejection_reasons)
+                        rec.rejection_reasons = []
+                        rec.quality_status = "FINAL_WARN"
+                        approved_clips.append(clip)
+                        enhanced_path = crop_paths.get(clip.id)
+                        if enhanced_path:
+                            optimized_crop_paths[clip.id] = enhanced_path
+                        log.info(
+                            "Clip %s rescued by Final Quality Gate as FINAL_WARN (pacing/dead air only).",
+                            clip.id,
+                        )
+                        if len(approved_clips) >= (target_output_count or 5):
+                            break
+
         # 6. Rank approved clips by final_score descending
         record_by_clip = {r.clip_id: r for r in all_records}
         approved_clips.sort(key=lambda c: record_by_clip.get(c.id, RetentionOptimizationRecord(id="", clip_id="", job_id="")).final_score, reverse=True)

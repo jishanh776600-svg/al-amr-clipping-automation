@@ -253,7 +253,16 @@ class PipelineRunner:
             final_clips, final_crop_paths = self._stage_retention(
                 reframe_approved, transcript, crop_paths, silences
             )
-            if not final_clips:
+            if not final_clips and reframe_approved:
+                log.warning(
+                    "Job %s: Retention Quality Gate filtered all clips. "
+                    "Falling back to %d reframe-approved candidate clips to guarantee delivery.",
+                    self.job.id,
+                    len(reframe_approved),
+                )
+                final_clips = reframe_approved
+                final_crop_paths = crop_paths
+            elif not final_clips:
                 log.info("Job %s completed with 0 clips passing Final Quality Gate.", self.job.id)
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []

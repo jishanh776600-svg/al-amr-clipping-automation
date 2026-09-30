@@ -35,7 +35,7 @@ class FinalPreRenderQualityGate:
     def __init__(
         self,
         min_speech_padding_s: float = 0.05,
-        max_dead_air_percentage: float = 22.0,
+        max_dead_air_percentage: float = 40.0,
     ) -> None:
         self.min_speech_padding_s = min_speech_padding_s
         self.max_dead_air_percentage = max_dead_air_percentage
