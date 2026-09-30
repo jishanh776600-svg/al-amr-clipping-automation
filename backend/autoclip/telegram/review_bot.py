@@ -7,6 +7,7 @@ and processes inline keyboard approval callbacks to seamlessly trigger Step 25 &
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -70,7 +71,7 @@ def _format_card_content(
 
     status_block = f"{delimiter.strip()}\n{status_header}\n"
     for plat, st in platforms_status.items():
-        status_block += f"\n• *{plat}*: {st}"
+        status_block += f"\n• <b>{plat}</b>: {st}"
 
     max_len = 1020 if has_caption else 4000
     available_base = max_len - len(status_block) - 4
@@ -145,7 +146,7 @@ async def _safe_edit_telegram_message(
     has_caption: bool = False,
     reply_markup: dict[str, Any] | None = None,
 ) -> bool:
-    """Safely edit a Telegram message or caption with Markdown protection and length capping."""
+    """Safely edit a Telegram message or caption with HTML protection and length capping."""
     if not message_id:
         return False
 
@@ -158,7 +159,7 @@ async def _safe_edit_telegram_message(
         "chat_id": chat_id,
         "message_id": message_id,
         field_name: text[:max_len],
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
     }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
@@ -168,7 +169,7 @@ async def _safe_edit_telegram_message(
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return True
-            # Retry without parse_mode if Markdown parsing failed (HTTP 400)
+            # Retry without parse_mode if HTML parsing failed (HTTP 400)
             if resp.status_code == 400:
                 payload_plain = dict(payload)
                 payload_plain.pop("parse_mode", None)
@@ -190,12 +191,12 @@ async def _safe_send_telegram_message(
     reply_to_message_id: int | str | None = None,
     reply_markup: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Send a Telegram message with Markdown formatting and plain text fallback."""
+    """Send a Telegram message with HTML formatting and plain text fallback."""
     url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text[:4096],
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
     if reply_to_message_id:
@@ -385,51 +386,52 @@ async def send_clip_review(
     yt_title = re.sub(r"\b[0-9a-f]{8,}\b", "", yt_title).strip()
     yt_title = re.sub(r"\.{2,}", "", yt_title).strip().rstrip(".!?,;: ")
     yt_title = yt_title.title() if yt_title.islower() else (yt_title or "Key Insight & Lesson")
-    safe_yt_title = _escape_md(yt_title)
+    safe_yt_title = html.escape(yt_title)
 
     yt_desc = yt_data.get("description") or (clip_meta.final_description if clip_meta else "")
     yt_desc_snippet = yt_desc[:80] + ("..." if len(yt_desc) > 80 else "")
-    safe_yt_desc = _escape_md(yt_desc_snippet)
+    safe_yt_desc = html.escape(yt_desc_snippet)
 
     yt_tags_list = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts", "#Founders"])
-    safe_yt_tags = _escape_md(" ".join(yt_tags_list[:4]))
+    safe_yt_tags = html.escape(" ".join(yt_tags_list[:4]))
 
     yt_comp = yt_data.get("compliance_score", 100.0)
     yt_opt = yt_data.get("optimization_score", 95.0)
 
     ig_caption = ig_data.get("caption") or (clip_meta.final_description if clip_meta else "")
     ig_caption_snippet = ig_caption[:80] + ("..." if len(ig_caption) > 80 else "")
-    safe_ig_caption = _escape_md(ig_caption_snippet)
+    safe_ig_caption = html.escape(ig_caption_snippet)
 
     ig_tags_list = ig_data.get("hashtags") or ["#reels", "#founders", "#business"]
-    safe_ig_tags = _escape_md(" ".join(ig_tags_list[:4]))
+    safe_ig_tags = html.escape(" ".join(ig_tags_list[:4]))
 
     ig_mentions_list = ig_data.get("mentions") or ["@black_boxvault"]
-    safe_ig_mentions = _escape_md(" ".join(ig_mentions_list[:2]))
+    safe_ig_mentions = html.escape(" ".join(ig_mentions_list[:2]))
 
     ig_cta = ig_data.get("cta") or "👉 Follow @black_boxvault for founder insights."
-    safe_ig_cta = _escape_md(ig_cta[:50] + ("..." if len(ig_cta) > 50 else ""))
+    safe_ig_cta = html.escape(ig_cta[:50] + ("..." if len(ig_cta) > 50 else ""))
 
     ig_comp = ig_data.get("compliance_score", 100.0)
     ig_opt = ig_data.get("optimization_score", 95.0)
 
-    safe_hook = _escape_md(clip.hook or "N/A")
+    safe_hook = html.escape(clip.hook or "N/A")
 
     caption_lines = [
-        "🎬 *Clip Review Required*",
+        "🎬 <b>Clip Review Required</b>",
         "",
-        f"📌 *Clip ID:* `{clip.id}`",
-        f"⏱ *Duration:* {duration}s  |  *Rank:* #{clip.rank}",
-        f"🎯 *Hook:* {safe_hook}",
-        f"✨ *Quality:* {quality_score} ({quality_status})",
+        f"📌 <b>Clip ID:</b> <code>{html.escape(clip.id)}</code>",
+        f"⏱ <b>Duration:</b> {duration}s  |  <b>Rank:</b> #{clip.rank}",
+        f"🎯 <b>Hook:</b> {safe_hook}",
+        f"✨ <b>Quality:</b> {quality_score} ({quality_status})",
+        f"📋 <b>Campaign Compliance:</b> {compliance_badge}",
         "",
-        "▶️ *YOUTUBE (Future Founders):*",
+        "▶️ <b>YOUTUBE (Future Founders):</b>",
         f"• Title: {safe_yt_title}",
         f"• Description: {safe_yt_desc}",
         f"• Hashtags: {safe_yt_tags}",
         f"• Compliance: {yt_comp:.0f}% | Opt: {yt_opt:.0f}/100",
         "",
-        "📸 *INSTAGRAM (@black_boxvault):*",
+        "📸 <b>INSTAGRAM (@black_boxvault):</b>",
         f"• Caption: {safe_ig_caption}",
         f"• Hashtags: {safe_ig_tags}",
         f"• Mentions: {safe_ig_mentions}",
@@ -437,7 +439,7 @@ async def send_clip_review(
         f"• Compliance: {ig_comp:.0f}% | Opt: {ig_opt:.0f}/100",
     ]
     if drive_link:
-        caption_lines.append(f"\n🔗 [Drive Preview]({drive_link})")
+        caption_lines.append(f'\n🔗 <a href="{html.escape(drive_link)}">Drive Preview</a>')
 
     caption_text = "\n".join(caption_lines)
 
@@ -499,7 +501,7 @@ async def send_clip_review(
                             data = {
                                 "chat_id": chat_id,
                                 "caption": caption_text[:1024],
-                                "parse_mode": "Markdown",
+                                "parse_mode": "HTML",
                                 "reply_markup": json.dumps(reply_markup),
                                 "supports_streaming": "true",
                             }
@@ -512,7 +514,7 @@ async def send_clip_review(
                                 _record_review_sent(job_id, clip_id, chat_id, message_id=msg_id, has_caption=True, telegram_file_id=tg_fid)
                                 return resp_json
                             elif resp.status_code == 400:
-                                # Retry video without markdown parse_mode
+                                # Retry video without html parse_mode
                                 data_plain = dict(data)
                                 data_plain.pop("parse_mode", None)
                                 vf.seek(0)
@@ -542,7 +544,7 @@ async def send_clip_review(
             data = {
                 "chat_id": chat_id,
                 "text": caption_text[:4096],
-                "parse_mode": "Markdown",
+                "parse_mode": "HTML",
                 "disable_web_page_preview": False,
                 "reply_markup": reply_markup,
             }
@@ -1331,45 +1333,45 @@ async def _execute_auto_publish(
                 yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
                 yt_channel = (yt_pub.response_metadata or {}).get("channel_title") or (yt_pub.response_metadata or {}).get("channelTitle") or ""
                 ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
-                yt_line = f"📺 *YouTube Shorts:* [Watch on YouTube]({yt_url})" if yt_url else "📺 *YouTube Shorts:* ✅ Published"
+                yt_line = f'📺 <b>YouTube Shorts:</b> <a href="{html.escape(yt_url)}">Watch on YouTube</a>' if yt_url else "📺 <b>YouTube Shorts:</b> ✅ Published"
                 if yt_channel:
-                    yt_line += f"\n   *Channel:* {yt_channel}"
+                    yt_line += f"\n   <b>Channel:</b> {html.escape(yt_channel)}"
                 followup_lines = [
-                    "🎉 *Clip Successfully Published!*",
+                    "🎉 <b>Clip Successfully Published!</b>",
                     "",
-                    f"🎬 *Clip ID:* `{clip_id}`",
+                    f"🎬 <b>Clip ID:</b> <code>{html.escape(clip_id)}</code>",
                     yt_line,
-                    f"📸 *Instagram Reels:* [Watch on Instagram]({ig_url})" if ig_url else "📸 *Instagram Reels:* ✅ Published",
+                    f'📸 <b>Instagram Reels:</b> <a href="{html.escape(ig_url)}">Watch on Instagram</a>' if ig_url else "📸 <b>Instagram Reels:</b> ✅ Published",
                 ]
             elif yt_ok or ig_ok:
                 followup_lines = [
-                    "⚠️ *Clip Partially Published*",
+                    "⚠️ <b>Clip Partially Published</b>",
                     "",
-                    f"🎬 *Clip ID:* `{clip_id}`",
+                    f"🎬 <b>Clip ID:</b> <code>{html.escape(clip_id)}</code>",
                 ]
                 if yt_ok:
                     yt_url = yt_pub.permalink or (yt_pub.response_metadata or {}).get("url") or ""
                     yt_channel = (yt_pub.response_metadata or {}).get("channel_title") or (yt_pub.response_metadata or {}).get("channelTitle") or ""
-                    yt_line = f"• *YouTube Shorts:* ✅ [Watch on YouTube]({yt_url})" if yt_url else "• *YouTube Shorts:* ✅ Published"
+                    yt_line = f'• <b>YouTube Shorts:</b> ✅ <a href="{html.escape(yt_url)}">Watch on YouTube</a>' if yt_url else "• <b>YouTube Shorts:</b> ✅ Published"
                     if yt_channel:
-                        yt_line += f" (Channel: {yt_channel})"
+                        yt_line += f" (Channel: {html.escape(yt_channel)})"
                     followup_lines.append(yt_line)
                 else:
-                    followup_lines.append(f"• *YouTube Shorts:* {platforms_status['YouTube Shorts']}")
+                    followup_lines.append(f"• <b>YouTube Shorts:</b> {platforms_status['YouTube Shorts']}")
 
                 if ig_ok:
                     ig_url = ig_pub.permalink or (ig_pub.response_metadata or {}).get("permalink") or ""
-                    followup_lines.append(f"• *Instagram Reels:* ✅ [Watch on Instagram]({ig_url})" if ig_url else "• *Instagram Reels:* ✅ Published")
+                    followup_lines.append(f'• <b>Instagram Reels:</b> ✅ <a href="{html.escape(ig_url)}">Watch on Instagram</a>' if ig_url else "• <b>Instagram Reels:</b> ✅ Published")
                 else:
                     ig_err = _sanitize_error(ig_pub.error_message if ig_pub else "Upload failed")
-                    followup_lines.append(f"• *Instagram Reels:* ❌ `{ig_err}`")
+                    followup_lines.append(f"• <b>Instagram Reels:</b> ❌ <code>{html.escape(ig_err)}</code>")
             else:
                 followup_lines = [
-                    "❌ *Clip Publishing Failed*",
+                    "❌ <b>Clip Publishing Failed</b>",
                     "",
-                    f"🎬 *Clip ID:* `{clip_id}`",
-                    f"• *YouTube Shorts:* {platforms_status['YouTube Shorts']}",
-                    f"• *Instagram Reels:* {platforms_status['Instagram Reels']}",
+                    f"🎬 <b>Clip ID:</b> <code>{html.escape(clip_id)}</code>",
+                    f"• <b>YouTube Shorts:</b> {platforms_status['YouTube Shorts']}",
+                    f"• <b>Instagram Reels:</b> {platforms_status['Instagram Reels']}",
                     "",
                     "Please verify platform credentials and media accessibility in Settings.",
                 ]
@@ -1412,14 +1414,14 @@ async def _execute_auto_publish(
                     bot_token=bot_token,
                     chat_id=chat_id,
                     message_id=message_id,
-                    text=f"{original_text}\n\n━━━━━━━━━━━━━━━━━━━━\n❌ *PUBLISHING FAILED*\n\nError: `{sanitized_fatal}`"[:1020 if has_caption else 4000],
+                    text=f"{original_text}\n\n━━━━━━━━━━━━━━━━━━━━\n❌ <b>PUBLISHING FAILED</b>\n\nError: <code>{html.escape(sanitized_fatal)}</code>"[:1020 if has_caption else 4000],
                     has_caption=has_caption,
                     reply_markup={"inline_keyboard": [[{"text": "❌ Publishing Failed", "callback_data": "tg:done"}]]},
                 )
             await _safe_send_telegram_message(
                 bot_token=bot_token,
                 chat_id=chat_id,
-                text=f"❌ *Auto-Publish Error for Clip* `{clip_id}`:\n\n`{sanitized_fatal}`\n\nPlease check server logs.",
+                text=f"❌ <b>Auto-Publish Error for Clip</b> <code>{html.escape(clip_id)}</code>:\n\n<code>{html.escape(sanitized_fatal)}</code>\n\nPlease check server logs.",
                 reply_to_message_id=message_id,
             )
         return {"status": "error", "error": str(fatal_exc), "clip_id": clip_id}
