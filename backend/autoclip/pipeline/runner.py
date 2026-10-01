@@ -234,6 +234,10 @@ class PipelineRunner:
             self.job.settings["caption_style"] = "viral_streamer_kinetic"
             self.job.settings["visual_filter"] = "viral_vibrant"
             self.job.settings["sfx_enabled"] = True
+            if "bgm_enabled" not in self.job.settings:
+                self.job.settings["bgm_enabled"] = True
+            if not self.job.settings.get("bgm_asset_id"):
+                self.job.settings["bgm_asset_id"] = "canonical_upbeat"
 
         campaign_data = self.job.settings.get("campaign")
         if campaign_data:
