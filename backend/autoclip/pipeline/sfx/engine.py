@@ -18,11 +18,15 @@ SFX_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "sfx"
 
 # Semantic keywords for contextual sound cues
 SUCCESS_REGEX = re.compile(
-    r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|dollars?|million|billion|thousand|sales|growth|easy|win|winner|won|golden|gold|champion|hero|goat)$",
+    r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|dollars?|million|billion|thousand|sales|growth|easy|win|winner|won|golden|gold|champion|hero|goat|height)$",
     re.IGNORECASE,
 )
 SHOCK_REGEX = re.compile(
-    r"^(crazy|insane|impossible|shocking|died|dead|killed|shut|danger|banned|worst|fail|failed|failure|lawsuit|destroy|bankrupt|definitely|staring|eyes)$",
+    r"^(crazy|insane|impossible|shocking|died|dead|killed|shut|danger|banned|worst|fail|failed|failure|lawsuit|destroy|bankrupt|definitely|wow|god|omg)$",
+    re.IGNORECASE,
+)
+CONFUSION_REGEX = re.compile(
+    r"^(what|why|who|wait|huh|aayen|ayein|staring|eyes|looking|tired|heavy|kya|hein)$",
     re.IGNORECASE,
 )
 
@@ -35,26 +39,25 @@ class SFXEngine:
         self.use_extracted_ref = use_extracted_ref
 
     def get_asset_path(self, sound_type: str) -> Path | None:
-        candidates = []
-        if self.use_extracted_ref:
-            ref_dir = self.sfx_dir / "extracted_ref"
-            ref_map = {
-                "boom": "ref_vine_boom.wav",
-                "whoosh": "ref_whoosh_cut.wav",
-                "pop": "ref_impact_thud.wav",
-                "riser": "ref_riser_whoosh.wav",
-                "swoosh": "ref_swoosh.wav",
-            }
-            if sound_type in ref_map:
-                candidates.append(ref_dir / ref_map[sound_type])
+        # Prioritize user-provided Desktop sounds and their clean aliases
+        name_map = {
+            "whoosh": ["whoosh.mp3", "Short Transition _2 Sound .mp3", "transition.mp3", "whoosh.wav"],
+            "transition": ["Short Transition _2 Sound .mp3", "whoosh.mp3", "transition.mp3"],
+            "bell": ["bell.mp3", "ding.mp3", "ding.wav"],
+            "ding": ["bell.mp3", "ding.mp3", "ding.wav"],
+            "aayen": ["aayen viral meme.mp3", "aayen.mp3"],
+            "confusion": ["aayen viral meme.mp3", "aayen.mp3"],
+            "wow": ["Copy of No Copyright _ Oh My God Wow Sound Effect(MP3_160K).mp3", "wow.mp3", "boom.mp3"],
+            "boom": ["Copy of No Copyright _ Oh My God Wow Sound Effect(MP3_160K).mp3", "wow.mp3", "boom.wav"],
+            "pop": ["Short Transition _2 Sound .mp3", "whoosh.mp3", "pop.wav"],
+            "riser": ["Short Transition _2 Sound .mp3", "riser.wav"],
+        }
 
-        candidates.extend([
-            self.sfx_dir / f"{sound_type}.wav",
-            self.sfx_dir / f"{sound_type}.mp3",
-        ])
+        candidates = name_map.get(sound_type, [f"{sound_type}.mp3", f"{sound_type}.wav"])
         for c in candidates:
-            if c.is_file():
-                return c
+            p = self.sfx_dir / c
+            if p.is_file():
+                return p
         return None
 
     def plan_sfx_events(
@@ -156,11 +159,21 @@ class SFXEngine:
             elif SHOCK_REGEX.search(clean):
                 events.append(
                     SFXEvent(
-                        sound_type="boom",
+                        sound_type="wow",
                         timestamp_s=w_time,
                         volume=0.90,
-                        reason=f"shock_word({clean})",
-                        asset_path=self.get_asset_path("boom"),
+                        reason=f"shock_wow({clean})",
+                        asset_path=self.get_asset_path("wow"),
+                    )
+                )
+            elif CONFUSION_REGEX.search(clean):
+                events.append(
+                    SFXEvent(
+                        sound_type="aayen",
+                        timestamp_s=w_time,
+                        volume=0.85,
+                        reason=f"confusion_meme({clean})",
+                        asset_path=self.get_asset_path("aayen"),
                     )
                 )
 
