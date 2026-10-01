@@ -68,7 +68,7 @@ class PublishingOrchestrator:
                 id="dest-instagram-main",
                 platform="instagram",
                 display_name="Instagram Reels Main",
-                account_identifier=os.getenv("INSTAGRAM_ACCOUNT_ID", "17841439457167561"),
+                account_identifier=os.getenv("INSTAGRAM_ACCOUNT_ID", "Instagram Account"),
                 enabled=True,
                 priority=15,
                 config_metadata={"share_to_feed": True},
@@ -79,6 +79,23 @@ class PublishingOrchestrator:
             )
             store.create_destination(ig_dest)
             created.append(ig_dest)
+
+        if "tiktok" not in platforms_present:
+            tk_dest = models.DestinationRecord(
+                id="dest-tiktok-main",
+                platform="tiktok",
+                display_name="TikTok Main Account",
+                account_identifier=os.getenv("TIKTOK_ACCOUNT_ID", "Official TikTok Account"),
+                enabled=True,
+                priority=12,
+                config_metadata={"privacy_level": "PUBLIC_TO_EVERYONE"},
+                daily_limit=20,
+                spacing_seconds=1800,
+                created_at=now,
+                updated_at=now,
+            )
+            store.create_destination(tk_dest)
+            created.append(tk_dest)
 
         return existing + created
 

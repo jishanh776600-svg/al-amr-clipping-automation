@@ -451,6 +451,17 @@ async def send_clip_review(
         f"• CTA: {safe_ig_cta}",
         f"• Compliance: {ig_comp:.0f}% | Opt: {ig_opt:.0f}/100",
     ]
+
+    tk_adapter = service.get_adapter("tiktok")
+    if tk_adapter and tk_adapter.is_configured():
+        tk_user = os.getenv("TIKTOK_ACCOUNT_ID") or "TikTok"
+        caption_lines.extend([
+            "",
+            f"🎵 <b>TIKTOK (@{html.escape(tk_user.lstrip('@'))}):</b>",
+            f"• Caption: {safe_ig_caption}",
+            f"• Hashtags: {safe_ig_tags}",
+        ])
+
     if drive_link:
         caption_lines.append(f'\n🔗 <a href="{html.escape(drive_link)}">Drive Preview</a>')
 
@@ -1031,13 +1042,19 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
             store.update_clip_approval(approval)
 
         # Immediate Review Card Update: Show "Publishing started..." and disable interactive buttons
+        tk_adapter = service.get_adapter("tiktok")
+        tk_configured = bool(tk_adapter and tk_adapter.is_configured())
+        init_platforms = {
+            "YouTube Shorts": "⏳ Queued",
+            "Instagram Reels": "⏳ Queued",
+        }
+        if tk_configured:
+            init_platforms["TikTok"] = "⏳ Queued"
+
         initial_status_text = _format_card_content(
             original_text=original_text,
             status_header="⏳ *APPROVED — Publishing started...*",
-            platforms_status={
-                "YouTube Shorts": "⏳ Queued",
-                "Instagram Reels": "⏳ Queued",
-            },
+            platforms_status=init_platforms,
             has_caption=has_caption,
         )
         await _safe_edit_telegram_message(
@@ -1332,18 +1349,86 @@ async def _execute_auto_publish(
             platforms_status["Instagram Reels"] = f"❌ Failed ({sanitized})"
 
         # -------------------------------------------------------------
-        # 3. Compute Final Outcomes & Status
+        # 3. Publish to TikTok (if configured)
+        # -------------------------------------------------------------
+        tk_adapter = service.get_adapter("tiktok")
+        tk_configured = bool(tk_adapter and tk_adapter.is_configured())
+        if tk_configured:
+            platforms_status["TikTok"] = "⏳ Uploading..."
+            if bot_token and chat_id and message_id:
+                curr_text = _format_card_content(
+                    original_text=original_text,
+                    status_header="⏳ *APPROVED — Publishing in progress...*",
+                    platforms_status=platforms_status,
+                    has_caption=has_caption,
+                )
+                await _safe_edit_telegram_message(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=curr_text,
+                    has_caption=has_caption,
+                    reply_markup={"inline_keyboard": [[{"text": "⏳ Uploading to TikTok...", "callback_data": "tg:busy"}]]},
+                )
+
+            try:
+                tk_rec = await service.publish_clip(
+                    job_id=job_id,
+                    clip_id=clip_id,
+                    platform="tiktok",
+                    destination="dest-tiktok-main",
+                    dry_run=False,
+                )
+            except Exception as exc:
+                log.exception("Exception during TikTok publication for clip %s: %s", clip_id, exc)
+                recs = store.list_publications_for_clip(clip_id)
+                tk_candidates = [r for r in recs if r.platform.lower() == "tiktok"]
+                if tk_candidates:
+                    tk_rec = tk_candidates[0]
+                else:
+                    tk_rec = models.PublicationRecord(
+                        id=models.new_id(),
+                        job_id=job_id,
+                        clip_id=clip_id,
+                        platform="tiktok",
+                        destination_id="dest-tiktok-main",
+                        status="FAILED_PERMANENT",
+                        error_code="execution_error",
+                        error_message=str(exc),
+                    )
+            results["tiktok"] = tk_rec
+
+            if tk_rec and tk_rec.status == "PUBLISHED":
+                platforms_status["TikTok"] = "✅ Published"
+            elif tk_rec and (tk_rec.error_code == "processing_incomplete" or tk_rec.status in ("PROCESSING", "UPLOAD_ACCEPTED")):
+                platforms_status["TikTok"] = "⏳ Upload accepted — still processing"
+            elif tk_rec and tk_rec.error_code == "invalid_media":
+                platforms_status["TikTok"] = "❌ Media file corrupted or inaccessible"
+            else:
+                err = (tk_rec.error_message if tk_rec else "Upload failed") or "Upload failed"
+                sanitized = _sanitize_error(err)
+                if len(sanitized) > 85:
+                    sanitized = sanitized[:82] + "..."
+                platforms_status["TikTok"] = f"❌ Failed ({sanitized})"
+
+        # -------------------------------------------------------------
+        # 4. Compute Final Outcomes & Status
         # -------------------------------------------------------------
         yt_pub = results.get("youtube")
         ig_pub = results.get("instagram")
+        tk_pub = results.get("tiktok")
         yt_ok = bool(yt_pub and yt_pub.status == "PUBLISHED")
         ig_ok = bool(ig_pub and ig_pub.status == "PUBLISHED")
+        tk_ok = bool(tk_pub and tk_pub.status == "PUBLISHED")
 
-        if yt_ok and ig_ok:
+        all_ok = yt_ok and ig_ok and (tk_ok if tk_configured else True)
+        any_ok = yt_ok or ig_ok or (tk_ok if tk_configured else False)
+
+        if all_ok:
             final_badge = "✅ *CLIP PUBLISHED*"
             button_label = "✅ Published"
             overall_status = "PUBLISHED"
-        elif yt_ok or ig_ok:
+        elif any_ok:
             final_badge = "⚠️ *PARTIALLY PUBLISHED*"
             button_label = "⚠️ Partially Published"
             overall_status = "PARTIALLY_PUBLISHED"

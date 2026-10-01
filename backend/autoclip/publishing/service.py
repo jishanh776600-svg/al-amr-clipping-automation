@@ -16,6 +16,7 @@ from ..storage.drive import GoogleDriveStorage
 from .base import BasePublisher, ErrorCode, PublicationResult, PublishingMetadata, PublishingResult, is_error_retryable
 from .instagram import InstagramPublisher
 from .telegram import TelegramPublisher
+from .tiktok import TikTokPublisher
 from .youtube import YouTubePublisher
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class PublishingService:
             "telegram": TelegramPublisher(),
             "youtube": YouTubePublisher(),
             "instagram": InstagramPublisher(),
+            "tiktok": TikTokPublisher(),
         }
 
     def get_adapter(
@@ -80,6 +82,16 @@ class PublishingService:
             chat_id = cfg.get("chat_id") or dest.account_identifier or os.getenv("TELEGRAM_CHAT_ID")
             if bot_token and chat_id:
                 return TelegramPublisher(bot_token=bot_token, chat_id=chat_id)
+
+        # Multi-Account Resolution: TikTok
+        elif norm_platform == "tiktok":
+            tok_env = cfg.get("access_token_env")
+            access_token = (os.getenv(tok_env) if tok_env else None) or os.getenv(f"TIKTOK_ACCESS_TOKEN_{clean_id}")
+            key_env = cfg.get("client_key_env")
+            client_key = (os.getenv(key_env) if key_env else None) or os.getenv(f"TIKTOK_CLIENT_KEY_{clean_id}")
+            sec_env = cfg.get("client_secret_env")
+            client_secret = (os.getenv(sec_env) if sec_env else None) or os.getenv(f"TIKTOK_CLIENT_SECRET_{clean_id}")
+            return TikTokPublisher(access_token=access_token, client_key=client_key, client_secret=client_secret)
 
         return self.adapters.get(norm_platform)
 

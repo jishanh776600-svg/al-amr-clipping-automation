@@ -641,7 +641,7 @@ class PublishingRecordOut(BaseModel):
 
 
 class PublishRequestIn(BaseModel):
-    platforms: list[Literal["telegram", "youtube", "instagram"]] = Field(
+    platforms: list[Literal["telegram", "youtube", "instagram", "tiktok"]] = Field(
         default_factory=lambda: ["telegram"]
     )
     title: str | None = None
@@ -1343,7 +1343,7 @@ class PublishingTelemetryOut(BaseModel):
 
 
 class DestinationIn(BaseModel):
-    platform: Literal["youtube", "instagram", "telegram"]
+    platform: Literal["youtube", "instagram", "telegram", "tiktok"]
     display_name: str
     account_identifier: str = ""
     enabled: bool = True

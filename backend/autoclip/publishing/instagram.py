@@ -486,3 +486,45 @@ async def validate_instagram_credentials(
             "account_id": acc,
         }
 
+
+async def discover_instagram_accounts(access_token: str | None = None) -> list[dict[str, Any]]:
+    """Query Meta Graph API to discover all Instagram Business/Creator accounts accessible with this token.
+
+    Queries /me/accounts to find all Facebook Pages and their connected Instagram Business Accounts.
+    """
+    tok = access_token
+    if not tok:
+        pub = InstagramPublisher()
+        tok = pub.access_token
+
+    if not tok:
+        return []
+
+    discovered: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{GRAPH_API_BASE}/me/accounts",
+                params={
+                    "fields": "id,name,instagram_business_account{id,username,name,profile_picture_url}",
+                    "access_token": tok.strip(),
+                },
+            )
+            if resp.status_code == 200:
+                pages = resp.json().get("data", [])
+                for page in pages:
+                    ig_acc = page.get("instagram_business_account")
+                    if ig_acc and ig_acc.get("id"):
+                        discovered.append({
+                            "account_id": ig_acc["id"],
+                            "username": ig_acc.get("username", ""),
+                            "name": ig_acc.get("name", ""),
+                            "profile_picture_url": ig_acc.get("profile_picture_url"),
+                            "page_id": page.get("id"),
+                            "page_name": page.get("name"),
+                        })
+    except Exception as e:
+        log.warning("discover_instagram_accounts failed: %s", e)
+    return discovered
+
+

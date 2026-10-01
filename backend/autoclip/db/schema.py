@@ -686,7 +686,7 @@ def _migration_v20(conn: sqlite3.Connection) -> None:
 _V21 = """
 CREATE TABLE publishing_destinations (
     id                 TEXT PRIMARY KEY,
-    platform           TEXT NOT NULL CHECK (platform IN ('youtube', 'instagram', 'telegram')),
+    platform           TEXT NOT NULL CHECK (platform IN ('youtube', 'instagram', 'telegram', 'tiktok')),
     display_name       TEXT NOT NULL,
     account_identifier TEXT NOT NULL DEFAULT '',
     enabled            INTEGER NOT NULL DEFAULT 1,
@@ -801,6 +801,31 @@ def _migration_v23(conn: sqlite3.Connection) -> None:
     conn.executescript(_V23)
 
 
+_V24 = """
+CREATE TABLE IF NOT EXISTS publishing_destinations_v24 (
+    id                 TEXT PRIMARY KEY,
+    platform           TEXT NOT NULL CHECK (platform IN ('youtube', 'instagram', 'telegram', 'tiktok')),
+    display_name       TEXT NOT NULL,
+    account_identifier TEXT NOT NULL DEFAULT '',
+    enabled            INTEGER NOT NULL DEFAULT 1,
+    priority           INTEGER NOT NULL DEFAULT 0,
+    config_metadata    TEXT NOT NULL DEFAULT '{}',
+    daily_limit        INTEGER NOT NULL DEFAULT 10,
+    spacing_seconds    INTEGER NOT NULL DEFAULT 3600,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+INSERT OR IGNORE INTO publishing_destinations_v24 SELECT * FROM publishing_destinations;
+DROP TABLE publishing_destinations;
+ALTER TABLE publishing_destinations_v24 RENAME TO publishing_destinations;
+CREATE INDEX IF NOT EXISTS idx_destinations_platform ON publishing_destinations(platform, enabled);
+"""
+
+
+def _migration_v24(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V24)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -827,6 +852,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v21,
     _migration_v22,
     _migration_v23,
+    _migration_v24,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

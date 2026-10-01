@@ -52,6 +52,9 @@ YOUTUBE_REFRESH_TOKEN_KEY = "youtube_refresh_token"
 AL_AMR_YOUTUBE_CHANNEL_ID_KEY = "al_amr_youtube_channel_id"
 INSTAGRAM_ACCESS_TOKEN_KEY = "instagram_access_token"
 INSTAGRAM_ACCOUNT_ID_KEY = "instagram_account_id"
+TIKTOK_ACCESS_TOKEN_KEY = "tiktok_access_token"
+TIKTOK_CLIENT_KEY = "tiktok_client_key"
+TIKTOK_CLIENT_SECRET_KEY = "tiktok_client_secret"
 
 #: Google Drive persistent storage secrets
 GOOGLE_DRIVE_CLIENT_ID_KEY = "google_drive_client_id"
@@ -75,6 +78,9 @@ PUBLISHING_SECRET_KEYS: tuple[str, ...] = (
     AL_AMR_YOUTUBE_CHANNEL_ID_KEY,
     INSTAGRAM_ACCESS_TOKEN_KEY,
     INSTAGRAM_ACCOUNT_ID_KEY,
+    TIKTOK_ACCESS_TOKEN_KEY,
+    TIKTOK_CLIENT_KEY,
+    TIKTOK_CLIENT_SECRET_KEY,
 )
 
 
@@ -110,6 +116,12 @@ def canonical_secret_key(key: str) -> str:
         return INSTAGRAM_ACCESS_TOKEN_KEY
     if k in ("instagram_account_id", "meta_account_id", "ig_account_id", "instagram_account"):
         return INSTAGRAM_ACCOUNT_ID_KEY
+    if k in ("tiktok_access_token", "tiktok_token", "tt_access_token", "tt_token"):
+        return TIKTOK_ACCESS_TOKEN_KEY
+    if k in ("tiktok_client_key", "tiktok_app_id", "tt_client_key", "tiktok_key"):
+        return TIKTOK_CLIENT_KEY
+    if k in ("tiktok_client_secret", "tiktok_app_secret", "tt_client_secret", "tiktok_secret"):
+        return TIKTOK_CLIENT_SECRET_KEY
     if k in ("google_drive_client_id", "gdrive_client_id", "drive_client_id"):
         return GOOGLE_DRIVE_CLIENT_ID_KEY
     if k in ("google_drive_client_secret", "gdrive_client_secret", "drive_client_secret"):

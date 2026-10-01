@@ -202,7 +202,48 @@ async def get_publishing_platforms() -> list[PublishingPlatformInfo]:
         error=ig_err,
     )
 
-    return [tg_info, yt_info, ig_info]
+    # 4. TikTok
+    from ..publishing.tiktok import TikTokPublisher, validate_tiktok_credentials
+    tk_pub = TikTokPublisher()
+    tk_configured = tk_pub.is_configured()
+    tk_auth = False
+    tk_name = None
+    tk_ident = None
+    tk_err = None
+    tk_details = "Missing TIKTOK_ACCESS_TOKEN"
+
+    if tk_configured:
+        try:
+            tk_val = await asyncio.wait_for(
+                validate_tiktok_credentials(tk_pub.access_token),
+                timeout=5.0,
+            )
+            if tk_val.get("valid"):
+                tk_auth = True
+                tk_name = tk_val.get("display_name")
+                tk_ident = tk_val.get("username")
+                tk_details = f"Connected: {tk_name}"
+            else:
+                tk_err = tk_val.get("error")
+                tk_details = f"Configured (Auth failed: {tk_err})"
+        except Exception as exc:
+            tk_auth = False
+            tk_err = str(exc)
+            tk_details = "Configured (Validation timed out or unreachable)"
+
+    tk_info = PublishingPlatformInfo(
+        platform="tiktok",
+        available=True,
+        configured=tk_configured,
+        authenticated=tk_auth,
+        account_identifier=tk_ident,
+        account_name=tk_name,
+        last_validated_at=now_iso if tk_configured else None,
+        details=tk_details,
+        error=tk_err,
+    )
+
+    return [tg_info, yt_info, ig_info, tk_info]
 
 
 @router.get("/publishing/youtube/auth-url", response_model=YouTubeAuthUrlResponse)
@@ -308,6 +349,32 @@ async def validate_instagram() -> PlatformValidationResponse:
         configured=res.get("configured", False),
         account_name=res.get("account_name"),
         details=res.get("account_name") or res.get("error") or "",
+        error=res.get("error"),
+    )
+
+
+@router.post("/publishing/instagram/discover")
+async def discover_instagram_accounts_endpoint(
+    access_token: str | None = Query(default=None),
+) -> list[dict[str, Any]]:
+    """Discover all Instagram Business Accounts linked to the user's Facebook Pages."""
+    from ..publishing.instagram import discover_instagram_accounts
+
+    return await discover_instagram_accounts(access_token)
+
+
+@router.post("/publishing/tiktok/validate", response_model=PlatformValidationResponse)
+async def validate_tiktok() -> PlatformValidationResponse:
+    """Validate current TikTok credentials from vault or environment."""
+    from ..publishing.tiktok import validate_tiktok_credentials
+
+    res = await validate_tiktok_credentials()
+    return PlatformValidationResponse(
+        platform="tiktok",
+        valid=res.get("valid", False),
+        configured=res.get("configured", False),
+        account_name=res.get("display_name") or res.get("username"),
+        details=res.get("display_name") or res.get("error") or "",
         error=res.get("error"),
     )
 
