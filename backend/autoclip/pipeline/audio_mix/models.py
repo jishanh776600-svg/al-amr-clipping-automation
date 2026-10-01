@@ -23,6 +23,7 @@ class DuckingConfig:
     true_peak_limit: float = -1.5
     lra: float = 11.0
     limiter_limit: float = 0.95
+    bgm_start_offset_s: float = 10.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +40,7 @@ class DuckingConfig:
             "true_peak_limit": self.true_peak_limit,
             "lra": self.lra,
             "limiter_limit": self.limiter_limit,
+            "bgm_start_offset_s": self.bgm_start_offset_s,
         }
 
 

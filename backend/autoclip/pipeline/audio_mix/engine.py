@@ -178,8 +178,15 @@ class BGMMixingEngine:
         if bgm_duration_s <= 0.0:
             bgm_duration_s = self.probe_duration(bgm_path)
 
+        # Determine BGM offset (skip initial silent intro so energetic music plays right from video 0s)
+        bgm_offset = 0.0
+        if bgm_duration_s > (self.config.bgm_start_offset_s + 5.0):
+            bgm_offset = self.config.bgm_start_offset_s
+
+        effective_bgm_dur = max(0.0, bgm_duration_s - bgm_offset)
+
         # Determine loop vs trim
-        if duration_s > (bgm_duration_s + 0.5):
+        if duration_s > (effective_bgm_dur + 0.5):
             loop_trim_decision = "loop"
         else:
             loop_trim_decision = "trim"
@@ -189,7 +196,7 @@ class BGMMixingEngine:
 
         # Build FFmpeg command with sidechain compression ducking
         # Input 0: Speech input (sliced to clip window with safe margin)
-        # Input 1: BGM input (stream-looped if clip > bgm)
+        # Input 1: BGM input (stream-looped if clip > bgm, seeking past initial silent intro)
         cmd = ["ffmpeg", "-y"]
 
         # Speech input
@@ -199,11 +206,11 @@ class BGMMixingEngine:
             "-i", str(speech_input_path),
         ])
 
-        # BGM input
+        # BGM input (sampled after 10s silent intro)
         if loop_trim_decision == "loop":
-            cmd.extend(["-stream_loop", "-1", "-i", str(bgm_path)])
+            cmd.extend(["-ss", f"{bgm_offset:.3f}", "-stream_loop", "-1", "-i", str(bgm_path)])
         else:
-            cmd.extend(["-i", str(bgm_path)])
+            cmd.extend(["-ss", f"{bgm_offset:.3f}", "-i", str(bgm_path)])
 
         if sfx_track_path and sfx_track_path.is_file():
             cmd.extend(["-i", str(sfx_track_path)])
