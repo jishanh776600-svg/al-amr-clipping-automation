@@ -92,6 +92,7 @@ class CaptionStyle:
     outline_width: float = 2.0
     shadow: float = 1.0
     bold: bool = False
+    italic: bool = False
     all_caps: bool = False
     margin_v_ratio: float = 0.18
     max_words: int = DEFAULT_MAX_WORDS
@@ -203,26 +204,27 @@ KYLE_KIRSHNER_CORE = CaptionStyle(
 VIRAL_STREAMER_KINETIC = CaptionStyle(
     key="viral_streamer_kinetic",
     label="Viral Streamer Kinetic",
-    description="Viral YouTube Shorts & TikTok streamer style: Anton all-caps, 1-2 word kinetic pop, neon yellow active highlight, thick 4.5px stroke, and punchy scale animation.",
+    description="Viral YouTube Shorts & TikTok streamer style: Anton italic all-caps, 1-2 word kinetic pop, neon yellow active highlight, thick 4.5px stroke, and punchy scale animation.",
     font="Anton",
     font_file="Anton-Regular.ttf",
-    size_ratio=0.060,
+    size_ratio=0.062,
     primary="#FFFFFF",
-    accent="#FFE600",
+    accent="#FFE500",
     outline="#000000",
     outline_width=4.5,
-    shadow=2.0,
+    shadow=2.5,
     bold=True,
+    italic=True,
     all_caps=True,
-    margin_v_ratio=0.52,
+    margin_v_ratio=0.26,
     max_words=2,
     animation="viral_pop",
     scale_percent=120,
-    hook_accent="#FFE600",
+    hook_accent="#FFE500",
     hook_scale=122,
-    climax_accent="#00FF66",
+    climax_accent="#FFE500",
     climax_scale=124,
-    cta_accent="#00FF66",
+    cta_accent="#FFE500",
     cta_scale=120,
 )
 
@@ -232,21 +234,22 @@ VIRAL_NEON_GREEN = CaptionStyle(
     description="High-energy stream highlight style with vibrant neon green active word highlight, Anton all-caps, and 1-2 word bursts.",
     font="Anton",
     font_file="Anton-Regular.ttf",
-    size_ratio=0.060,
+    size_ratio=0.062,
     primary="#FFFFFF",
     accent="#00FF66",
     outline="#000000",
     outline_width=4.5,
-    shadow=2.0,
+    shadow=2.5,
     bold=True,
+    italic=True,
     all_caps=True,
-    margin_v_ratio=0.52,
+    margin_v_ratio=0.26,
     max_words=2,
     animation="viral_pop",
     scale_percent=120,
     hook_accent="#00FF66",
     hook_scale=122,
-    climax_accent="#FFE600",
+    climax_accent="#FFE500",
     climax_scale=124,
     cta_accent="#00FF66",
     cta_scale=120,
@@ -260,21 +263,22 @@ VIRAL_ONE_WORD = CaptionStyle(
     font_file="Anton-Regular.ttf",
     size_ratio=0.064,
     primary="#FFFFFF",
-    accent="#FFE600",
+    accent="#FFE500",
     outline="#000000",
     outline_width=5.0,
-    shadow=2.0,
+    shadow=2.5,
     bold=True,
+    italic=True,
     all_caps=True,
-    margin_v_ratio=0.52,
+    margin_v_ratio=0.26,
     max_words=1,
     animation="viral_pop",
     scale_percent=122,
-    hook_accent="#FFE600",
+    hook_accent="#FFE500",
     hook_scale=125,
-    climax_accent="#00FF66",
+    climax_accent="#FFE500",
     climax_scale=125,
-    cta_accent="#00FF66",
+    cta_accent="#FFE500",
     cta_scale=120,
 )
 
@@ -1035,6 +1039,7 @@ def _viral_pop_events(
     while surrounding words in the group stay crisp high-contrast white.
     """
     events: list[pysubs2.SSAEvent] = []
+    italic_tag = r"\i1" if style.italic else ""
     for active, word in enumerate(group.words):
         w_time = word.start
         accent = style.accent or "#FFE600"
@@ -1057,9 +1062,9 @@ def _viral_pop_events(
         for index, other in enumerate(group.words):
             text = _text_of(other, style)
             if index == active:
-                rendered.append(f"{{{accent_tag}{scale_tag}}}{text}{{\\r}}")
+                rendered.append(f"{{{italic_tag}{accent_tag}{scale_tag}}}{text}{{\\r}}")
             else:
-                rendered.append(f"{{\\c{ass_colour_override(style.primary)}}}{text}{{\\r}}")
+                rendered.append(f"{{{italic_tag}\\c{ass_colour_override(style.primary)}}}{text}{{\\r}}")
 
         end = word.end if active + 1 < len(group.words) else group.end
         next_start = group.words[active + 1].start if active + 1 < len(group.words) else end
@@ -1121,6 +1126,7 @@ def _build_ass_style(
     ass_style.outlinecolor = hex_to_ass(style.outline)
     ass_style.backcolor = hex_to_ass(style.box_colour, alpha=style.box_alpha)
     ass_style.bold = style.bold
+    ass_style.italic = style.italic
     ass_style.outline = style.outline_width * scale
     ass_style.shadow = style.shadow * scale
     ass_style.borderstyle = 3 if style.boxed else 1
