@@ -1111,7 +1111,12 @@ class PipelineRunner:
                     f"BGM audio dependency failed: asset '{asset_name}' ({bgm_asset_id}) was not found on disk."
                 )
 
-        engine = BGMMixingEngine()
+        if is_viral:
+            from .audio_mix.models import DuckingConfig
+            engine_cfg = DuckingConfig(duck_attenuation_db=9.0, bgm_weight=0.55)
+            engine = BGMMixingEngine(config=engine_cfg)
+        else:
+            engine = BGMMixingEngine()
         audio_paths: dict[str, Path] = {}
         mix_records: list[BGMMixRecord] = []
         total = len(clips)
