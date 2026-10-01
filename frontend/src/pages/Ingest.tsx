@@ -41,13 +41,22 @@ export function Ingest() {
   // Destinations & Archival
   const [publishDestinations, setPublishDestinations] = useState<string[]>(['telegram', 'drive'])
 
+  // Master Editing Preset: 'all_in_one_viral' (1-click bundle) vs 'custom' (manual)
+  const [editingPreset, setEditingPreset] = useState<'all_in_one_viral' | 'custom'>(() => {
+    try {
+      return (localStorage.getItem('alamr_editing_preset') as any) || 'all_in_one_viral'
+    } catch {
+      return 'all_in_one_viral'
+    }
+  })
+
   // Caption / Subtitle Style Selection (25 Options)
   const [captionStylesList, setCaptionStylesList] = useState<CaptionStyleItem[]>([])
   const [captionStyle, setCaptionStyle] = useState<string>(() => {
     try {
-      return localStorage.getItem('alamr_caption_style') || 'classic_professional'
+      return localStorage.getItem('alamr_caption_style') || 'all_in_one_viral'
     } catch {
-      return 'classic_professional'
+      return 'all_in_one_viral'
     }
   })
 
@@ -55,9 +64,9 @@ export function Ingest() {
   const [visualFiltersList, setVisualFiltersList] = useState<VisualFilter[]>([])
   const [visualFilter, setVisualFilter] = useState<string>(() => {
     try {
-      return localStorage.getItem('alamr_visual_filter') || 'original'
+      return localStorage.getItem('alamr_visual_filter') || 'viral_vibrant'
     } catch {
-      return 'original'
+      return 'viral_vibrant'
     }
   })
 
@@ -65,9 +74,9 @@ export function Ingest() {
   const [bgmAssets, setBgmAssets] = useState<BGMAsset[]>([])
   const [selectedBgmId, setSelectedBgmId] = useState<string>(() => {
     try {
-      return localStorage.getItem('alamr_selected_bgm_id') || ''
+      return localStorage.getItem('alamr_selected_bgm_id') || 'death_of_blue_bird'
     } catch {
-      return ''
+      return 'death_of_blue_bird'
     }
   })
 
@@ -93,6 +102,18 @@ export function Ingest() {
       localStorage.setItem('alamr_selected_bgm_id', newBgmId)
     } catch {}
     api.putSettings({ export: { bgm_asset_id: newBgmId } as any }).catch(() => undefined)
+  }
+
+  const handleSelectEditingPreset = (preset: 'all_in_one_viral' | 'custom') => {
+    setEditingPreset(preset)
+    try {
+      localStorage.setItem('alamr_editing_preset', preset)
+    } catch {}
+    if (preset === 'all_in_one_viral') {
+      updateCaptionStyle('all_in_one_viral')
+      updateSelectedBgmId('death_of_blue_bird')
+      updateVisualFilter('viral_vibrant')
+    }
   }
   const [bgmVaultOpen, setBgmVaultOpen] = useState(false)
   const [bgmUploading, setBgmUploading] = useState(false)
@@ -401,8 +422,15 @@ export function Ingest() {
           destinations: publishDestinations,
           caption_style: captionStyle,
           visual_filter: visualFilter,
-          bgm_asset_id: effectiveBgmId || null,
-          overrides: jobOverrides,
+          bgm_asset_id: effectiveBgmId || (editingPreset === 'all_in_one_viral' ? 'death_of_blue_bird' : null),
+          editing_preset: editingPreset,
+          overrides: {
+            ...jobOverrides,
+            editing_preset: editingPreset,
+            caption_style: captionStyle,
+            visual_filter: visualFilter,
+            bgm_asset_id: effectiveBgmId || (editingPreset === 'all_in_one_viral' ? 'death_of_blue_bird' : null),
+          },
         }
         const job = await api.createAutonomousJobJson(payload)
         navigate(`/jobs/${job.id}`)
@@ -426,8 +454,12 @@ export function Ingest() {
       form.append('visual_filter', visualFilter)
       jobOverrides.visual_filter = visualFilter
 
-      form.append('bgm_asset_id', effectiveBgmId)
-      jobOverrides.bgm_asset_id = effectiveBgmId || null
+      const activeBgm = effectiveBgmId || (editingPreset === 'all_in_one_viral' ? 'death_of_blue_bird' : '')
+      form.append('bgm_asset_id', activeBgm)
+      jobOverrides.bgm_asset_id = activeBgm || null
+
+      form.append('editing_preset', editingPreset)
+      jobOverrides.editing_preset = editingPreset
 
       form.append('overrides', JSON.stringify(jobOverrides))
 
@@ -494,6 +526,95 @@ export function Ingest() {
           <ErrorNote error={error} onDismiss={() => setError(null)} />
         </div>
       )}
+
+      {/* MASTER PRODUCTION PRESET SELECTOR */}
+      <div className="mt-8 rounded-xl border-2 border-sodium-500/50 bg-gradient-to-r from-sodium-500/10 via-ink-900/90 to-ink-950 p-5 shadow-xl relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🔥</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold uppercase tracking-wider text-sodium-300 font-display">
+                  PRODUCTION PRESET · ALL IN ONE VIRAL
+                </span>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-sodium-500/20 text-sodium-300 border border-sodium-500/30 font-semibold">
+                  1-Click Master Mode
+                </span>
+              </div>
+              <p className="text-xs text-ink-300 mt-0.5">
+                Deploy end-to-end viral clipping with one click, or switch to manual granular control.
+              </p>
+            </div>
+          </div>
+
+          {/* Toggle Buttons */}
+          <div className="flex items-center gap-2 bg-ink-950/90 p-1.5 rounded-lg border border-ink-700">
+            <button
+              type="button"
+              onClick={() => handleSelectEditingPreset('all_in_one_viral')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                editingPreset === 'all_in_one_viral'
+                  ? 'bg-sodium-500 text-ink-950 shadow-md font-bold'
+                  : 'text-ink-400 hover:text-ink-200'
+              }`}
+            >
+              <span>🔥 All In One Viral</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectEditingPreset('custom')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                editingPreset === 'custom'
+                  ? 'bg-ink-800 text-ink-100 border border-ink-600'
+                  : 'text-ink-400 hover:text-ink-200'
+              }`}
+            >
+              <span>⚙️ Custom / Granular</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Selected Preset Details Card */}
+        {editingPreset === 'all_in_one_viral' ? (
+          <div className="rounded-lg bg-ink-900/90 border border-sodium-500/40 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-sodium-400 uppercase tracking-wide flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-sodium-400 animate-ping"></span>
+                ACTIVE MASTER BUNDLE: ALL IN ONE VIRAL
+              </span>
+              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                Auto-Configured
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div className="p-3 rounded-lg bg-ink-950/80 border border-ink-800">
+                <span className="text-[10px] text-ink-400 uppercase block font-mono font-medium">Subtitles</span>
+                <span className="font-bold text-ink-100 mt-1 block">Anton Italic Pop</span>
+                <span className="text-[11px] text-yellow-400 block font-medium">Neon Yellow #FFE500 (Bottom)</span>
+              </div>
+              <div className="p-3 rounded-lg bg-ink-950/80 border border-ink-800">
+                <span className="text-[10px] text-ink-400 uppercase block font-mono font-medium">Soundtrack</span>
+                <span className="font-bold text-ink-100 mt-1 block truncate" title="Death of Blue Bird">Death of Blue Bird</span>
+                <span className="text-[11px] text-sodium-400 block font-medium">10s Offset + Dynamic Ducking</span>
+              </div>
+              <div className="p-3 rounded-lg bg-ink-950/80 border border-ink-800">
+                <span className="text-[10px] text-ink-400 uppercase block font-mono font-medium">Visual Grading</span>
+                <span className="font-bold text-ink-100 mt-1 block">Viral Vibrant</span>
+                <span className="text-[11px] text-ink-300 block font-medium">+28% Contrast / Saturation</span>
+              </div>
+              <div className="p-3 rounded-lg bg-ink-950/80 border border-ink-800">
+                <span className="text-[10px] text-ink-400 uppercase block font-mono font-medium">Audio FX</span>
+                <span className="font-bold text-ink-100 mt-1 block">Clean SFX</span>
+                <span className="text-[11px] text-emerald-400 block font-medium">Pop & Transition Bells</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg bg-ink-900/60 border border-ink-800 p-3 text-xs text-ink-400">
+            Manual mode active. Customize your subtitle typography, BGM track, and export settings individually in the sections below.
+          </div>
+        )}
+      </div>
 
       {/* Main Dual-Input Section */}
       <div className="mt-10 grid gap-8 md:grid-cols-2">
@@ -1262,7 +1383,47 @@ export function Ingest() {
           </label>
 
           {/* Enabled BGM Assets */}
-          {bgmAssets
+          {(bgmAssets.length > 0 ? bgmAssets : [
+            {
+              id: 'death_of_blue_bird',
+              name: 'Death of Blue Bird',
+              genre: 'viral_cinematic',
+              mood: 'intense',
+              tags: ['viral', 'death_of_blue_bird', 'intense', 'cinematic'],
+              mime_type: 'audio/wav',
+              duration_s: 60.88,
+              file_size_bytes: 10739790,
+              enabled: true,
+              created_at: '',
+              updated_at: '',
+            },
+            {
+              id: 'canonical_upbeat',
+              name: 'Upbeat Energy',
+              genre: 'upbeat',
+              mood: 'energetic',
+              tags: ['upbeat', 'energetic', 'fast'],
+              mime_type: 'audio/wav',
+              duration_s: 20.0,
+              file_size_bytes: 1764044,
+              enabled: true,
+              created_at: '',
+              updated_at: '',
+            },
+            {
+              id: 'canonical_cinematic',
+              name: 'Cinematic Horizon',
+              genre: 'cinematic',
+              mood: 'dramatic',
+              tags: ['cinematic', 'epic', 'dramatic'],
+              mime_type: 'audio/wav',
+              duration_s: 20.0,
+              file_size_bytes: 1764044,
+              enabled: true,
+              created_at: '',
+              updated_at: '',
+            },
+          ])
             .filter((a) => a.enabled)
             .map((asset) => (
               <label
@@ -1288,11 +1449,15 @@ export function Ingest() {
                         {asset.name}
                       </span>
                     </div>
-                    {asset.genre && (
+                    {asset.id === 'death_of_blue_bird' ? (
+                      <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold whitespace-nowrap shadow-sm">
+                        🔥 Viral Pick
+                      </span>
+                    ) : asset.genre ? (
                       <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 whitespace-nowrap">
                         {asset.genre}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-ink-400">
                     {asset.mood && (

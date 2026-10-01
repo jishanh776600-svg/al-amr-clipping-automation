@@ -234,9 +234,8 @@ class PipelineRunner:
             self.job.settings["caption_style"] = "viral_streamer_kinetic"
             self.job.settings["visual_filter"] = "viral_vibrant"
             self.job.settings["sfx_enabled"] = True
-            if "bgm_enabled" not in self.job.settings:
-                self.job.settings["bgm_enabled"] = True
-            if not self.job.settings.get("bgm_asset_id"):
+            self.job.settings["bgm_enabled"] = True
+            if not self.job.settings.get("bgm_asset_id") or self.job.settings.get("bgm_asset_id") in ("default", ""):
                 self.job.settings["bgm_asset_id"] = "death_of_blue_bird"
 
         campaign_data = self.job.settings.get("campaign")
@@ -1083,8 +1082,10 @@ class PipelineRunner:
         from ..bgm.vault import BGMVault
         vault = BGMVault()
 
-        bgm_enabled = bool(self.job.settings.get("bgm_enabled", False))
         bgm_asset_id = self.job.settings.get("bgm_asset_id")
+        bgm_enabled = bool(self.job.settings.get("bgm_enabled", False)) or bool(
+            bgm_asset_id and str(bgm_asset_id).strip().lower() not in ("none", "false", "0", "off", "")
+        )
         bgm_asset = None
 
         selected_style = (
