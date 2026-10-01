@@ -260,21 +260,67 @@ class SmartBoundaryEngine:
             last_word_raw = all_words[end_idx].text.strip()
             last_word_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
             is_terminal = is_true_sentence_terminal(last_word_raw)
-            is_dangling = (last_word_clean in DANGLING_END_TOKENS) or last_word_raw.endswith("...") or last_word_raw.endswith("…")
+            # Natural pause check
+            has_trailing_pause = False
+            if end_idx + 1 < total_words:
+                has_trailing_pause = (all_words[end_idx + 1].start - all_words[end_idx].end) >= 0.30
+            elif end_idx == total_words - 1:
+                has_trailing_pause = True
 
-            if is_dangling and (not is_terminal or last_word_clean in DANGLING_END_TOKENS):
+            is_dangling = (
+                last_word_clean in ALWAYS_DANGLING_TOKENS
+                or (last_word_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal and not has_trailing_pause)
+                or last_word_raw.endswith("...")
+                or last_word_raw.endswith("…")
+            )
+
+            if is_dangling:
                 test_dur = all_words[end_idx - 1].end - all_words[start_idx].start
                 if test_dur >= duration_min_s:
                     end_idx -= 1
                     adjustments.append(f"trimmed_dangling_end_token({last_word_clean or 'ellipsis'})")
                     continue
                 else:
+                    # Trimming backward drops below duration_min_s: try advancing forward to next terminal or clean pause
+                    snapped_forward = False
+                    for step_fwd in range(1, min(10, total_words - end_idx)):
+                        fwd_w = all_words[end_idx + step_fwd]
+                        fwd_dur = fwd_w.end - all_words[start_idx].start
+                        if fwd_dur > duration_max_s:
+                            break
+                        fwd_raw = fwd_w.text.strip()
+                        fwd_clean = re.sub(r"[^\w]", "", fwd_raw.lower())
+                        fwd_term = is_true_sentence_terminal(fwd_raw)
+                        fwd_pause = False
+                        if end_idx + step_fwd + 1 < total_words:
+                            fwd_pause = (all_words[end_idx + step_fwd + 1].start - fwd_w.end) >= 0.30
+                        elif end_idx + step_fwd == total_words - 1:
+                            fwd_pause = True
+
+                        if (fwd_term or fwd_pause) and fwd_clean not in ALWAYS_DANGLING_TOKENS:
+                            end_idx = end_idx + step_fwd
+                            adjustments.append(f"snapped_forward_to_complete_thought({fwd_raw})")
+                            snapped_forward = True
+                            break
+
+                    if not snapped_forward and start_idx > 0:
+                        needed_s = duration_min_s - test_dur
+                        if needed_s <= 3.0:
+                            for step_start in range(1, min(6, start_idx + 1)):
+                                cand_start = start_idx - step_start
+                                new_dur = all_words[end_idx - 1].end - all_words[cand_start].start
+                                if new_dur >= duration_min_s and new_dur <= duration_max_s:
+                                    start_idx = cand_start
+                                    end_idx -= 1
+                                    adjustments.append(f"expanded_start_and_trimmed_dangling_token({last_word_clean})")
+                                    break
                     break
             else:
                 break
 
-        # Look backward up to 6 words to snap to a complete sentence terminal if close
+        # Look backward or forward up to 6 words to snap to a complete sentence terminal if close
         if not is_true_sentence_terminal(all_words[end_idx].text):
+            snapped = False
             for step_back in range(1, min(7, end_idx - start_idx)):
                 candidate_terminal_word = all_words[end_idx - step_back]
                 if is_true_sentence_terminal(candidate_terminal_word.text):
@@ -282,7 +328,17 @@ class SmartBoundaryEngine:
                     if test_dur >= duration_min_s:
                         end_idx = end_idx - step_back
                         adjustments.append(f"snapped_backward_to_sentence_terminal({candidate_terminal_word.text.strip()})")
+                        snapped = True
                         break
+            if not snapped:
+                for step_fwd in range(1, min(7, total_words - end_idx)):
+                    candidate_terminal_word = all_words[end_idx + step_fwd]
+                    if is_true_sentence_terminal(candidate_terminal_word.text):
+                        test_dur = candidate_terminal_word.end - all_words[start_idx].start
+                        if test_dur <= duration_max_s:
+                            end_idx = end_idx + step_fwd
+                            adjustments.append(f"snapped_forward_to_sentence_terminal({candidate_terminal_word.text.strip()})")
+                            break
 
         # ------------------------------------------------------------------
         # 4. Climax / Payoff Protection
@@ -334,9 +390,15 @@ class SmartBoundaryEngine:
             last_word_raw = all_words[end_idx].text.strip()
             last_word_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
             is_terminal = is_true_sentence_terminal(last_word_raw)
+            has_trailing_pause = False
+            if end_idx + 1 < total_words:
+                has_trailing_pause = (all_words[end_idx + 1].start - all_words[end_idx].end) >= 0.30
+            elif end_idx == total_words - 1:
+                has_trailing_pause = True
+
             is_dangling = (
                 last_word_clean in ALWAYS_DANGLING_TOKENS
-                or (last_word_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal)
+                or (last_word_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal and not has_trailing_pause)
                 or last_word_raw.endswith("...")
                 or last_word_raw.endswith("…")
             )
@@ -468,6 +530,7 @@ class PreRenderQualityGate:
         transcript: Transcript,
         silences: list[Silence] | None = None,
         existing_approved_specs: list[ClipSpecificationRecord] | None = None,
+        max_overlap_iou: float = 0.35,
     ) -> QualityGateResult:
         all_words = transcript.words
         start_w = optimization.start_word
@@ -630,11 +693,20 @@ class PreRenderQualityGate:
         last_clean = re.sub(r"[^\w]", "", last_word_raw.lower())
         is_terminal = is_true_sentence_terminal(last_word_raw)
 
+        # Natural acoustic boundary check
+        has_trailing_pause = False
+        if end_w + 1 < len(all_words):
+            if (all_words[end_w + 1].start - clip_words[-1].end) >= 0.30:
+                has_trailing_pause = True
+        elif end_w == len(all_words) - 1:
+            has_trailing_pause = True
+
         is_dangling = False
         if last_clean in ALWAYS_DANGLING_TOKENS:
             is_dangling = True
-        elif last_clean in CONDITIONAL_DANGLING_TOKENS and not is_terminal:
-            is_dangling = True
+        elif last_clean in CONDITIONAL_DANGLING_TOKENS:
+            if not is_terminal and not has_trailing_pause:
+                is_dangling = True
         elif last_word_raw.endswith("...") or last_word_raw.endswith("…"):
             is_dangling = True
 
@@ -653,7 +725,7 @@ class PreRenderQualityGate:
                     prev_spec.start_time,
                     prev_spec.end_time,
                 )
-                if iou > 0.35:
+                if iou > max_overlap_iou:
                     hard_rejections.append(f"overlap_with_approved_spec({prev_spec.id}, iou={iou:.2f})")
                     break
 
@@ -889,6 +961,210 @@ class ClipAssemblyEngine:
                     updated_at=utcnow(),
                 )
                 all_specs.append(failed_spec)
+
+        # ------------------------------------------------------------------
+        # Secondary Replenishment Pass: if target_count is not yet reached
+        # ------------------------------------------------------------------
+        if target_count is not None and len(approved_specs) < target_count:
+            log.info(
+                "ClipAssemblyEngine: Target count %d not reached (%d approved). Running replenishment pass...",
+                target_count,
+                len(approved_specs),
+            )
+            # Find specs that failed ONLY due to overlap_with_approved_spec
+            overlap_rejected = [
+                s for s in all_specs
+                if not s.is_approved
+                and s.rejection_reasons
+                and all(r.startswith("overlap_with_approved_spec") for r in s.rejection_reasons)
+            ]
+
+            # 1. Attempt boundary shift away from overlapping portions
+            for spec in overlap_rejected:
+                if len(approved_specs) >= target_count:
+                    break
+                cand = next((c for c in candidates if c.id == spec.candidate_id), None)
+                if not cand:
+                    continue
+
+                for app in list(approved_specs):
+                    if len(approved_specs) >= target_count:
+                        break
+                    # If candidate ends well after approved clip ends, shift candidate start forward
+                    if spec.end_time - app.end_time >= duration_min:
+                        shifted_start_s = app.end_time + 0.1
+                        w_start = self.boundary_engine._find_word_index_for_time(transcript.words, shifted_start_s)
+                        if w_start < spec.end_word:
+                            shifted_cand = ClipCandidateRecord(
+                                id=new_id(),
+                                job_id=job_id,
+                                rank=cand.rank,
+                                selected=False,
+                                status="replenished",
+                                start_s=shifted_start_s,
+                                end_s=spec.end_time,
+                                duration_s=spec.end_time - shifted_start_s,
+                                start_word=w_start,
+                                end_word=spec.end_word,
+                                title=cand.title,
+                                hook_text=cand.hook_text,
+                                reason=f"Replenished forward-shifted slice from {cand.id}",
+                                transcript_slice=cand.transcript_slice,
+                                score=cand.score,
+                                score_breakdown=cand.score_breakdown,
+                                created_at=utcnow(),
+                                updated_at=utcnow(),
+                            )
+                            try:
+                                opt = self.boundary_engine.optimize(
+                                    candidate=shifted_cand,
+                                    transcript=transcript,
+                                    silences=silences,
+                                    duration_min_s=duration_min,
+                                    duration_max_s=duration_max,
+                                    require_cta=require_cta,
+                                )
+                                qg_res = self.quality_gate.evaluate(
+                                    optimization=opt,
+                                    transcript=transcript,
+                                    silences=silences,
+                                    existing_approved_specs=approved_specs,
+                                )
+                                if qg_res.is_approved:
+                                    rep_spec = ClipSpecificationRecord(
+                                        id=new_id(),
+                                        job_id=job_id,
+                                        candidate_id=cand.id,
+                                        source_id=source_id,
+                                        start_time=round(opt.optimized_start_s, 2),
+                                        end_time=round(opt.optimized_end_s, 2),
+                                        duration=round(opt.duration_s, 2),
+                                        start_word=opt.start_word,
+                                        end_word=opt.end_word,
+                                        hook_start=round(opt.hook_start_s, 2),
+                                        hook_end=round(opt.hook_end_s, 2),
+                                        hook_type=opt.hook_type,
+                                        boundary_adjustments=opt.to_dict(),
+                                        requirement_matches=qg_res.rule_checks,
+                                        quality_score=qg_res.quality_score,
+                                        quality_status=qg_res.status,
+                                        rejection_reasons=qg_res.rejection_reasons,
+                                        warnings=qg_res.warnings,
+                                        final_rank=len(all_specs) + 1,
+                                        version=1,
+                                        telemetry={
+                                            "metrics": qg_res.metrics,
+                                            "replenished": True,
+                                            "strategy": "forward_shift",
+                                        },
+                                        created_at=utcnow(),
+                                        updated_at=utcnow(),
+                                    )
+                                    approved_specs.append(rep_spec)
+                                    all_specs.append(rep_spec)
+                                    log.info("ClipAssemblyEngine: Replenished clip %s via forward shift.", rep_spec.id)
+                                    break
+                            except Exception as e:
+                                log.debug("Replenishment forward shift error: %s", e)
+
+                    # If candidate starts well before approved clip starts, trim candidate end backward
+                    if app.start_time - spec.start_time >= duration_min:
+                        trimmed_end_s = app.start_time - 0.1
+                        w_end = self.boundary_engine._find_word_index_for_time(transcript.words, trimmed_end_s, is_end=True)
+                        if spec.start_word < w_end:
+                            trimmed_cand = ClipCandidateRecord(
+                                id=new_id(),
+                                job_id=job_id,
+                                rank=cand.rank,
+                                selected=False,
+                                status="replenished",
+                                start_s=spec.start_time,
+                                end_s=trimmed_end_s,
+                                duration_s=trimmed_end_s - spec.start_time,
+                                start_word=spec.start_word,
+                                end_word=w_end,
+                                title=cand.title,
+                                hook_text=cand.hook_text,
+                                reason=f"Replenished backward-trimmed slice from {cand.id}",
+                                transcript_slice=cand.transcript_slice,
+                                score=cand.score,
+                                score_breakdown=cand.score_breakdown,
+                                created_at=utcnow(),
+                                updated_at=utcnow(),
+                            )
+                            try:
+                                opt = self.boundary_engine.optimize(
+                                    candidate=trimmed_cand,
+                                    transcript=transcript,
+                                    silences=silences,
+                                    duration_min_s=duration_min,
+                                    duration_max_s=duration_max,
+                                    require_cta=require_cta,
+                                )
+                                qg_res = self.quality_gate.evaluate(
+                                    optimization=opt,
+                                    transcript=transcript,
+                                    silences=silences,
+                                    existing_approved_specs=approved_specs,
+                                )
+                                if qg_res.is_approved:
+                                    rep_spec = ClipSpecificationRecord(
+                                        id=new_id(),
+                                        job_id=job_id,
+                                        candidate_id=cand.id,
+                                        source_id=source_id,
+                                        start_time=round(opt.optimized_start_s, 2),
+                                        end_time=round(opt.optimized_end_s, 2),
+                                        duration=round(opt.duration_s, 2),
+                                        start_word=opt.start_word,
+                                        end_word=opt.end_word,
+                                        hook_start=round(opt.hook_start_s, 2),
+                                        hook_end=round(opt.hook_end_s, 2),
+                                        hook_type=opt.hook_type,
+                                        boundary_adjustments=opt.to_dict(),
+                                        requirement_matches=qg_res.rule_checks,
+                                        quality_score=qg_res.quality_score,
+                                        quality_status=qg_res.status,
+                                        rejection_reasons=qg_res.rejection_reasons,
+                                        warnings=qg_res.warnings,
+                                        final_rank=len(all_specs) + 1,
+                                        version=1,
+                                        telemetry={
+                                            "metrics": qg_res.metrics,
+                                            "replenished": True,
+                                            "strategy": "backward_trim",
+                                        },
+                                        created_at=utcnow(),
+                                        updated_at=utcnow(),
+                                    )
+                                    approved_specs.append(rep_spec)
+                                    all_specs.append(rep_spec)
+                                    log.info("ClipAssemblyEngine: Replenished clip %s via backward trim.", rep_spec.id)
+                                    break
+                            except Exception as e:
+                                log.debug("Replenishment backward trim error: %s", e)
+
+            # 2. If quota is STILL unmet, allow candidates with moderate overlap (IoU <= 0.48) that passed all other rules
+            if len(approved_specs) < target_count:
+                for spec in overlap_rejected:
+                    if len(approved_specs) >= target_count:
+                        break
+                    if spec in approved_specs:
+                        continue
+                    max_iou = max(
+                        (compute_iou(spec.start_time, spec.end_time, app.start_time, app.end_time) for app in approved_specs),
+                        default=1.0,
+                    )
+                    if max_iou <= 0.48 and spec.quality_score >= 50.0:
+                        spec.quality_status = "QUALITY_PASS" if spec.quality_score >= 68.0 else "QUALITY_WARN"
+                        spec.rejection_reasons = []
+                        spec.warnings.append(f"replenished_with_relaxed_overlap(iou={max_iou:.2f})")
+                        approved_specs.append(spec)
+                        log.info(
+                            "ClipAssemblyEngine: Replenished candidate %s with relaxed overlap threshold (iou=%.2f)",
+                            spec.candidate_id,
+                            max_iou,
+                        )
 
         elapsed_s = round(time.time() - start_time, 2)
         passed_count = sum(1 for s in all_specs if s.quality_status == "QUALITY_PASS")

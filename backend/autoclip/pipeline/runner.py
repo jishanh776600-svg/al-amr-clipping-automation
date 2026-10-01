@@ -598,29 +598,40 @@ class PipelineRunner:
                 all_cand_count = len(all_candidates)
                 diag_str = "; ".join(f"{k}: {v}" for k, v in unique_cand_rejections.most_common(5))
 
-                log.error(
-                    "INSUFFICIENT_VALID_CLIPS: produced %d/%d clips from %d candidates "
-                    "(%d evaluated by assembly). Rejections: [%s]",
-                    approved_count,
-                    required_final_clips,
-                    all_cand_count,
-                    diagnosed_count,
-                    diag_str,
-                )
-
-                # Persist partial results for diagnostics before raising
+                # Persist partial results for diagnostics
                 if approved_specs:
                     clips = specifications_to_clips(approved_specs, all_candidates)
                     store.replace_clips(self.job.id, clips)
 
-                raise HighlightError(
-                    f"INSUFFICIENT_VALID_CLIPS: pipeline produced {approved_count}/{required_final_clips} "
-                    f"valid clips from {all_cand_count} discovered candidates "
-                    f"({diagnosed_count} evaluated by assembly gate). "
-                    f"Rejection breakdown: [{diag_str}]. "
-                    f"Pipeline requires exactly {required_final_clips} clips; "
-                    f"check source quality, campaign rules, and duration constraints."
-                )
+                strict_clip_count = self.job.settings.get("strict_clip_count", False)
+                if strict_clip_count or approved_count == 0:
+                    log.error(
+                        "INSUFFICIENT_VALID_CLIPS: produced %d/%d clips from %d candidates "
+                        "(%d evaluated by assembly). Rejections: [%s]",
+                        approved_count,
+                        required_final_clips,
+                        all_cand_count,
+                        diagnosed_count,
+                        diag_str,
+                    )
+                    raise HighlightError(
+                        f"INSUFFICIENT_VALID_CLIPS: pipeline produced {approved_count}/{required_final_clips} "
+                        f"valid clips from {all_cand_count} discovered candidates "
+                        f"({diagnosed_count} evaluated by assembly gate). "
+                        f"Rejection breakdown: [{diag_str}]. "
+                        f"Pipeline requires exactly {required_final_clips} clips; "
+                        f"check source quality, campaign rules, and duration constraints."
+                    )
+                else:
+                    log.warning(
+                        "PARTIAL_CLIPS_ACCEPTED: Pipeline produced %d/%d valid clips from %d candidates "
+                        "(%d evaluated by assembly). Proceeding with %d approved clips for operator review.",
+                        approved_count,
+                        required_final_clips,
+                        all_cand_count,
+                        diagnosed_count,
+                        approved_count,
+                    )
 
             if approved_specs:
                 clips = specifications_to_clips(approved_specs, all_candidates)
