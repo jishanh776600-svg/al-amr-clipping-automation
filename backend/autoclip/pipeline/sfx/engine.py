@@ -16,17 +16,9 @@ log = logging.getLogger(__name__)
 
 SFX_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "sfx"
 
-# Semantic keywords for contextual sound cues
+# Semantic keywords for contextual sound cues (clean milestone / success accents)
 SUCCESS_REGEX = re.compile(
     r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|dollars?|million|billion|thousand|sales|growth|easy|win|winner|won|golden|gold|champion|hero|goat|height)$",
-    re.IGNORECASE,
-)
-SHOCK_REGEX = re.compile(
-    r"^(crazy|insane|impossible|shocking|died|dead|killed|shut|danger|banned|worst|fail|failed|failure|lawsuit|destroy|bankrupt|definitely|wow|god|omg)$",
-    re.IGNORECASE,
-)
-CONFUSION_REGEX = re.compile(
-    r"^(what|why|who|wait|huh|aayen|ayein|staring|eyes|looking|tired|heavy|kya|hein)$",
     re.IGNORECASE,
 )
 
@@ -45,12 +37,9 @@ class SFXEngine:
             "transition": ["Short Transition _2 Sound .mp3", "whoosh.mp3", "transition.mp3"],
             "bell": ["bell.mp3", "ding.mp3", "ding.wav"],
             "ding": ["bell.mp3", "ding.mp3", "ding.wav"],
-            "aayen": ["aayen viral meme.mp3", "aayen.mp3"],
-            "confusion": ["aayen viral meme.mp3", "aayen.mp3"],
-            "wow": ["Copy of No Copyright _ Oh My God Wow Sound Effect(MP3_160K).mp3", "wow.mp3", "boom.mp3"],
-            "boom": ["Copy of No Copyright _ Oh My God Wow Sound Effect(MP3_160K).mp3", "wow.mp3", "boom.wav"],
             "pop": ["Short Transition _2 Sound .mp3", "whoosh.mp3", "pop.wav"],
             "riser": ["Short Transition _2 Sound .mp3", "riser.wav"],
+            "boom": ["Short Transition _2 Sound .mp3", "whoosh.mp3"],
         }
 
         candidates = name_map.get(sound_type, [f"{sound_type}.mp3", f"{sound_type}.wav"])
@@ -154,26 +143,6 @@ class SFXEngine:
                         volume=0.80,
                         reason=f"success_word({clean})",
                         asset_path=self.get_asset_path("ding"),
-                    )
-                )
-            elif SHOCK_REGEX.search(clean):
-                events.append(
-                    SFXEvent(
-                        sound_type="wow",
-                        timestamp_s=w_time,
-                        volume=0.90,
-                        reason=f"shock_wow({clean})",
-                        asset_path=self.get_asset_path("wow"),
-                    )
-                )
-            elif CONFUSION_REGEX.search(clean):
-                events.append(
-                    SFXEvent(
-                        sound_type="aayen",
-                        timestamp_s=w_time,
-                        volume=0.85,
-                        reason=f"confusion_meme({clean})",
-                        asset_path=self.get_asset_path("aayen"),
                     )
                 )
 
