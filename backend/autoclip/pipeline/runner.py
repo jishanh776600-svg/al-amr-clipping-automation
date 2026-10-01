@@ -237,7 +237,7 @@ class PipelineRunner:
             if "bgm_enabled" not in self.job.settings:
                 self.job.settings["bgm_enabled"] = True
             if not self.job.settings.get("bgm_asset_id"):
-                self.job.settings["bgm_asset_id"] = "canonical_upbeat"
+                self.job.settings["bgm_asset_id"] = "death_of_blue_bird"
 
         campaign_data = self.job.settings.get("campaign")
         if campaign_data:
