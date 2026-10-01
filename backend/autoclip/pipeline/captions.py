@@ -282,7 +282,35 @@ VIRAL_ONE_WORD = CaptionStyle(
     cta_scale=120,
 )
 
+ALL_IN_ONE_VIRAL = CaptionStyle(
+    key="all_in_one_viral",
+    label="All In One Viral",
+    description="Complete viral streamer package: Anton italic all-caps, 1-2 word kinetic pop, neon yellow highlight, viral_vibrant color grade, Death of Blue Bird BGM, and clean SFX.",
+    font="Anton",
+    font_file="Anton-Regular.ttf",
+    size_ratio=0.062,
+    primary="#FFFFFF",
+    accent="#FFE500",
+    outline="#000000",
+    outline_width=4.5,
+    shadow=2.5,
+    bold=True,
+    italic=True,
+    all_caps=True,
+    margin_v_ratio=0.26,
+    max_words=2,
+    animation="viral_pop",
+    scale_percent=120,
+    hook_accent="#FFE500",
+    hook_scale=122,
+    climax_accent="#FFE500",
+    climax_scale=124,
+    cta_accent="#FFE500",
+    cta_scale=120,
+)
+
 PRESETS: dict[str, CaptionStyle] = {
+    "all_in_one_viral": ALL_IN_ONE_VIRAL,
     "viral_streamer_kinetic": VIRAL_STREAMER_KINETIC,
     "viral_neon_green": VIRAL_NEON_GREEN,
     "viral_one_word": VIRAL_ONE_WORD,

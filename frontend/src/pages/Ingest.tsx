@@ -998,6 +998,8 @@ export function Ingest() {
               className="bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-2.5 py-1.5 focus:border-sodium-500"
             >
               {(captionStylesList.length > 0 ? captionStylesList : [
+                { key: 'all_in_one_viral', label: '🔥 All In One Viral (Complete Package)' },
+                { key: 'viral_streamer_kinetic', label: 'Viral Streamer Kinetic' },
                 { key: 'classic_professional', label: 'Classic Professional' },
                 { key: 'rich_dynamic', label: 'Rich Dynamic' },
                 { key: 'clean_lower', label: 'Clean Lower' },
@@ -1032,8 +1034,9 @@ export function Ingest() {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-4 mt-3">
+        <div className="grid gap-3 sm:grid-cols-5 mt-3">
           {[
+            { key: 'all_in_one_viral', label: 'All In One Viral', tag: 'Viral Streamer', desc: 'Anton Italic, neon yellow kinetic pop, Death of Blue Bird BGM, clean SFX & viral grade.' },
             { key: 'classic_professional', label: 'Classic Professional', tag: 'Default', desc: 'Minimal clean Inter typography with subtle word pop.' },
             { key: 'rich_dynamic', label: 'Rich Dynamic', tag: 'Kinetic', desc: 'Anton with 116% scale pop, hook punch & climax pop.' },
             { key: 'minimal_luxury', label: 'Minimal Luxury', tag: 'Luxury', desc: 'Italic serif with champagne & gold active accents.' },
