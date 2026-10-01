@@ -471,45 +471,16 @@ async def send_clip_review(
     send_video_url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendVideo"
     send_msg_url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMessage"
 
-    # Materialize video file for review delivery: local file if accessible, or download from Google Drive
+    # Materialize genuine, verified MP4 video for review delivery
+    from ..media_guard import is_valid_mp4, materialize_valid_clip_media
+
     preview_file_to_clean: Path | None = None
     effective_media_path: Path | None = None
 
-    cache_dir = paths.root() / "media_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached_clip = cache_dir / f"clip_{clip_id}.mp4"
-
-    if media_path and media_path.is_file() and media_path.stat().st_size > 0:
+    if media_path and is_valid_mp4(media_path):
         effective_media_path = media_path
-        if not cached_clip.is_file() or cached_clip.stat().st_size != media_path.stat().st_size:
-            try:
-                import shutil
-                shutil.copy2(media_path, cached_clip)
-            except Exception:
-                pass
-    elif cached_clip.is_file() and cached_clip.stat().st_size > 1000:
-        effective_media_path = cached_clip
-    elif drive_file_id:
-        try:
-            from ..storage.drive import GoogleDriveStorage
-            drive_storage = GoogleDriveStorage()
-            if drive_storage.is_configured:
-                log.info("Downloading clip %s media from Google Drive (%s) to %s for Telegram review...", clip_id, drive_file_id, cached_clip)
-                await asyncio.to_thread(drive_storage.download_file, drive_file_id, cached_clip)
-                if cached_clip.is_file() and cached_clip.stat().st_size > 1000:
-                    effective_media_path = cached_clip
-
-            # Direct download fallback
-            if not effective_media_path or not effective_media_path.exists() or effective_media_path.stat().st_size == 0:
-                direct_url = f"https://drive.google.com/uc?export=download&id={drive_file_id}"
-                log.info("Attempting direct HTTP download from Google Drive %s to %s for Telegram review...", direct_url, cached_clip)
-                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as dl_client:
-                    resp = await dl_client.get(direct_url)
-                    if resp.status_code == 200 and len(resp.content) > 1000:
-                        cached_clip.write_bytes(resp.content)
-                        effective_media_path = cached_clip
-        except Exception as exc:
-            log.warning("Failed downloading clip %s from Google Drive for Telegram review: %s", clip_id, exc)
+    else:
+        effective_media_path = await asyncio.to_thread(materialize_valid_clip_media, clip_id)
 
     def _generate_tg_preview(source_p: Path) -> Path | None:
         """Create a fast, lightweight MP4 (<=25MB) using ffmpeg for Telegram delivery."""
@@ -1286,9 +1257,12 @@ async def _execute_auto_publish(
         elif yt_rec and yt_rec.error_code == "visibility_incorrect":
             platforms_status["YouTube Shorts"] = "❌ Visibility is unlisted — publication not accepted"
         elif yt_rec and (yt_rec.error_code == "processing_incomplete" or yt_rec.status in ("PROCESSING", "UPLOAD_ACCEPTED")):
-            platforms_status["YouTube Shorts"] = "⏳ Upload incomplete — still processing"
+            platforms_status["YouTube Shorts"] = "⏳ Upload accepted — still processing"
         elif yt_rec and (yt_rec.error_code == "processing_failed" or "processing" in (yt_rec.error_message or "").lower()):
-            platforms_status["YouTube Shorts"] = "❌ Processing failed"
+            clean_err = yt_rec.error_message or "Processing failed"
+            platforms_status["YouTube Shorts"] = f"❌ Processing failed ({clean_err[:40]})"
+        elif yt_rec and yt_rec.error_code == "invalid_media":
+            platforms_status["YouTube Shorts"] = "❌ Media file corrupted or inaccessible"
         else:
             err = (yt_rec.error_message if yt_rec else "Upload failed") or "Upload failed"
             clean_err = re.sub(r"^YouTube channel mismatch:\s*", "", err).strip()
@@ -1346,6 +1320,8 @@ async def _execute_auto_publish(
 
         if ig_rec and ig_rec.status == "PUBLISHED":
             platforms_status["Instagram Reels"] = "✅ Published"
+        elif ig_rec and ig_rec.error_code == "invalid_media":
+            platforms_status["Instagram Reels"] = "❌ Media file corrupted or inaccessible"
         else:
             err = (ig_rec.error_message if ig_rec else "Upload failed") or "Upload failed"
             clean_err = re.sub(r"^Failed to create Instagram Reel container \(\d+\):\s*", "", err).strip()

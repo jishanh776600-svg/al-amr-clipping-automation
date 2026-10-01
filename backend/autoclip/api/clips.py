@@ -331,74 +331,22 @@ async def public_clip_media(clip_id: str, request: Request):
     Accessible publicly without authentication for platform publishing crawlers
     (Meta Instagram Reels, YouTube Shorts preview, TikTok).
     """
-    # 1. Fast-path: Check cached media on local storage directly (instant 200/206 for crawlers)
-    cache_dir = paths.root() / "media_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached_file = cache_dir / f"clip_{clip_id}.mp4"
-    if cached_file.is_file() and cached_file.stat().st_size > 1000:
+    from ..media_guard import is_valid_mp4, materialize_valid_clip_media
+
+    # Fast-path and robust media resolution: Materialize genuine, verified MP4 video
+    media_file = await asyncio.to_thread(materialize_valid_clip_media, clip_id)
+    if media_file and media_file.is_file() and is_valid_mp4(media_file):
         return FileResponse(
-            cached_file,
+            media_file,
             media_type="video/mp4",
-            filename=cached_file.name,
+            filename=media_file.name,
             content_disposition_type="inline",
         )
 
-    # 2. Check local exports and final renders
+    # Fallback to local exports or final render records
     clip = await asyncio.to_thread(store.get_clip, clip_id)
-
-    # 3. Local exports
     exports = await asyncio.to_thread(store.list_exports, clip_id)
-    for exp in exports:
-        if exp.path and Path(exp.path).is_file() and Path(exp.path).stat().st_size > 0:
-            p = Path(exp.path)
-            return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
-
-    # 4. Local final renders (Step 22)
     final_render = await asyncio.to_thread(store.get_final_render, clip_id)
-    if final_render and final_render.output_path and Path(final_render.output_path).is_file() and Path(final_render.output_path).stat().st_size > 0:
-        p = Path(final_render.output_path)
-        return FileResponse(p, media_type="video/mp4", filename=p.name, content_disposition_type="inline")
-
-    # Lookup Telegram file ID from render or approval telemetry
-    tg_file_id = None
-    if final_render and final_render.telemetry and final_render.telemetry.get("telegram_file_id"):
-        tg_file_id = final_render.telemetry["telegram_file_id"]
-    if not tg_file_id:
-        approval = await asyncio.to_thread(store.get_clip_approval, clip_id)
-        if approval and approval.telemetry and approval.telemetry.get("telegram_file_id"):
-            tg_file_id = approval.telemetry["telegram_file_id"]
-
-    if tg_file_id:
-        from ..telegram.review_bot import get_telegram_config
-        tg_token, _, _ = get_telegram_config()
-        if tg_token:
-            try:
-                import httpx
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    info_resp = await client.get(
-                        f"https://api.telegram.org/bot{tg_token}/getFile",
-                        params={"file_id": tg_file_id},
-                    )
-                    if info_resp.status_code == 200 and info_resp.json().get("ok"):
-                        rel_path = info_resp.json()["result"].get("file_path")
-                        if rel_path:
-                            dl_url = f"https://api.telegram.org/file/bot{tg_token}/{rel_path}"
-                            async with client.stream("GET", dl_url) as stream_resp:
-                                if stream_resp.status_code == 200:
-                                    temp_download = cache_dir / f"clip_{clip_id}.tmp"
-                                    with open(temp_download, "wb") as f_out:
-                                        async for chunk in stream_resp.aiter_bytes(chunk_size=65536):
-                                            f_out.write(chunk)
-                                    if temp_download.stat().st_size > 1000:
-                                        temp_download.replace(cached_file)
-                                        return FileResponse(
-                                            cached_file,
-                                            media_type="video/mp4",
-                                            filename=cached_file.name,
-                                            content_disposition_type="inline",
-                                        )
-            except Exception as tg_err:
-                log.warning("Could not download Telegram video for clip %s: %s", clip_id, tg_err)
 
     # 4. Google Drive direct stream (if configured)
     target_drive_id = None

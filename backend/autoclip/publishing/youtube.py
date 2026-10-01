@@ -154,8 +154,10 @@ class YouTubePublisher(BasePublisher):
 
                 actual_channel_id = snippet.get("channelId")
                 actual_privacy = status.get("privacyStatus")
-                upload_status = status.get("uploadStatus")
-                failure_reason = status.get("failureReason") or status.get("rejectionReason")
+                upload_status = status.get("uploadStatus") or ""
+                rejection_reason = status.get("rejectionReason") or ""
+                failure_reason = status.get("failureReason") or rejection_reason or ""
+                proc_details = item.get("processingDetails", {})
                 title = snippet.get("title")
                 duration = content_details.get("duration")
 
@@ -183,16 +185,26 @@ class YouTubePublisher(BasePublisher):
                     return False, "channel_mismatch", video_info
 
                 # Check 2: Terminal failure or rejection
-                if upload_status in ("failed", "rejected"):
+                if upload_status in ("failed", "rejected") or failure_reason or rejection_reason:
                     log.error(
-                        "Post-upload verification: YouTube processing failed (%s): %s",
+                        "Post-upload verification: YouTube processing failed (%s): failure_reason=%s, rejection_reason=%s",
                         upload_status,
                         failure_reason,
+                        rejection_reason,
                     )
+                    video_info["failureReason"] = failure_reason or rejection_reason or upload_status
+                    try:
+                        del_req = service.videos().delete(id=video_id)
+                        await asyncio.to_thread(del_req.execute)
+                        log.info("Cleaned up failed video %s from YouTube channel", video_id)
+                    except Exception as del_err:
+                        log.debug("Could not auto-delete failed YouTube video %s: %s", video_id, del_err)
                     return False, "processing_failed", video_info
 
                 # Check 3: Processing state
-                if upload_status == "processed" or (upload_status == "uploaded" and actual_privacy == "public"):
+                # YouTube video processing MUST be finished ('processed' or proc_details 'succeeded')
+                proc_status = proc_details.get("processingStatus")
+                if upload_status == "processed" or proc_status == "succeeded":
                     # Check 4: Visibility must be public
                     if actual_privacy != "public":
                         log.warning(
@@ -232,14 +244,11 @@ class YouTubePublisher(BasePublisher):
                 # Video is still processing ('uploaded' or 'processing')
                 elapsed = loop.time() - start_time
                 if not wait_for_processing or elapsed >= max_wait_seconds:
-                    if actual_privacy == "public":
-                        # If public, YouTube Shorts will finish processing asynchronously
-                        log.info("YouTube video %s is uploaded with public visibility. Proceeding with publication.", video_id)
-                        return True, "published", video_info
                     log.warning(
-                        "Post-upload verification: YouTube processing not completed within %ss (status: %s)",
+                        "Post-upload verification: YouTube processing not completed within %ss (status: %s, proc_status: %s)",
                         max_wait_seconds,
                         upload_status,
+                        proc_status,
                     )
                     return False, "processing_incomplete", video_info
 
@@ -408,6 +417,19 @@ class YouTubePublisher(BasePublisher):
                         "actual_channel_title": actual_channel_title,
                         "expected_channel_id": expected_channel_id,
                     },
+                )
+
+            from ..media_guard import is_valid_mp4
+            if not is_valid_mp4(media_path):
+                log.error("YouTube Publisher: Media file %s is not a valid MP4 video. Rejecting upload.", media_path)
+                return PublishingResult(
+                    platform=self.platform_name,
+                    destination_id=destination_id,
+                    success=False,
+                    status="failed",
+                    error=f"Media file {media_path} is invalid or corrupted (not a valid MP4 video).",
+                    error_code="invalid_media",
+                    retryable=False,
                 )
 
             # =========================================================================

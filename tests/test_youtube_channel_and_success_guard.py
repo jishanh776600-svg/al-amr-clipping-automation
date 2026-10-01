@@ -166,7 +166,7 @@ class TestYouTubePostUploadVerification:
     async def test_post_upload_verification_rejects_unlisted(self, clean_env, tmp_path):
         """If uploaded video ends up unlisted and cannot be corrected, do not mark PUBLISHED."""
         vid_file = tmp_path / "clip.mp4"
-        vid_file.write_bytes(b"\x00" * 1024)
+        vid_file.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"\x00" * 60_000)
 
         pub = YouTubePublisher(client_id="cid", client_secret="sec", refresh_token="tok")
         meta = PublishingMetadata(title="Test Highlight")
@@ -217,7 +217,7 @@ class TestYouTubePostUploadVerification:
     async def test_incomplete_upload_protection(self, clean_env, tmp_path):
         """If YouTube is still processing after timeout, report incomplete rather than Published."""
         vid_file = tmp_path / "clip.mp4"
-        vid_file.write_bytes(b"\x00" * 1024)
+        vid_file.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"\x00" * 60_000)
 
         pub = YouTubePublisher(client_id="cid", client_secret="sec", refresh_token="tok")
         meta = PublishingMetadata(title="Test Highlight")

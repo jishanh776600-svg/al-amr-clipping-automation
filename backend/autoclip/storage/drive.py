@@ -225,6 +225,14 @@ class GoogleDriveStorage:
             link = created.get("webViewLink", f"https://drive.google.com/file/d/{target_id}/view")
             size = int(created.get("size", local_path.stat().st_size))
 
+        try:
+            service.permissions().create(
+                fileId=target_id,
+                body={"role": "reader", "type": "anyone"},
+            ).execute()
+        except Exception:
+            pass
+
         return DriveFileMetadata(
             file_id=target_id,
             name=filename,
@@ -276,6 +284,14 @@ class GoogleDriveStorage:
             ).execute()
             target_id = created["id"]
             link = created.get("webViewLink", f"https://drive.google.com/file/d/{target_id}/view")
+
+        try:
+            service.permissions().create(
+                fileId=target_id,
+                body={"role": "reader", "type": "anyone"},
+            ).execute()
+        except Exception:
+            pass
 
         return DriveFileMetadata(
             file_id=target_id,

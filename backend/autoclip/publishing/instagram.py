@@ -204,6 +204,19 @@ class InstagramPublisher(BasePublisher):
                     retryable=True,
                 )
 
+        from ..media_guard import is_valid_mp4
+        if not is_valid_mp4(media_path):
+            log.error("Instagram Publisher: Media file %s is not a valid MP4 video. Rejecting upload.", media_path)
+            return PublishingResult(
+                platform=self.platform_name,
+                destination_id=destination_id,
+                success=False,
+                status="failed",
+                error=f"Media file {media_path} is invalid or corrupted (not a valid MP4 video).",
+                error_code="invalid_media",
+                retryable=False,
+            )
+
         if not public_url:
             return PublishingResult(
                 platform=self.platform_name,

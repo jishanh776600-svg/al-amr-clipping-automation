@@ -314,102 +314,20 @@ class PublishingService:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cached_dest = cache_dir / f"clip_{clip_id}.mp4"
 
-        has_media = media_path.is_file() and media_path.stat().st_size > 0
-        if not has_media and cached_dest.is_file() and cached_dest.stat().st_size > 1000:
-            media_path = cached_dest
-            has_media = True
+        from ..media_guard import is_valid_mp4, materialize_valid_clip_media
 
+        has_media = media_path.is_file() and is_valid_mp4(media_path)
         if not has_media:
-            exports = store.list_exports(clip_id)
-            drive_file_id = None
-            for exp in exports:
-                if exp.path and Path(exp.path).is_file() and Path(exp.path).stat().st_size > 0:
-                    media_path = Path(exp.path)
-                    has_media = True
-                    break
-                if exp.drive_file_id:
-                    drive_file_id = exp.drive_file_id
-                    drive_link = exp.drive_web_view_link
-                    pub_metadata.extra["export_id"] = exp.id
-                    break
+            resolved_p = materialize_valid_clip_media(clip_id)
+            if resolved_p and is_valid_mp4(resolved_p):
+                media_path = resolved_p
+                has_media = True
 
-            if not drive_file_id and final_render and final_render.telemetry:
-                drive_file_id = final_render.telemetry.get("drive_file_id")
-                drive_link = final_render.telemetry.get("drive_web_view_link")
-
-            if not has_media and drive_file_id:
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-                        temp_file_to_clean = Path(tf.name)
-                    drive_storage = GoogleDriveStorage()
-                    if drive_storage.is_configured:
-                        log.info("Downloading clip %s media from Google Drive %s...", clip_id, drive_file_id)
-                        drive_storage.download_file(drive_file_id, temp_file_to_clean)
-                        if temp_file_to_clean.is_file() and temp_file_to_clean.stat().st_size > 0:
-                            media_path = temp_file_to_clean
-                            has_media = True
-
-                    # Fallback direct download if drive_storage was unconfigured or failed
-                    if not has_media:
-                        direct_url = f"https://drive.google.com/uc?export=download&id={drive_file_id}"
-                        log.info("Attempting direct HTTP download from Google Drive %s...", direct_url)
-                        import httpx
-                        with httpx.Client(timeout=60.0, follow_redirects=True) as dl_client:
-                            resp = dl_client.get(direct_url)
-                            if resp.status_code == 200 and len(resp.content) > 1000:
-                                temp_file_to_clean.write_bytes(resp.content)
-                                media_path = temp_file_to_clean
-                                has_media = True
-                except Exception as exc:
-                    log.warning("Failed downloading from Google Drive for clip %s: %s", clip_id, exc)
-
-            # Fallback direct download from Telegram Bot API if file_id is available
-            if not has_media:
-                tg_file_id = None
-                if final_render and final_render.telemetry:
-                    tg_file_id = final_render.telemetry.get("telegram_file_id")
-                if not tg_file_id:
-                    appr = store.get_clip_approval(clip_id)
-                    if appr and appr.telemetry:
-                        tg_file_id = appr.telemetry.get("telegram_file_id")
-
-                if tg_file_id:
-                    from ..telegram.review_bot import get_telegram_config
-                    tg_token, _, _ = get_telegram_config()
-                    if tg_token:
-                        try:
-                            import httpx
-                            if not temp_file_to_clean:
-                                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tf:
-                                    temp_file_to_clean = Path(tf.name)
-                            log.info("Downloading clip %s media from Telegram Bot API (file_id=%s)...", clip_id, tg_file_id)
-                            with httpx.Client(timeout=60.0) as dl_client:
-                                info_resp = dl_client.get(
-                                    f"https://api.telegram.org/bot{tg_token}/getFile",
-                                    params={"file_id": tg_file_id},
-                                )
-                                if info_resp.status_code == 200 and info_resp.json().get("ok"):
-                                    rel_path = info_resp.json()["result"].get("file_path")
-                                    if rel_path:
-                                        file_url = f"https://api.telegram.org/file/bot{tg_token}/{rel_path}"
-                                        file_resp = dl_client.get(file_url)
-                                        if file_resp.status_code == 200 and len(file_resp.content) > 1000:
-                                            temp_file_to_clean.write_bytes(file_resp.content)
-                                            media_path = temp_file_to_clean
-                                            has_media = True
-                                            log.info(
-                                                "Successfully downloaded media for clip %s from Telegram (%d bytes)",
-                                                clip_id,
-                                                len(file_resp.content),
-                                            )
-                        except Exception as exc:
-                            log.warning("Failed downloading from Telegram for clip %s: %s", clip_id, exc)
-
-        if not has_media or not media_path.exists():
-            log.warning("No accessible media file found for clip %s locally, on Google Drive, or on Telegram.", clip_id)
+        if not has_media or not media_path.exists() or not is_valid_mp4(media_path):
+            log.warning("No accessible, valid MP4 media file found for clip %s locally, on Google Drive, or on Telegram.", clip_id)
             now_fail = models.utcnow()
             record_id = existing.id if existing else models.new_id()
-            err_msg = "Final render output file not accessible locally or on Google Drive."
+            err_msg = "Final render video file not accessible or corrupted (not a valid MP4 video)."
             failed_pub = models.PublicationRecord(
                 id=record_id,
                 job_id=job_id,
