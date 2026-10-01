@@ -101,3 +101,46 @@ def test_split_screen_divider_in_export():
     full_str = " ".join(chain)
     assert "drawbox=" in full_str
     assert "vstack=" in full_str
+
+
+def test_sfx_engine_planning_and_rendering(tmp_path):
+    """Verify that SFXEngine plans and renders sound effects for words and cuts."""
+    from autoclip.pipeline.sfx import SFXEngine
+    from autoclip.pipeline.reframe.croppath import CropPath, CropSegment, CropKeyframe, Strategy
+
+    engine = SFXEngine()
+    words = [
+        Word(text="Look", start=0.5, end=0.8),
+        Word(text="at", start=0.8, end=1.0),
+        Word(text="this", start=1.0, end=1.2),
+        Word(text="win", start=2.5, end=3.0),
+        Word(text="insane", start=4.0, end=4.5),
+    ]
+
+    crop_path = CropPath(
+        source_width=1920,
+        source_height=1080,
+        segments=[
+            CropSegment(start_s=0.0, end_s=3.0, width=540, height=960, keyframes=[CropKeyframe(0.0, 0, 0)]),
+            CropSegment(start_s=3.0, end_s=6.0, width=540, height=960, keyframes=[CropKeyframe(3.0, 540, 0)]),
+        ]
+    )
+
+    events = engine.plan_sfx_events(
+        words=words,
+        crop_path=crop_path,
+        duration_s=6.0,
+        climax_window=(4.0, 5.5),
+    )
+
+    assert len(events) >= 3
+    event_types = [e.sound_type for e in events]
+    # Check that cut whoosh, hook pop, and boom are present
+    assert "whoosh" in event_types or "pop" in event_types
+    assert "boom" in event_types or "ding" in event_types
+
+    out_sfx = tmp_path / "test_sfx.m4a"
+    engine.render_sfx_track(events, duration_s=6.0, output_path=out_sfx)
+    assert out_sfx.is_file()
+    assert out_sfx.stat().st_size > 1000
+

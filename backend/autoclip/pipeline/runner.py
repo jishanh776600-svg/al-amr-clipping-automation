@@ -269,7 +269,12 @@ class PipelineRunner:
 
             ass_paths = self._stage_captions(final_clips, transcript, final_crop_paths)
             source_path = Path(self.source.path)
-            audio_paths = self._stage_audio_mix(final_clips, source_path)
+            audio_paths = self._stage_audio_mix(
+                final_clips,
+                source_path,
+                transcript=transcript,
+                crop_paths=final_crop_paths,
+            )
             self._stage_export(final_clips, transcript, final_crop_paths, ass_paths=ass_paths, audio_paths=audio_paths)
         except JobCancelled:
             store.update_job(self.job.id, status="cancelled", finished_at=utcnow(), progress=0.0)
@@ -1046,6 +1051,8 @@ class PipelineRunner:
         self,
         clips: list[Clip],
         source_path: Path,
+        transcript: Any | None = None,
+        crop_paths: dict[str, Any] | None = None,
     ) -> dict[str, Path]:
         stage = Stage.AUDIO_MIX
         self._check_cancelled()
@@ -1058,6 +1065,15 @@ class PipelineRunner:
         bgm_enabled = bool(self.job.settings.get("bgm_enabled", False))
         bgm_asset_id = self.job.settings.get("bgm_asset_id")
         bgm_asset = None
+
+        selected_style = (
+            self.job.settings.get("caption_style")
+            or (self.job.settings.get("export") or {}).get("caption_style")
+            or getattr(self.settings.export, "caption_style", None)
+            or ""
+        )
+        is_viral = any(v in str(selected_style).lower() for v in ("viral", "speed", "streamer", "one_word"))
+        sfx_enabled = bool(self.job.settings.get("sfx_enabled", is_viral))
 
         if bgm_enabled:
             if bgm_asset_id:
@@ -1090,6 +1106,9 @@ class PipelineRunner:
 
             self._emit(stage, index / max(1, total), f"Mixing background audio for clip {index + 1}/{total}")
 
+            clip_words = transcript.slice(clip.start_word, clip.end_word) if transcript else None
+            clip_crop_path = (crop_paths or {}).get(clip.id)
+
             record = engine.mix_clip(
                 clip=clip,
                 speech_input_path=source_path,
@@ -1097,6 +1116,9 @@ class PipelineRunner:
                 duration_s=clip_dur,
                 bgm_asset=bgm_asset,
                 output_path=clip_audio_out,
+                words=clip_words,
+                crop_path=clip_crop_path,
+                sfx_enabled=sfx_enabled,
             )
             mix_records.append(record)
             if clip_audio_out.is_file():

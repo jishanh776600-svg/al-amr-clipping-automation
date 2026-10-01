@@ -53,34 +53,83 @@ class BGMMixingEngine:
         duration_s: float,
         bgm_asset: BGMAssetRecord | None,
         output_path: Path,
+        words: list[Any] | None = None,
+        crop_path: Any | None = None,
+        hook_window: tuple[float, float] | None = None,
+        climax_window: tuple[float, float] | None = None,
+        sfx_enabled: bool = False,
     ) -> BGMMixRecord:
-        """Mixes selected BGM asset under speech audio for a clip.
-
-        If bgm_asset is None, extracts/copies speech audio untouched (No BGM mode).
-        If bgm_asset is specified but does not exist, raises FileNotFoundError.
-        """
+        """Mixes selected BGM asset and contextual sound effects under speech audio for a clip."""
         start_time = time.time()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. No BGM Mode: Preserve original speech cleanly
+        # Plan contextual sound effects if enabled
+        sfx_events = []
+        sfx_track_path: Path | None = None
+        if sfx_enabled and words:
+            try:
+                from autoclip.pipeline.sfx import SFXEngine
+                sfx_engine = SFXEngine()
+                sfx_events = sfx_engine.plan_sfx_events(
+                    words=words,
+                    crop_path=crop_path,
+                    duration_s=duration_s,
+                    hook_window=hook_window,
+                    climax_window=climax_window,
+                )
+                if sfx_events:
+                    sfx_track_path = output_path.parent / "sfx_track.m4a"
+                    sfx_engine.render_sfx_track(sfx_events, duration_s=duration_s, output_path=sfx_track_path)
+                    log.info("Clip %s rendered %d sound effects into %s", clip.id, len(sfx_events), sfx_track_path)
+            except Exception as e:
+                log.warning("SFX generation failed for clip %s: %s; continuing without SFX", clip.id, e)
+                sfx_events = []
+                sfx_track_path = None
+
+        # 1. No BGM Mode: Preserve speech cleanly + optional SFX
         if bgm_asset is None:
-            log.info("No BGM selected for clip %s; extracting speech audio directly", clip.id)
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-ss", str(speech_start_offset_s),
-                "-t", str(duration_s + 1.0),
-                "-i", str(speech_input_path),
-                "-filter_complex",
-                f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={duration_s:.3f},atrim=0:{duration_s:.3f}[out_a]",
-                "-map", "[out_a]",
-                "-vn",
-                "-sn",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "48000",
-                str(output_path),
-            ]
+            log.info("No BGM selected for clip %s; extracting speech audio (SFX count: %d)", clip.id, len(sfx_events))
+            if sfx_track_path and sfx_track_path.is_file():
+                filter_complex = (
+                    f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                    f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
+                    f"apad=whole_dur={duration_s:.3f}[speech_main];"
+                    f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,volume=0.85,apad=whole_dur={duration_s:.3f}[sfx_main];"
+                    f"[speech_main][sfx_main]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+                    f"atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                    f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
+                )
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", str(speech_start_offset_s),
+                    "-t", str(duration_s + 1.0),
+                    "-i", str(speech_input_path),
+                    "-i", str(sfx_track_path),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out_a]",
+                    "-vn", "-sn",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-ar", "48000",
+                    str(output_path),
+                ]
+            else:
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-ss", str(speech_start_offset_s),
+                    "-t", str(duration_s + 1.0),
+                    "-i", str(speech_input_path),
+                    "-filter_complex",
+                    f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={duration_s:.3f},atrim=0:{duration_s:.3f}[out_a]",
+                    "-map", "[out_a]",
+                    "-vn",
+                    "-sn",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-ar", "48000",
+                    str(output_path),
+                ]
             subprocess.run(cmd, capture_output=True, text=True, check=True)
             elapsed_s = round(time.time() - start_time, 3)
 
@@ -98,7 +147,7 @@ class BGMMixingEngine:
                 loop_trim_decision="none",
                 ducking_applied=False,
                 ducking_parameters={},
-                normalization_applied=False,
+                normalization_applied=bool(sfx_track_path),
                 integrated_lufs=gate_res.integrated_lufs,
                 true_peak_db=gate_res.true_peak_db,
                 quality_score=gate_res.quality_score,
@@ -107,7 +156,13 @@ class BGMMixingEngine:
                 rejection_reasons=gate_res.rejection_reasons,
                 processing_time_s=elapsed_s,
                 mixed_audio_path=str(output_path),
-                telemetry={"mode": "no_bgm", "gate_metrics": gate_res.metrics},
+                telemetry={
+                    "mode": "no_bgm",
+                    "gate_metrics": gate_res.metrics,
+                    "sfx_applied": bool(sfx_events),
+                    "sfx_count": len(sfx_events),
+                    "sfx_events": [e.to_dict() for e in sfx_events],
+                },
                 created_at=utcnow(),
                 updated_at=utcnow(),
             )
@@ -150,33 +205,48 @@ class BGMMixingEngine:
         else:
             cmd.extend(["-i", str(bgm_path)])
 
-        # Build calibrated speech-dominant filtergraph:
-        # 1. Trim speech precisely to duration_s and reset PTS
-        # 2. Normalize speech presence (-14.0 LUFS)
-        # 3. Pad speech with apad so amix does not prematurely terminate if speech ends before duration_s
-        # 4. Pre-attenuate BGM bed so it naturally sits ~18 dB below speech
-        # 5. Sidechain ducking aggressively ducks BGM further when speech is active
-        # 6. Mix speech and BGM with dropout_transition=0, clamp strictly to duration_s
-        # 7. Limit peaks to protect against clipping
-        filter_complex = (
-            f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
-            f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
-            f"asplit=2[speech_raw][speech_sc];"
-            f"[speech_raw]apad=whole_dur={duration_s:.3f}[speech_main];"
-            f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
-            f"afade=t=in:st=0:d={self.config.fade_in_s},"
-            f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
-            f"volume=-{self.config.duck_attenuation_db:.1f}dB[bgm_faded];"
-            f"[bgm_faded][speech_sc]sidechaincompress="
-            f"threshold={self.config.threshold}:"
-            f"ratio={self.config.ratio}:"
-            f"attack={self.config.attack_ms}:"
-            f"release={self.config.release_ms}[bgm_ducked];"
-            f"[speech_main][bgm_ducked]amix="
-            f"inputs=2:duration=first:dropout_transition=0:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight},"
-            f"atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
-            f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
-        )
+        if sfx_track_path and sfx_track_path.is_file():
+            cmd.extend(["-i", str(sfx_track_path)])
+            filter_complex = (
+                f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
+                f"asplit=2[speech_raw][speech_sc];"
+                f"[speech_raw]apad=whole_dur={duration_s:.3f}[speech_main];"
+                f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"afade=t=in:st=0:d={self.config.fade_in_s},"
+                f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
+                f"volume=-{self.config.duck_attenuation_db:.1f}dB[bgm_faded];"
+                f"[bgm_faded][speech_sc]sidechaincompress="
+                f"threshold={self.config.threshold}:"
+                f"ratio={self.config.ratio}:"
+                f"attack={self.config.attack_ms}:"
+                f"release={self.config.release_ms}[bgm_ducked];"
+                f"[2:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,volume=0.85,apad=whole_dur={duration_s:.3f}[sfx_main];"
+                f"[speech_main][bgm_ducked][sfx_main]amix="
+                f"inputs=3:duration=first:dropout_transition=0:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight} 0.85,"
+                f"atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
+            )
+        else:
+            filter_complex = (
+                f"[0:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"loudnorm=I={self.config.target_lufs}:TP={self.config.true_peak_limit}:LRA={self.config.lra},"
+                f"asplit=2[speech_raw][speech_sc];"
+                f"[speech_raw]apad=whole_dur={duration_s:.3f}[speech_main];"
+                f"[1:a]atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"afade=t=in:st=0:d={self.config.fade_in_s},"
+                f"afade=t=out:st={fade_out_st:.3f}:d={self.config.fade_out_s},"
+                f"volume=-{self.config.duck_attenuation_db:.1f}dB[bgm_faded];"
+                f"[bgm_faded][speech_sc]sidechaincompress="
+                f"threshold={self.config.threshold}:"
+                f"ratio={self.config.ratio}:"
+                f"attack={self.config.attack_ms}:"
+                f"release={self.config.release_ms}[bgm_ducked];"
+                f"[speech_main][bgm_ducked]amix="
+                f"inputs=2:duration=first:dropout_transition=0:normalize=0:weights={self.config.speech_weight} {self.config.bgm_weight},"
+                f"atrim=0:{duration_s:.3f},asetpts=PTS-STARTPTS,"
+                f"alimiter=limit={self.config.limiter_limit}:attack=5:release=50:asc=1[out_a]"
+            )
 
         cmd.extend([
             "-filter_complex", filter_complex,
@@ -227,6 +297,9 @@ class BGMMixingEngine:
                 "loop_trim_decision": loop_trim_decision,
                 "gate_metrics": gate_res.metrics,
                 "ducking_config": self.config.to_dict(),
+                "sfx_applied": bool(sfx_events),
+                "sfx_count": len(sfx_events),
+                "sfx_events": [e.to_dict() for e in sfx_events],
             },
             created_at=utcnow(),
             updated_at=utcnow(),
