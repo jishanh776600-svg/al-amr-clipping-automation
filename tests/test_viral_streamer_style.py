@@ -33,6 +33,8 @@ def test_viral_streamer_preset_registration():
     assert get_style("ishowspeed").key == "viral_streamer_kinetic"
     assert get_style("streamer").key == "viral_streamer_kinetic"
     assert get_style("streamer_kinetic").key == "viral_streamer_kinetic"
+    assert get_style("all_in_one_viral").key == "viral_streamer_kinetic"
+    assert get_style("all in one viral").key == "viral_streamer_kinetic"
 
 
     # Test neon green preset

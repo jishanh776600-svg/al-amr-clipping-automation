@@ -218,6 +218,23 @@ class PipelineRunner:
         if operator_filter:
             self.settings.export.visual_filter = operator_filter
 
+        # Check for preset / bundle configurations like 'all_in_one_viral'
+        editing_preset = (
+            self.job.settings.get("editing_preset")
+            or self.job.settings.get("preset")
+            or operator_style
+        )
+        if editing_preset and str(editing_preset).strip().lower().replace("-", "_").replace(" ", "_") in (
+            "all_in_one_viral",
+            "all_in_one",
+        ):
+            operator_style = "viral_streamer_kinetic"
+            self.settings.export.caption_style = "viral_streamer_kinetic"
+            self.settings.export.visual_filter = "viral_vibrant"
+            self.job.settings["caption_style"] = "viral_streamer_kinetic"
+            self.job.settings["visual_filter"] = "viral_vibrant"
+            self.job.settings["sfx_enabled"] = True
+
         campaign_data = self.job.settings.get("campaign")
         if campaign_data:
             campaign = CampaignBrief.model_validate(campaign_data)

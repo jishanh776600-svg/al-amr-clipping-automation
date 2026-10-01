@@ -726,6 +726,9 @@ STYLE_ALIASES: dict[str, str] = {
     "neon_green": "viral_neon_green",
     "one_word": "viral_one_word",
     "viral_single": "viral_one_word",
+    "all_in_one_viral": "viral_streamer_kinetic",
+    "all in one viral": "viral_streamer_kinetic",
+    "all_in_one": "viral_streamer_kinetic",
 }
 
 
