@@ -200,7 +200,88 @@ KYLE_KIRSHNER_CORE = CaptionStyle(
     cta_scale=115,
 )
 
+VIRAL_STREAMER_KINETIC = CaptionStyle(
+    key="viral_streamer_kinetic",
+    label="Viral Streamer Kinetic",
+    description="Viral YouTube Shorts & TikTok streamer style: Anton all-caps, 1-2 word kinetic pop, neon yellow active highlight, thick 4.5px stroke, and punchy scale animation.",
+    font="Anton",
+    font_file="Anton-Regular.ttf",
+    size_ratio=0.060,
+    primary="#FFFFFF",
+    accent="#FFE600",
+    outline="#000000",
+    outline_width=4.5,
+    shadow=2.0,
+    bold=True,
+    all_caps=True,
+    margin_v_ratio=0.22,
+    max_words=2,
+    animation="viral_pop",
+    scale_percent=120,
+    hook_accent="#FFE600",
+    hook_scale=122,
+    climax_accent="#00FF66",
+    climax_scale=124,
+    cta_accent="#00FF66",
+    cta_scale=120,
+)
+
+VIRAL_NEON_GREEN = CaptionStyle(
+    key="viral_neon_green",
+    label="Viral Neon Green",
+    description="High-energy stream highlight style with vibrant neon green active word highlight, Anton all-caps, and 1-2 word bursts.",
+    font="Anton",
+    font_file="Anton-Regular.ttf",
+    size_ratio=0.060,
+    primary="#FFFFFF",
+    accent="#00FF66",
+    outline="#000000",
+    outline_width=4.5,
+    shadow=2.0,
+    bold=True,
+    all_caps=True,
+    margin_v_ratio=0.22,
+    max_words=2,
+    animation="viral_pop",
+    scale_percent=120,
+    hook_accent="#00FF66",
+    hook_scale=122,
+    climax_accent="#FFE600",
+    climax_scale=124,
+    cta_accent="#00FF66",
+    cta_scale=120,
+)
+
+VIRAL_ONE_WORD = CaptionStyle(
+    key="viral_one_word",
+    label="Viral One Word Pop",
+    description="Hyper-retention 1-word-at-a-time pop captions in Anton all-caps with alternating neon yellow and white highlights.",
+    font="Anton",
+    font_file="Anton-Regular.ttf",
+    size_ratio=0.064,
+    primary="#FFFFFF",
+    accent="#FFE600",
+    outline="#000000",
+    outline_width=5.0,
+    shadow=2.0,
+    bold=True,
+    all_caps=True,
+    margin_v_ratio=0.24,
+    max_words=1,
+    animation="viral_pop",
+    scale_percent=122,
+    hook_accent="#FFE600",
+    hook_scale=125,
+    climax_accent="#00FF66",
+    climax_scale=125,
+    cta_accent="#00FF66",
+    cta_scale=120,
+)
+
 PRESETS: dict[str, CaptionStyle] = {
+    "viral_streamer_kinetic": VIRAL_STREAMER_KINETIC,
+    "viral_neon_green": VIRAL_NEON_GREEN,
+    "viral_one_word": VIRAL_ONE_WORD,
     "classic_professional": CLASSIC_PROFESSIONAL,
     "rich_dynamic": RICH_DYNAMIC,
     "kyle_kirshner_core": KYLE_KIRSHNER_CORE,
@@ -635,6 +716,16 @@ STYLE_ALIASES: dict[str, str] = {
     "kyle": "kyle_kirshner_core",
     "kyle_kirshner": "kyle_kirshner_core",
     "reference": "kyle_kirshner_core",
+    "viral": "viral_streamer_kinetic",
+    "viral_streamer": "viral_streamer_kinetic",
+    "streamer": "viral_streamer_kinetic",
+    "streamer_kinetic": "viral_streamer_kinetic",
+    "speed": "viral_streamer_kinetic",
+    "ishowspeed": "viral_streamer_kinetic",
+    "viral_green": "viral_neon_green",
+    "neon_green": "viral_neon_green",
+    "one_word": "viral_one_word",
+    "viral_single": "viral_one_word",
 }
 
 
@@ -927,6 +1018,53 @@ def _phrase_pop_events(
     return events
 
 
+def _viral_pop_events(
+    group: CaptionGroup,
+    style: CaptionStyle,
+    offset: float,
+    hook_window: tuple[float, float] | None = None,
+    climax_window: tuple[float, float] | None = None,
+    cta_window: tuple[float, float] | None = None,
+) -> list[pysubs2.SSAEvent]:
+    """Emit punchy viral streamer dialog events (1-2 words kinetic pop).
+
+    Active spoken word pops with vibrant accent (Neon Yellow/Green) and 120%+ scale tag,
+    while surrounding words in the group stay crisp high-contrast white.
+    """
+    events: list[pysubs2.SSAEvent] = []
+    for active, word in enumerate(group.words):
+        w_time = word.start
+        accent = style.accent or "#FFE600"
+        scale = style.scale_percent if style.scale_percent else 120
+
+        if hook_window and (hook_window[0] <= w_time <= hook_window[1]) and style.hook_accent:
+            accent = style.hook_accent
+            scale = max(scale, style.hook_scale)
+        elif climax_window and (climax_window[0] <= w_time <= climax_window[1]) and style.climax_accent:
+            accent = style.climax_accent
+            scale = max(scale, style.climax_scale)
+        elif cta_window and (cta_window[0] <= w_time <= cta_window[1]) and style.cta_accent:
+            accent = style.cta_accent
+            scale = max(scale, style.cta_scale)
+
+        accent_tag = rf"\c{ass_colour_override(accent)}"
+        scale_tag = rf"\fscx{scale}\fscy{scale}"
+
+        rendered: list[str] = []
+        for index, other in enumerate(group.words):
+            text = _text_of(other, style)
+            if index == active:
+                rendered.append(f"{{{accent_tag}{scale_tag}}}{text}{{\\r}}")
+            else:
+                rendered.append(f"{{\\c{ass_colour_override(style.primary)}}}{text}{{\\r}}")
+
+        end = word.end if active + 1 < len(group.words) else group.end
+        next_start = group.words[active + 1].start if active + 1 < len(group.words) else end
+        events.append(_event(word.start, max(end, next_start), " ".join(rendered), offset))
+
+    return events
+
+
 def create_hook_headline_event(
     headline: str,
     start_s: float = 0.0,
@@ -1044,6 +1182,17 @@ def build_ass(
         elif style.animation == "phrase_pop":
             subs.events.extend(
                 _phrase_pop_events(
+                    group,
+                    style,
+                    time_offset_s,
+                    hook_window=hook_window,
+                    climax_window=climax_window,
+                    cta_window=cta_window,
+                )
+            )
+        elif style.animation == "viral_pop":
+            subs.events.extend(
+                _viral_pop_events(
                     group,
                     style,
                     time_offset_s,

@@ -233,15 +233,16 @@ def _fit_chain(source_label: str, index: int, out_w: int, out_h: int) -> list[st
 def _split_chain(
     source_label: str, segment: CropSegment, index: int, out_w: int, out_h: int
 ) -> list[str]:
-    """Render a stacked split-screen for two conversational subjects."""
+    """Render a stacked split-screen for two conversational subjects or reaction facecam + screen."""
     half_h = out_h // 2
     crop1 = segment_crop_filter(segment)
     crop2 = segment_secondary_crop_filter(segment)
+    divider_y = half_h - 2
     return [
         f"{source_label}split=2[sp1_{index}][sp2_{index}]",
         f"[sp1_{index}]{crop1},scale={out_w}:{half_h}:flags=lanczos[top{index}]",
         f"[sp2_{index}]{crop2},scale={out_w}:{half_h}:flags=lanczos[bot{index}]",
-        f"[top{index}][bot{index}]vstack=inputs=2,setsar=1,format=yuv420p[v{index}]",
+        f"[top{index}][bot{index}]vstack=inputs=2,drawbox=x=0:y={divider_y}:w={out_w}:h=4:color=white@0.85:t=fill,setsar=1,format=yuv420p[v{index}]",
     ]
 
 

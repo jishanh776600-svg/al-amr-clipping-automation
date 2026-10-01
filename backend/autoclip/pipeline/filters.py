@@ -34,6 +34,18 @@ FILTERS: list[VisualFilter] = [
         ffmpeg_expr="null",
     ),
     VisualFilter(
+        id="viral_vibrant",
+        name="Viral Vibrant",
+        description="High-energy streamer saturation, micro-contrast, and sharpness punch",
+        ffmpeg_expr="eq=contrast=1.18:saturation=1.28:brightness=0.01,unsharp=3:3:0.8:3:3:0.0",
+    ),
+    VisualFilter(
+        id="streamer_hdr",
+        name="Streamer HDR",
+        description="Punchy dynamic range with vivid highlights and deep crushed blacks",
+        ffmpeg_expr="eq=contrast=1.22:saturation=1.32:brightness=-0.01,unsharp=5:5:1.0:5:5:0.0",
+    ),
+    VisualFilter(
         id="black_and_white",
         name="Black & White",
         description="Balanced black and white conversion",
@@ -157,6 +169,10 @@ _FILTER_INDEX["default"] = _FILTER_INDEX["original"]
 _FILTER_INDEX["bw"] = _FILTER_INDEX["black_and_white"]
 _FILTER_INDEX["b&w"] = _FILTER_INDEX["black_and_white"]
 _FILTER_INDEX["black_&_white"] = _FILTER_INDEX["black_and_white"]
+_FILTER_INDEX["viral"] = _FILTER_INDEX["viral_vibrant"]
+_FILTER_INDEX["streamer"] = _FILTER_INDEX["viral_vibrant"]
+_FILTER_INDEX["vibrant"] = _FILTER_INDEX["viral_vibrant"]
+_FILTER_INDEX["hdr"] = _FILTER_INDEX["streamer_hdr"]
 
 
 import logging
