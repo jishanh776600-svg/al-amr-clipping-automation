@@ -1,4 +1,4 @@
-﻿"""SFX Engine for viral streamer and retention audio enhancement."""
+"""SFX Engine for viral streamer and retention audio enhancement."""
 
 from __future__ import annotations
 
@@ -30,14 +30,28 @@ SHOCK_REGEX = re.compile(
 class SFXEngine:
     """Detects and renders synchronized sound effects for viral short-form clips."""
 
-    def __init__(self, sfx_dir: Path | None = None) -> None:
+    def __init__(self, sfx_dir: Path | None = None, use_extracted_ref: bool = False) -> None:
         self.sfx_dir = sfx_dir or SFX_DIR
+        self.use_extracted_ref = use_extracted_ref
 
     def get_asset_path(self, sound_type: str) -> Path | None:
-        candidates = [
+        candidates = []
+        if self.use_extracted_ref:
+            ref_dir = self.sfx_dir / "extracted_ref"
+            ref_map = {
+                "boom": "ref_vine_boom.wav",
+                "whoosh": "ref_whoosh_cut.wav",
+                "pop": "ref_impact_thud.wav",
+                "riser": "ref_riser_whoosh.wav",
+                "swoosh": "ref_swoosh.wav",
+            }
+            if sound_type in ref_map:
+                candidates.append(ref_dir / ref_map[sound_type])
+
+        candidates.extend([
             self.sfx_dir / f"{sound_type}.wav",
             self.sfx_dir / f"{sound_type}.mp3",
-        ]
+        ])
         for c in candidates:
             if c.is_file():
                 return c
