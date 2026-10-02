@@ -95,6 +95,7 @@ def materialize_valid_clip_media(
     clip_id: str,
     dest_path: Path | None = None,
     preferred_source: str | None = None,
+    drive_file_id: str | None = None,
 ) -> Path | None:
     """Materialize a genuine, verified MP4 video file for clip_id.
 
@@ -195,17 +196,17 @@ def materialize_valid_clip_media(
             log.warning("Telegram media download attempt failed for clip %s: %s", clip_id, tg_err)
 
     # Step 4: Check Google Drive
-    drive_file_id = None
-    for exp in exports:
-        if exp.drive_file_id:
-            drive_file_id = exp.drive_file_id
-            break
-    if not drive_file_id and final_render and final_render.telemetry:
-        drive_file_id = final_render.telemetry.get("drive_file_id")
     if not drive_file_id:
-        approval = store.get_clip_approval(clip_id)
-        if approval and approval.telemetry:
-            drive_file_id = approval.telemetry.get("drive_file_id")
+        for exp in exports:
+            if exp.drive_file_id:
+                drive_file_id = exp.drive_file_id
+                break
+        if not drive_file_id and final_render and final_render.telemetry:
+            drive_file_id = final_render.telemetry.get("drive_file_id")
+        if not drive_file_id:
+            approval = store.get_clip_approval(clip_id)
+            if approval and approval.telemetry:
+                drive_file_id = approval.telemetry.get("drive_file_id")
 
     if drive_file_id:
         try:

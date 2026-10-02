@@ -294,7 +294,13 @@ class TelegramApprovalGate:
             if media_path and is_valid_mp4(media_path):
                 effective_path = media_path
             else:
-                effective_path = await asyncio.to_thread(materialize_valid_clip_media, cid)
+                effective_path = await asyncio.to_thread(
+                    materialize_valid_clip_media,
+                    cid,
+                    None,
+                    None,
+                    clip.drive_file_id,
+                )
 
             caption = (
                 f"🎥 <b>Clip #{idx} of {REQUIRED_VALID_CLIPS_COUNT}</b>\n"

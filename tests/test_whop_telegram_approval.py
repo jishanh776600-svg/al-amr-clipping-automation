@@ -956,3 +956,160 @@ async def test_callback_race_condition_conflict_detected(temp_ledger):
         res = await gate.handle_callback(update)
         assert res["status"] == "conflict_already_updated"
 
+
+# ==============================================================================
+# SECTION H: STEP 7.1 DRIVE-TO-TELEGRAM MEDIA RESOLUTION & CONFIG DECOUPLING
+# ==============================================================================
+
+def test_autoclip_config_decoupled_from_whop_dry_run(monkeypatch):
+    """Verifies that AUTOCLIP_DRY_RUN=false operates independently from WHOP_DRY_RUN=true."""
+    from whop.config import AutoClipConfig
+
+    monkeypatch.setenv("WHOP_DRY_RUN", "true")
+    monkeypatch.setenv("AUTOCLIP_DRY_RUN", "false")
+
+    cfg = AutoClipConfig.from_env()
+    assert cfg.dry_run is False
+
+    monkeypatch.setenv("AUTOCLIP_DRY_RUN", "true")
+    cfg2 = AutoClipConfig.from_env()
+    assert cfg2.dry_run is True
+
+
+def test_autoclip_client_bypasses_cached_dry_run_job_on_live_request(temp_ledger):
+    """Verifies that AutoClipClient with dry_run=False does not reuse a simulated dry_run_ job from the ledger."""
+    from whop.autoclip_client import AutoClipClient
+    from whop.config import AutoClipConfig
+    from whop.models import WhopAutoClipJobRecord, WhopCampaignBrief
+
+    brief = WhopCampaignBrief(
+        campaign_id="camp_live_test",
+        title="Live Test Campaign",
+        campaign_url="https://whop.com/live",
+        allowed_sources=["https://youtube.com/watch?v=live123"],
+        guideline_hash="ghash_live123",
+    )
+
+    temp_ledger.save_campaign(
+        CampaignRecord(
+            campaign_id="camp_live_test",
+            title="Live Test Campaign",
+            campaign_url="https://whop.com/live",
+        )
+    )
+
+    client = AutoClipClient(config=AutoClipConfig(dry_run=False, api_token="tok"), ledger=temp_ledger)
+    payload = client.build_job_payload(brief)
+
+    # Pre-populate ledger with a simulated dry_run job
+    dry_rec = WhopAutoClipJobRecord(
+        campaign_id=brief.campaign_id,
+        guideline_hash=payload.guideline_hash,
+        autoclip_job_id=f"dry_run_{payload.idempotency_key[:16]}",
+        idempotency_key=payload.idempotency_key,
+        status="dry_run_validated",
+        request_hash=payload.request_hash,
+        source_hash=payload.source_hash,
+    )
+    temp_ledger.save_autoclip_job(dry_rec)
+
+    # When create_job is called in live mode, it should mock-call the server rather than reusing dry_run_
+    with patch.object(client, "_request", return_value={"id": "real_job_999", "status": "queued"}):
+        res = client.create_job(brief)
+        assert res.job_id == "real_job_999"
+        assert not res.job_id.startswith("dry_run_")
+
+
+@pytest.mark.asyncio
+async def test_telegram_approval_passes_drive_file_id_to_materializer(temp_ledger):
+    """Verifies that dispatch_review_session passes clip.drive_file_id to materialize_valid_clip_media."""
+    campaign_id = "camp_drive_res"
+    temp_ledger.save_campaign(
+        CampaignRecord(
+            campaign_id=campaign_id,
+            title="Drive Resolution Test",
+            campaign_url="https://whop.com/dr",
+            current_state=CampaignState.RENDER_READY,
+        )
+    )
+
+    clips = [
+        ClipQARecord(
+            clip_id=f"c_{i}",
+            candidate_index=i,
+            technical_qa=ClipTechnicalQAResult(
+                clip_id=f"c_{i}",
+                duration_s=25.0,
+                width=1080,
+                height=1920,
+                fps=30.0,
+                video_codec="h264",
+                audio_codec="aac",
+                channels=2,
+                sample_rate=48000,
+                mean_volume_db=-14.0,
+                true_peak_db=-1.5,
+                av_sync_diff_s=0.0,
+                decode_ok=True,
+                broll_coverage_pct=35.0,
+                longest_a_roll_gap_s=0.0,
+                file_size_bytes=1048576,
+                warnings=[],
+                rejection_reasons=[],
+                is_valid=True,
+            ),
+            compliance_results=[],
+            artifact_path="/nonexistent/local/path/final.mp4",
+            drive_file_id=f"drive_fid_{i}",
+            is_durable=True,
+            quality_score=95.0,
+            is_valid=True,
+        )
+        for i in range(1, 6)
+    ]
+
+    qa_report = WhopJobQAReport(
+        campaign_id=campaign_id,
+        guideline_hash="gh_dr",
+        autoclip_job_id="job_dr",
+        artifact_hash="art_dr",
+        qa_status="RENDER_PASS",
+        overall_quality_score=95.0,
+        valid_clips_count=5,
+        total_clips_evaluated=5,
+        clips=clips,
+        compliance_summary={},
+        unsupported_rules=[],
+        warnings=[],
+        failures=[],
+    )
+    temp_ledger.save_qa_record(qa_report)
+
+    gate = TelegramApprovalGate(ledger=temp_ledger)
+
+    recorded_calls = []
+
+    def mock_materialize(cid, dest_path=None, preferred_source=None, drive_file_id=None):
+        recorded_calls.append((cid, drive_file_id))
+        # Return a dummy valid path or None
+        return None
+
+    with patch("whop.telegram_approval.get_telegram_config", return_value=("mock_bot_tok", "mock_chat_id", None)), \
+         patch("whop.telegram_approval._safe_send_telegram_message", new_callable=AsyncMock) as mock_msg, \
+         patch("whop.telegram_approval.materialize_valid_clip_media", side_effect=mock_materialize):
+
+        mock_msg.return_value = {"ok": True, "result": {"message_id": 999}}
+
+        session = await gate.dispatch_review_session(
+            campaign_id=campaign_id,
+            autoclip_job_id="job_dr",
+            qa_report=qa_report,
+        )
+
+        assert session is not None
+        assert len(recorded_calls) == 5
+        for idx, (cid, dfid) in enumerate(recorded_calls, 1):
+            assert cid == f"c_{idx}"
+            assert dfid == f"drive_fid_{idx}"
+
+

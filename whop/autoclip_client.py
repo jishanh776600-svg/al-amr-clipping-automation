@@ -579,24 +579,31 @@ class AutoClipClient:
                     payload.campaign_id, payload.guideline_hash, payload.source_hash
                 )
             if existing:
-                log.info(
-                    "Reusing existing AutoClip job '%s' for campaign '%s' (idempotency key: %s)",
-                    existing.autoclip_job_id,
-                    brief.campaign_id,
-                    payload.idempotency_key[:12],
-                )
-                tracking_url = f"{self.base_url}/jobs/{existing.autoclip_job_id}"
-                return AutoClipJobResult(
-                    job_id=existing.autoclip_job_id,
-                    campaign_id=existing.campaign_id,
-                    status=existing.status,
-                    normalized_status=normalize_autoclip_status(existing.status),
-                    tracking_url=tracking_url,
-                    idempotency_key=existing.idempotency_key,
-                    reused=True,
-                    created_at=existing.created_at,
-                    raw_response=json.loads(existing.metadata_json) if existing.metadata_json else {},
-                )
+                # If we are running in real execution mode, do NOT reuse a simulated dry_run job
+                if not self.config.dry_run and str(existing.autoclip_job_id).startswith("dry_run_"):
+                    log.info(
+                        "Found simulated dry_run job '%s' in ledger, but live execution is requested; bypassing mock cache to dispatch real job.",
+                        existing.autoclip_job_id,
+                    )
+                else:
+                    log.info(
+                        "Reusing existing AutoClip job '%s' for campaign '%s' (idempotency key: %s)",
+                        existing.autoclip_job_id,
+                        brief.campaign_id,
+                        payload.idempotency_key[:12],
+                    )
+                    tracking_url = f"{self.base_url}/jobs/{existing.autoclip_job_id}"
+                    return AutoClipJobResult(
+                        job_id=existing.autoclip_job_id,
+                        campaign_id=existing.campaign_id,
+                        status=existing.status,
+                        normalized_status=normalize_autoclip_status(existing.status),
+                        tracking_url=tracking_url,
+                        idempotency_key=existing.idempotency_key,
+                        reused=True,
+                        created_at=existing.created_at,
+                        raw_response=json.loads(existing.metadata_json) if existing.metadata_json else {},
+                    )
 
         # 2. Dry-Run Safety Check
         if self.config.dry_run:

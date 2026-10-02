@@ -175,8 +175,13 @@ class AutoClipConfig:
             or "al amr jish2#ji"
         ).strip()
 
-        dry_run_str = os.getenv("WHOP_DRY_RUN", "true").strip().lower()
-        dry_run = dry_run_str not in ("false", "0", "no", "off")
+        # Check AUTOCLIP_DRY_RUN first so browser protection (WHOP_DRY_RUN=true) does NOT prevent real AutoClip jobs
+        autoclip_dry_str = os.getenv("AUTOCLIP_DRY_RUN")
+        if autoclip_dry_str is not None:
+            dry_run = autoclip_dry_str.strip().lower() not in ("false", "0", "no", "off")
+        else:
+            dry_run_str = os.getenv("WHOP_DRY_RUN", "true").strip().lower()
+            dry_run = dry_run_str not in ("false", "0", "no", "off")
 
         timeout_str = os.getenv("AUTOCLIP_TIMEOUT_S", "15.0").strip()
         try:

@@ -30,6 +30,9 @@ from backend.autoclip.telegram.review_bot import (
     get_telegram_config,
     is_telegram_configured,
 )
+from whop.config import AutoClipConfig
+from whop.autoclip_client import AutoClipClient
+from whop.quality_verifier import QualityVerifier
 from whop.ledger import CampaignLedger
 from whop.models import (
     CampaignRecord,
@@ -141,19 +144,58 @@ async def main():
     qa_records = ledger.list_qa_records()
     print(f"[*] Found {len(qa_records)} QA records in persistent ledger.")
 
+    # 5a. Check Live AutoClip Control Plane on Render
+    client = AutoClipClient(config=AutoClipConfig.from_env(), ledger=ledger)
+    print(f"[*] AutoClip Control Plane URL: {client.base_url} (dry_run={client.config.dry_run})")
+
+    active_cloud_job = None
+    recent_jobs = ledger.list_autoclip_jobs()
+    for j in recent_jobs:
+        if not j.autoclip_job_id.startswith("dry_run_"):
+            try:
+                st = client.get_job_status(j.autoclip_job_id)
+                active_cloud_job = st
+                print(f"[*] Found Live AutoClip Job on Control Plane: {j.autoclip_job_id}")
+                print(f"    - Status: {st.get('status')}")
+                print(f"    - Current Stage: {st.get('current_stage')}")
+                print(f"    - Progress: {st.get('progress') * 100:.1f}%")
+                print(f"    - Dispatch Mode: {st.get('dispatch_mode')}")
+                print(f"    - Tracking URL: {st.get('tracking_url')}")
+                if st.get("status") == "done":
+                    # Retrieve final renders from control plane
+                    renders = client.get_job_final_renders(j.autoclip_job_id)
+                    print(f"    - Completed Final Renders: {len(renders)}")
+                    if len(renders) >= 5:
+                        verifier = QualityVerifier(ledger=ledger)
+                        qa_report = verifier.verify_job_renders(
+                            campaign_id=j.campaign_id,
+                            autoclip_job_id=j.autoclip_job_id,
+                            candidates=renders,
+                            job_status_info=st,
+                            dry_run=False,
+                        )
+                        qa_records.insert(0, qa_report)
+                break
+            except Exception as job_err:
+                print(f"[-] Could not query control plane for job {j.autoclip_job_id}: {job_err}")
+
     genuine_5clip_report: Optional[WhopJobQAReport] = None
     gate = TelegramApprovalGate(ledger=ledger)
 
     for rec in qa_records:
+        if rec.autoclip_job_id.startswith(("sim_", "dry_run_")):
+            continue
         if rec.qa_status in ("RENDER_PASS", "RENDER_WARN") and rec.valid_clips_count == 5:
             eligible, reasons = gate.validate_eligibility(rec.campaign_id, rec)
             if eligible:
-                # Strictly check physical existence of genuine MP4 media on disk or storage
+                # Strictly check physical existence of genuine MP4 media on disk or Drive
                 valid_clips = [c for c in rec.clips if c.is_valid]
                 all_physical_exist = True
                 for c in valid_clips:
                     p = Path(c.artifact_path) if c.artifact_path else None
-                    if not (p and p.is_file() and p.stat().st_size >= 1024):
+                    local_ok = p and p.is_file() and p.stat().st_size >= 1024
+                    drive_ok = bool(c.drive_file_id and str(c.drive_file_id).strip())
+                    if not (local_ok or drive_ok):
                         all_physical_exist = False
                         break
                 if all_physical_exist:
@@ -180,6 +222,12 @@ async def main():
             print(f"    - Review State: {session.review_state}")
         except Exception as e:
             print(f"[-] Real Telegram delivery encountered error: {e}")
+    elif active_cloud_job and active_cloud_job.get("status") in ("running", "queued", "dispatching"):
+        print("[!] PRODUCTION FINDING: CLOUD_RENDER_IN_PROGRESS")
+        print(f"    - Job ID: {active_cloud_job.get('job_id')}")
+        print(f"    - Current Stage: {active_cloud_job.get('current_stage')}")
+        print(f"    - Progress: {active_cloud_job.get('progress') * 100:.1f}%")
+        print("    - Status: BLOCKED_AT = CLOUD_RENDER_IN_PROGRESS (Awaiting GitHub Actions worker completion)")
     else:
         print("[!] PRODUCTION FINDING: NO_REAL_RENDER_ARTIFACT_AVAILABLE_FOR_LIVE_TELEGRAM_QA")
         print("    - Reason: No completed 5-clip production render exists in local/Render DB.")
