@@ -94,17 +94,60 @@ class WhopScraper:
             log.debug("No overlay dismissed or dismissal timed out: %s", sanitize_text(str(exc)))
 
     def discover_marketplace(self, target_url: Optional[str] = None) -> Tuple[Page, str]:
-        """Navigates to the Whop discovery/campaign marketplace and stabilizes page."""
+        """Navigates to the Whop discovery/campaign marketplace and stabilizes page.
+        
+        If no explicit target_url is provided, first loads home page to dismiss any
+        welcome dialogs, inspects the sidebar navigation links, and navigates to the
+        actual marketplace/discover/affiliates target.
+        """
         page = self.browser.page
         if not page:
             raise RuntimeError("Browser page not initialized. Launch browser first.")
 
         base = self.config.base_url.rstrip("/")
-        start_url = target_url or f"{base}/discover"
 
-        log.info("Navigating to Whop discovery endpoint: %s", sanitize_text(start_url))
-        self.browser.navigate_safely(start_url)
-        self.dismiss_overlays_safely(page)
+        if target_url and target_url != f"{base}/discover":
+            start_url = target_url
+            log.info("Navigating to specified target endpoint: %s", sanitize_text(start_url))
+            self.browser.navigate_safely(start_url)
+            self.dismiss_overlays_safely(page)
+        else:
+            # 1. Load home page first where session is verified
+            home_url = f"{base}/home/"
+            log.info("Loading home dashboard first to resolve navigation: %s", sanitize_text(home_url))
+            self.browser.navigate_safely(home_url)
+            self.dismiss_overlays_safely(page)
+
+            # 2. Inspect visible sidebar navigation links (Discover, Affiliates, etc.)
+            sidebar_links = page.locator("a[href]")
+            found_target: Optional[str] = None
+            log.info("Scanning sidebar for discovery / affiliates / marketplace links...")
+
+            candidates: List[Tuple[str, str]] = []
+            for k in range(min(sidebar_links.count(), 60)):
+                try:
+                    href = sidebar_links.nth(k).get_attribute("href") or ""
+                    link_text = sidebar_links.nth(k).inner_text().strip().lower()
+                    if href:
+                        candidates.append((link_text, href))
+                        if "discover" in link_text or "affiliates" in link_text or "creators" in link_text:
+                            found_target = href if href.startswith("http") else f"{base}{href}"
+                            log.info("Found navigation item '%s' -> %s", link_text, found_target)
+                            break
+                except Exception:
+                    pass
+
+            if found_target:
+                log.info("Navigating to detected marketplace endpoint: %s", sanitize_text(found_target))
+                self.browser.navigate_safely(found_target)
+                self.dismiss_overlays_safely(page)
+            else:
+                log.info("Sidebar candidates found: %s", candidates[:10])
+                # Fallback to /affiliates or /hub
+                fallback_url = f"{base}/affiliates"
+                log.info("Navigating to fallback endpoint: %s", sanitize_text(fallback_url))
+                self.browser.navigate_safely(fallback_url)
+                self.dismiss_overlays_safely(page)
 
         # Confirm authentication
         is_auth, reason = detect_whop_authentication(page)
@@ -114,6 +157,7 @@ class WhopScraper:
             self.warnings.append(warn)
 
         return page, page.url
+
 
     def extract_campaign_cards_from_dom(self, page: Page) -> List[Dict[str, Any]]:
         """Extracts visible campaign cards from the current DOM."""
