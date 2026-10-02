@@ -114,40 +114,36 @@ class WhopScraper:
         else:
             # 1. Load home page first where session is verified
             home_url = f"{base}/home/"
-            log.info("Loading home dashboard first to resolve navigation: %s", sanitize_text(home_url))
+            log.info("Loading home dashboard first: %s", sanitize_text(home_url))
             self.browser.navigate_safely(home_url)
             self.dismiss_overlays_safely(page)
 
-            # 2. Inspect visible sidebar navigation links (Discover, Affiliates, etc.)
-            sidebar_links = page.locator("a[href]")
-            found_target: Optional[str] = None
-            log.info("Scanning sidebar for discovery / affiliates / marketplace links...")
-
-            candidates: List[Tuple[str, str]] = []
-            for k in range(min(sidebar_links.count(), 60)):
-                try:
-                    href = sidebar_links.nth(k).get_attribute("href") or ""
-                    link_text = sidebar_links.nth(k).inner_text().strip().lower()
+            # 2. Check for Content Rewards or Clipping entry points
+            clipping_entry: Optional[str] = None
+            try:
+                # Look for a link to Clipping / Content Rewards
+                clipping_links = page.locator("a:has-text('Clipping'), a:has-text('Content Rewards'), [data-testid*='clipping'], a[href*='contentrewards'], a[href*='rewards']")
+                if clipping_links.count() > 0:
+                    href = clipping_links.first.get_attribute("href") or ""
                     if href:
-                        candidates.append((link_text, href))
-                        if "discover" in link_text or "affiliates" in link_text or "creators" in link_text:
-                            found_target = href if href.startswith("http") else f"{base}{href}"
-                            log.info("Found navigation item '%s' -> %s", link_text, found_target)
-                            break
-                except Exception:
-                    pass
+                        clipping_entry = href if href.startswith("http") else f"{base}{href}"
+                        log.info("Found Clipping entry link: %s", clipping_entry)
+            except Exception:
+                pass
 
-            if found_target:
-                log.info("Navigating to detected marketplace endpoint: %s", sanitize_text(found_target))
-                self.browser.navigate_safely(found_target)
+            if clipping_entry:
+                log.info("Navigating to Clipping entry point: %s", sanitize_text(clipping_entry))
+                self.browser.navigate_safely(clipping_entry)
                 self.dismiss_overlays_safely(page)
             else:
-                log.info("Sidebar candidates found: %s", candidates[:10])
-                # Fallback to /affiliates or /hub
-                fallback_url = f"{base}/affiliates"
-                log.info("Navigating to fallback endpoint: %s", sanitize_text(fallback_url))
-                self.browser.navigate_safely(fallback_url)
-                self.dismiss_overlays_safely(page)
+                # 3. Direct route to Content Rewards campaigns marketplace
+                cr_url = f"{base}/contentrewards"
+                log.info("Navigating directly to %s", cr_url)
+                try:
+                    self.browser.navigate_safely(cr_url)
+                    self.dismiss_overlays_safely(page)
+                except Exception:
+                    pass
 
         # Confirm authentication
         is_auth, reason = detect_whop_authentication(page)
@@ -159,22 +155,31 @@ class WhopScraper:
         return page, page.url
 
 
+
     def extract_campaign_cards_from_dom(self, page: Page) -> List[Dict[str, Any]]:
         """Extracts visible campaign cards from the current DOM."""
         extracted_raw_cards: List[Dict[str, Any]] = []
         seen_identifiers: Set[str] = set()
 
-        # Check candidate card selectors
-        card_locators = page.locator("a[href*='/discover/'], a[href*='/rewards/'], a[href*='/campaigns/'], a[href*='/hub/']")
+        # Exclude generic navigation endpoints that are not individual campaigns
+        excluded_slugs = frozenset(["discover", "home", "settings", "messages", "townhall", "partners", "affiliates", "communities", "about"])
+
+        # Check candidate card selectors (links with specific slugs or data-testids)
+        card_locators = page.locator("a[href*='/discover/'], a[href*='/rewards/'], a[href*='/campaigns/'], a[href*='/hub/'], a[href*='whop.com/']")
         count = card_locators.count()
         log.info("Scanning DOM for campaign card links: found %d candidate links", count)
 
-        for i in range(min(count, 100)):
+        for i in range(min(count, 120)):
             try:
                 card = card_locators.nth(i)
                 href = card.get_attribute("href") or ""
                 if not href or href in seen_identifiers:
                     continue
+
+                slug = href.strip("/").split("/")[-1].lower()
+                if slug in excluded_slugs or href.endswith("/discover/") or href.endswith("/home/"):
+                    continue
+
 
                 full_url = href if href.startswith("http") else f"{self.config.base_url.rstrip('/')}{href}"
                 card_text = card.inner_text().strip()
