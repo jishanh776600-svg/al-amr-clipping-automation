@@ -161,7 +161,13 @@ def generate_bezier_curve(
     for i in range(steps + 1):
         u = i / float(steps)
 
-        eased_u = u * u * (3.0 - 2.0 * u)
+        # Flash & Hogan (1985) Minimum-Jerk biological trajectory polynomial:
+        # tau = u, s(tau) = 10*tau^3 - 15*tau^4 + 6*tau^5
+        tau = u
+        tau3 = tau * tau * tau
+        tau4 = tau3 * tau
+        tau5 = tau4 * tau
+        eased_u = 10.0 * tau3 - 15.0 * tau4 + 6.0 * tau5
 
         c0 = (1.0 - eased_u) ** 3
         c1 = 3.0 * ((1.0 - eased_u) ** 2) * eased_u
@@ -171,10 +177,12 @@ def generate_bezier_curve(
         px = c0 * start.x + c1 * cp1_x + c2 * cp2_x + c3 * end.x
         py = c0 * start.y + c1 * cp1_y + c2 * cp2_y + c3 * end.y
 
+        # Biological tremor noise with natural frequency modulation
         if 0 < i < steps:
-            jitter_weight = math.sin(math.pi * u)
-            px += random.gauss(0, jitter_pixels * 0.5) * jitter_weight
-            py += random.gauss(0, jitter_pixels * 0.5) * jitter_weight
+            # Envelope is 0 at endpoints, maximum near trajectory midpoint
+            jitter_envelope = math.sin(math.pi * u)
+            px += random.gauss(0, jitter_pixels * 0.45) * jitter_envelope
+            py += random.gauss(0, jitter_pixels * 0.45) * jitter_envelope
 
         points.append(Point(round(px, 2), round(py, 2)))
 
@@ -370,32 +378,41 @@ class HumanActor:
                 and random.random() < self.persona.typo_rate
             ):
                 typo_char = random.choice(QWERTY_NEIGHBORS[char.lower()])
-                keyboard.press(typo_char)
-                time.sleep(random.uniform(0.12, 0.28))
-                keyboard.press("Backspace")
+                # Down -> Dwell -> Up
+                keyboard.down(typo_char)
+                time.sleep(random.uniform(0.045, 0.085))
+                keyboard.up(typo_char)
+
+                # Human hesitation noticing the mistake (cognitive reaction delay)
+                time.sleep(random.uniform(0.14, 0.28))
+                keyboard.down("Backspace")
+                time.sleep(random.uniform(0.05, 0.09))
+                keyboard.up("Backspace")
                 time.sleep(random.uniform(0.08, 0.16))
 
-            # 2. Press actual character
-            keyboard.press(char)
+            # 2. Authentic key lifecycle: KeyDown -> Biological Dwell Time -> KeyUp
+            # Real human key dwell duration: 60ms to 125ms
+            key_dwell = random.gauss(0.080, 0.015)
+            key_dwell = max(0.045, min(0.140, key_dwell))
 
-            # 3. Dynamic delay calculation (bigram alternation and punctuation)
-            char_delay = random.gauss(
+            keyboard.down(char)
+            time.sleep(key_dwell)
+            keyboard.up(char)
+
+            # 3. Flight time to next key (time finger takes to travel to next key)
+            flight_time = random.gauss(
                 base_char_delay,
                 base_char_delay * self.persona.typing_rhythm_entropy
             )
-            char_delay = max(0.02, char_delay)
+            flight_time = max(0.025, flight_time)
 
-            # Same character or space double-tap takes slightly longer
-            if prev_char and prev_char.lower() == char.lower():
-                char_delay += random.uniform(0.03, 0.07)
-
-            # Punctuation / word-boundary pauses (thinking pauses)
+            # Punctuation / word-boundary thinking pauses
             if char in " .!?,:\n":
-                char_delay += random.uniform(0.08, 0.24)
+                flight_time += random.uniform(0.10, 0.28)
             elif char.isupper():
-                char_delay += random.uniform(0.04, 0.11)
+                flight_time += random.uniform(0.05, 0.12)
 
-            time.sleep(char_delay)
+            time.sleep(flight_time)
             prev_char = char
 
         self.persona.record_action()

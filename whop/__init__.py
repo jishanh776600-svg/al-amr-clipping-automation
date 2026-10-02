@@ -74,6 +74,11 @@ from .human_interaction import (
     generate_bezier_curve,
     sample_gaussian_target,
 )
+from .stealth import (
+    STEALTH_INIT_SCRIPT,
+    apply_stealth_to_context,
+    apply_stealth_to_page,
+)
 
 __all__ = [
     "WhopConfig",
@@ -125,6 +130,9 @@ __all__ = [
     "QWERTY_NEIGHBORS",
     "generate_bezier_curve",
     "sample_gaussian_target",
+    "STEALTH_INIT_SCRIPT",
+    "apply_stealth_to_context",
+    "apply_stealth_to_page",
 ]
 
 

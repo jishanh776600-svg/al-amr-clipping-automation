@@ -84,6 +84,10 @@ class WhopBrowser:
         self._context.set_default_navigation_timeout(self.config.navigation_timeout_ms)
         self._context.set_default_timeout(self.config.navigation_timeout_ms)
 
+        # Inject enterprise stealth anti-fingerprinting script
+        from .stealth import apply_stealth_to_context
+        apply_stealth_to_context(self._context)
+
         # Fallback/auxiliary cookie application
         if session_state:
             apply_session_to_context(self._context, session_state)
