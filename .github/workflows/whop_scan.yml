@@ -1,0 +1,70 @@
+name: Whop Campaign Discovery (Step 2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Whop marketplace / catalog URL to discover'
+        required: false
+        default: 'https://whop.com/discover'
+        type: string
+      max_campaigns:
+        description: 'Maximum campaign cards to scan'
+        required: false
+        default: '40'
+        type: string
+
+concurrency:
+  group: whop-campaign-discovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover-whop-campaigns:
+    name: Discover & Normalize Whop Campaigns
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright pydantic pytest
+
+      - name: Install Playwright Chromium & System Dependencies
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Run Read-Only Whop Campaign Discovery
+        env:
+          WHOP_COOKIES: ${{ secrets.WHOP_COOKIES }}
+          WHOP_DRY_RUN: 'true'
+          WHOP_HEADLESS: 'true'
+          WHOP_BASE_URL: 'https://whop.com'
+          WHOP_NAVIGATION_TIMEOUT_MS: '45000'
+          WHOP_STABILIZE_WAIT_MS: '4000'
+        run: |
+          if [ -z "$WHOP_COOKIES" ]; then
+            echo "::error::WHOP_COOKIES secret is missing in GitHub Secrets."
+            exit 1
+          fi
+          python scripts/whop_scan.py \
+            --output-dir artifacts/whop_discovery \
+            --target-url "${{ inputs.target_url || 'https://whop.com/discover' }}" \
+            --max-campaigns "${{ inputs.max_campaigns || '40' }}"
+
+      - name: Upload Discovery Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whop-campaign-discovery
+          path: artifacts/whop_discovery/
+          retention-days: 14

@@ -25,6 +25,25 @@ from .diagnostics import (
     detect_whop_authentication,
 )
 
+from .catalog import (
+    ACCOUNT_1_FINANCE_BUSINESS,
+    ACCOUNT_2_ENTERTAINMENT_PODCASTS,
+    ACCOUNT_3_ALL_IN_ONE_VIRAL,
+    SUPPORTED_PLATFORMS,
+    DiscoveredCampaign,
+    build_discovered_campaign,
+    evaluate_eligibility,
+    normalize_platforms,
+    parse_cpm,
+    route_niche,
+)
+from .scraper import (
+    DiscoveryRunReport,
+    WhopScraper,
+    generate_markdown_summary,
+    save_discovery_artifacts,
+)
+
 __all__ = [
     "WhopConfig",
     "WhopConfigError",
@@ -39,4 +58,19 @@ __all__ = [
     "WhopDiagnosticReport",
     "capture_diagnostics",
     "detect_whop_authentication",
+    "ACCOUNT_1_FINANCE_BUSINESS",
+    "ACCOUNT_2_ENTERTAINMENT_PODCASTS",
+    "ACCOUNT_3_ALL_IN_ONE_VIRAL",
+    "SUPPORTED_PLATFORMS",
+    "DiscoveredCampaign",
+    "build_discovered_campaign",
+    "evaluate_eligibility",
+    "normalize_platforms",
+    "parse_cpm",
+    "route_niche",
+    "DiscoveryRunReport",
+    "WhopScraper",
+    "generate_markdown_summary",
+    "save_discovery_artifacts",
 ]
+
