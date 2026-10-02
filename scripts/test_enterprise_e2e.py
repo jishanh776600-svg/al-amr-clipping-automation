@@ -114,10 +114,8 @@ def run_enterprise_demo():
         actor.sync_page(page)
 
         print('6. Moving cursor naturally to Shorts right action margin & gaze drifting...')
-        # Right action column of typical Shorts player ~ (780, 460)
-        actor.move_to(780.0, 460.0, allow_overshoot=True)
-        # Biological gaze drift around right-side interaction area
-        actor.idle_drift(duration_seconds=3.0, gaze_bias="right")
+        # Gaze drift automatically scales dynamically to the right interaction gutter
+        actor.idle_drift(duration_seconds=3.5, gaze_bias="right")
         page.screenshot(path=str(out_dir / '02_watching_short_1.png'))
         print('Saved 02_watching_short_1.png')
 
@@ -174,7 +172,9 @@ def run_enterprise_demo():
                     bbox = card.bounding_box()
                     if bbox and bbox['width'] > 50 and bbox['height'] > 30:
                         print(f'Hovering naturally on campaign item #{inspected + 1}...')
-                        actor.move_to(bbox['x'] + bbox['width'] * 0.4, bbox['y'] + bbox['height'] * 0.4, allow_overshoot=True)
+                        target_x = bbox['x'] + bbox['width'] * random.uniform(0.387, 0.463)
+                        target_y = bbox['y'] + bbox['height'] * random.uniform(0.364, 0.452)
+                        actor.move_to(target_x, target_y, allow_overshoot=True)
                         time.sleep(1.2)
                         actor.idle_drift(duration_seconds=1.0)
                         inspected += 1

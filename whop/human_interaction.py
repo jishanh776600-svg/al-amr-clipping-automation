@@ -220,6 +220,10 @@ def sample_gaussian_target(
     target_x = random.gauss(center_x, sigma_x)
     target_y = random.gauss(center_y, sigma_y)
 
+    # Biological sub-pixel motor scatter: humans never click exact integers or predictable fractions
+    target_x += random.uniform(-2.37, 2.64)
+    target_y += random.uniform(-2.18, 2.41)
+
     target_x = max(inner_min_x, min(inner_max_x, target_x))
     target_y = max(inner_min_y, min(inner_max_y, target_y))
 
@@ -240,8 +244,16 @@ class HumanActor:
         if initial_position:
             self._current_x, self._current_y = initial_position
         else:
-            self._current_x = random.uniform(250.0, 650.0)
-            self._current_y = random.uniform(200.0, 500.0)
+            vp = None
+            try:
+                vp = self.page.viewport_size
+            except Exception:
+                pass
+            vw = float(vp["width"]) if vp else 1280.0
+            vh = float(vp["height"]) if vp else 720.0
+            # Highly randomized, irregular initial resting position (never round numbers like 250, 500)
+            self._current_x = round(vw * random.uniform(0.237, 0.581) + random.uniform(-16.3, 18.7), 2)
+            self._current_y = round(vh * random.uniform(0.274, 0.623) + random.uniform(-14.2, 17.6), 2)
 
     @property
     def current_position(self) -> Tuple[float, float]:
@@ -264,6 +276,13 @@ class HumanActor:
         allow_overshoot: bool = True,
     ) -> None:
         """Moves pointer with realistic 2-phase Fitts's ballistic curve and corrective sub-movements."""
+        # Infuse sub-pixel human motor scatter to prevent exact integer/round coordinate landing
+        if abs(target_x - round(target_x)) < 0.001 and abs(target_y - round(target_y)) < 0.001:
+            scatter_x = random.uniform(0.35, 0.78) if random.random() < 0.5 else -random.uniform(0.35, 0.78)
+            scatter_y = random.uniform(0.35, 0.78) if random.random() < 0.5 else -random.uniform(0.35, 0.78)
+            target_x = round(target_x + scatter_x, 2)
+            target_y = round(target_y + scatter_y, 2)
+
         effective_speed = (speed_factor or self.persona.base_mouse_speed) * random.uniform(0.92, 1.08)
         start = Point(self._current_x, self._current_y)
         dest = Point(target_x, target_y)
@@ -471,28 +490,38 @@ class HumanActor:
         """
         end_time = time.time() + duration_seconds
 
+        vp = None
+        try:
+            vp = self.page.viewport_size
+        except Exception:
+            pass
+        vw = float(vp["width"]) if vp else 1280.0
+        vh = float(vp["height"]) if vp else 720.0
+
         target_focus = focus_region
         if gaze_bias == "right" and not target_focus:
-            # Common right-hand interaction gutter (e.g. YouTube Shorts right bar at X: 750-850)
-            target_focus = (random.uniform(750.0, 830.0), random.uniform(390.0, 530.0))
+            # Dynamic right gutter with high organic entropy (never round numbers)
+            base_x = vw * random.uniform(0.631, 0.719) + random.uniform(-13.4, 15.2)
+            base_y = vh * random.uniform(0.387, 0.573) + random.uniform(-11.2, 13.6)
+            target_focus = (round(base_x, 2), round(base_y, 2))
 
         # If a focus region is specified, gently bias towards it
         while time.time() < end_time:
             if target_focus:
                 fx, fy = target_focus
-                # Attracted towards focus center with organic offset
-                drift_x = fx + random.gauss(0, 26)
-                drift_y = fy + random.gauss(0, 22)
+                # Attracted towards focus center with organic non-round offset
+                drift_x = fx + random.gauss(0, 24.3) + random.uniform(-4.1, 4.7)
+                drift_y = fy + random.gauss(0, 21.2) + random.uniform(-3.8, 4.3)
             else:
                 # Organic wander around current area
-                drift_x = self._current_x + random.gauss(0, 18)
-                drift_y = self._current_y + random.gauss(0, 15)
+                drift_x = self._current_x + random.gauss(0, 17.6) + random.uniform(-3.4, 3.8)
+                drift_y = self._current_y + random.gauss(0, 14.8) + random.uniform(-3.2, 3.5)
 
-            drift_x = max(80.0, min(1750.0, drift_x))
-            drift_y = max(120.0, min(900.0, drift_y))
+            drift_x = max(vw * 0.048, min(vw * 0.952, drift_x))
+            drift_y = max(vh * 0.053, min(vh * 0.947, drift_y))
 
             start = Point(self._current_x, self._current_y)
-            dest = Point(drift_x, drift_y)
+            dest = Point(round(drift_x, 2), round(drift_y, 2))
             # Gentle breathing velocity (0.35x speed)
             self._execute_path(start, dest, speed=0.38)
             time.sleep(random.uniform(0.4, 0.85))
@@ -504,6 +533,10 @@ class HumanActor:
         reading_pause: bool = True,
     ) -> None:
         """Simulates smooth trackpad/wheel momentum with friction decay and micro-settling."""
+        # Infuse organic entropy so wheel ticks never match round numbers like 450 or 500
+        organic_delta = delta_y * random.uniform(0.963, 1.038) + random.uniform(-9.4, 11.2)
+        delta_y = int(round(organic_delta))
+
         if steps is None:
             # 1 step per 25-45px for ultra-smooth fluid scrolling
             steps = max(6, abs(delta_y) // random.randint(25, 45))
