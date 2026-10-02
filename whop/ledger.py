@@ -25,6 +25,11 @@ from .models import (
     InvalidStateTransitionError,
     WhopCampaignBrief,
     WhopAutoClipJobRecord,
+    WhopJobQAReport,
+    ClipQARecord,
+    ClipTechnicalQAResult,
+    RuleComplianceResult,
+    RuleComplianceStatus,
     validate_transition,
 )
 
@@ -112,6 +117,28 @@ CREATE INDEX IF NOT EXISTS idx_whop_autoclip_campaign ON whop_autoclip_jobs(camp
 CREATE INDEX IF NOT EXISTS idx_whop_autoclip_job_id ON whop_autoclip_jobs(autoclip_job_id);
 CREATE INDEX IF NOT EXISTS idx_whop_autoclip_idempotency ON whop_autoclip_jobs(idempotency_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_whop_autoclip_logical ON whop_autoclip_jobs(campaign_id, guideline_hash, source_hash);
+
+CREATE TABLE IF NOT EXISTS whop_qa_records (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id          TEXT NOT NULL REFERENCES whop_campaigns(campaign_id) ON DELETE CASCADE,
+    guideline_hash       TEXT NOT NULL,
+    autoclip_job_id      TEXT NOT NULL,
+    artifact_hash        TEXT NOT NULL,
+    qa_status            TEXT NOT NULL,
+    overall_quality_score REAL NOT NULL,
+    valid_clips_count    INTEGER NOT NULL,
+    total_clips_evaluated INTEGER NOT NULL,
+    clips_json           TEXT NOT NULL,
+    compliance_summary_json TEXT NOT NULL,
+    unsupported_rules_json TEXT NOT NULL,
+    warnings_json        TEXT NOT NULL,
+    failures_json        TEXT NOT NULL,
+    created_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_qa_campaign ON whop_qa_records(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_qa_job ON whop_qa_records(autoclip_job_id);
+CREATE INDEX IF NOT EXISTS idx_whop_qa_lookup ON whop_qa_records(campaign_id, guideline_hash, autoclip_job_id, artifact_hash);
 """
 
 
@@ -163,6 +190,13 @@ class CampaignLedger:
             if not row:
                 return None
             return self._row_to_record(row)
+
+    def save_campaign(self, record: CampaignRecord) -> None:
+        """Saves or updates a campaign in whop_campaigns."""
+        with self._get_connection() as conn:
+            self._insert_campaign_tx(conn, record)
+            conn.commit()
+
 
     def list_campaigns(
         self,
@@ -939,3 +973,213 @@ class CampaignLedger:
                 cursor.execute("SELECT * FROM whop_autoclip_jobs ORDER BY id DESC;")
             rows = cursor.fetchall()
             return [self._row_to_autoclip_job(r) for r in rows]
+
+    # ==========================================================================
+    # Step 6: QA Report Persistence
+    # ==========================================================================
+
+    def _row_to_qa_report(self, row: sqlite3.Row) -> WhopJobQAReport:
+        """Hydrates a WhopJobQAReport from an SQLite row."""
+        clips_raw = json.loads(row["clips_json"]) if row["clips_json"] else []
+        clips: List[ClipQARecord] = []
+        for c in clips_raw:
+            t_raw = c.get("technical_qa", {})
+            tech_qa = ClipTechnicalQAResult(
+                clip_id=t_raw.get("clip_id", c.get("clip_id", "")),
+                duration_s=float(t_raw.get("duration_s", 0.0)),
+                width=int(t_raw.get("width", 0)),
+                height=int(t_raw.get("height", 0)),
+                fps=float(t_raw.get("fps", 0.0)),
+                video_codec=str(t_raw.get("video_codec", "")),
+                audio_codec=str(t_raw.get("audio_codec", "")),
+                channels=int(t_raw.get("channels", 2)),
+                sample_rate=int(t_raw.get("sample_rate", 48000)),
+                mean_volume_db=float(t_raw.get("mean_volume_db", -14.0)),
+                true_peak_db=float(t_raw.get("true_peak_db", -1.5)),
+                av_sync_diff_s=float(t_raw.get("av_sync_diff_s", 0.0)),
+                decode_ok=bool(t_raw.get("decode_ok", True)),
+                broll_coverage_pct=float(t_raw.get("broll_coverage_pct", 0.0)),
+                longest_a_roll_gap_s=float(t_raw.get("longest_a_roll_gap_s", 0.0)),
+                file_size_bytes=int(t_raw.get("file_size_bytes", 0)),
+                warnings=list(t_raw.get("warnings", [])),
+                rejection_reasons=list(t_raw.get("rejection_reasons", [])),
+                is_valid=bool(t_raw.get("is_valid", True)),
+            )
+
+            comp_results: List[RuleComplianceResult] = []
+            for cr in c.get("compliance_results", []):
+                stat_val = cr.get("status", "UNKNOWN")
+                try:
+                    stat_enum = RuleComplianceStatus(stat_val)
+                except Exception:
+                    stat_enum = RuleComplianceStatus.UNKNOWN
+                comp_results.append(
+                    RuleComplianceResult(
+                        rule_id=cr.get("rule_id", ""),
+                        rule_text=cr.get("rule_text", ""),
+                        category=cr.get("category", ""),
+                        mandatory=bool(cr.get("mandatory", False)),
+                        status=stat_enum,
+                        reason=cr.get("reason", ""),
+                        evidence=cr.get("evidence", {}),
+                    )
+                )
+
+            clips.append(
+                ClipQARecord(
+                    clip_id=c.get("clip_id", ""),
+                    candidate_index=int(c.get("candidate_index", 0)),
+                    technical_qa=tech_qa,
+                    compliance_results=comp_results,
+                    artifact_path=c.get("artifact_path", ""),
+                    drive_file_id=c.get("drive_file_id"),
+                    artifact_url=c.get("artifact_url"),
+                    is_durable=bool(c.get("is_durable", False)),
+                    is_distinct=bool(c.get("is_distinct", True)),
+                    quality_score=float(c.get("quality_score", 100.0)),
+                    is_valid=bool(c.get("is_valid", True)),
+                    rejection_summary=list(c.get("rejection_summary", [])),
+                    metadata=c.get("metadata", {}),
+                )
+            )
+
+        unsupp_raw = json.loads(row["unsupported_rules_json"]) if row["unsupported_rules_json"] else []
+        unsupported_rules: List[RuleComplianceResult] = []
+        for ur in unsupp_raw:
+            stat_val = ur.get("status", "UNSUPPORTED_REQUIRES_REVIEW")
+            try:
+                stat_enum = RuleComplianceStatus(stat_val)
+            except Exception:
+                stat_enum = RuleComplianceStatus.UNSUPPORTED_REQUIRES_REVIEW
+            unsupported_rules.append(
+                RuleComplianceResult(
+                    rule_id=ur.get("rule_id", ""),
+                    rule_text=ur.get("rule_text", ""),
+                    category=ur.get("category", ""),
+                    mandatory=bool(ur.get("mandatory", False)),
+                    status=stat_enum,
+                    reason=ur.get("reason", ""),
+                    evidence=ur.get("evidence", {}),
+                )
+            )
+
+        return WhopJobQAReport(
+            id=row["id"],
+            campaign_id=row["campaign_id"],
+            guideline_hash=row["guideline_hash"],
+            autoclip_job_id=row["autoclip_job_id"],
+            artifact_hash=row["artifact_hash"],
+            qa_status=row["qa_status"],
+            overall_quality_score=float(row["overall_quality_score"]),
+            valid_clips_count=int(row["valid_clips_count"]),
+            total_clips_evaluated=int(row["total_clips_evaluated"]),
+            clips=clips,
+            compliance_summary=json.loads(row["compliance_summary_json"]) if row["compliance_summary_json"] else {},
+            unsupported_rules=unsupported_rules,
+            warnings=json.loads(row["warnings_json"]) if row["warnings_json"] else [],
+            failures=json.loads(row["failures_json"]) if row["failures_json"] else [],
+            created_at=row["created_at"],
+        )
+
+    def save_qa_record(self, report: WhopJobQAReport) -> WhopJobQAReport:
+        """Persists an authoritative QA report into SQLite."""
+        clips_json = json.dumps([c.to_dict() for c in report.clips])
+        comp_summary_json = json.dumps(report.compliance_summary)
+        unsupp_json = json.dumps([r.to_dict() for r in report.unsupported_rules])
+        warn_json = json.dumps(report.warnings)
+        fail_json = json.dumps(report.failures)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO whop_qa_records (
+                    campaign_id, guideline_hash, autoclip_job_id, artifact_hash,
+                    qa_status, overall_quality_score, valid_clips_count,
+                    total_clips_evaluated, clips_json, compliance_summary_json,
+                    unsupported_rules_json, warnings_json, failures_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    report.campaign_id,
+                    report.guideline_hash,
+                    report.autoclip_job_id,
+                    report.artifact_hash,
+                    report.qa_status,
+                    report.overall_quality_score,
+                    report.valid_clips_count,
+                    report.total_clips_evaluated,
+                    clips_json,
+                    comp_summary_json,
+                    unsupp_json,
+                    warn_json,
+                    fail_json,
+                    report.created_at,
+                ),
+            )
+            report.id = cursor.lastrowid
+            conn.commit()
+
+        log.info(
+            "Persisted QA report #%s for campaign %s job %s: status=%s, valid_clips=%d/%d",
+            report.id,
+            report.campaign_id,
+            report.autoclip_job_id,
+            report.qa_status,
+            report.valid_clips_count,
+            report.total_clips_evaluated,
+        )
+        return report
+
+    def get_qa_record(
+        self,
+        campaign_id: str,
+        guideline_hash: str,
+        autoclip_job_id: str,
+        artifact_hash: str,
+    ) -> Optional[WhopJobQAReport]:
+        """Looks up an exact existing QA record by campaign, guideline, job, and artifact hash."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM whop_qa_records
+                WHERE campaign_id = ? AND guideline_hash = ? AND autoclip_job_id = ? AND artifact_hash = ?
+                ORDER BY id DESC LIMIT 1;
+                """,
+                (campaign_id, guideline_hash, autoclip_job_id, artifact_hash),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_qa_report(row)
+        return None
+
+    def get_latest_qa_record(self, campaign_id: str) -> Optional[WhopJobQAReport]:
+        """Retrieves the most recent QA report for a campaign."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_qa_records WHERE campaign_id = ? ORDER BY id DESC LIMIT 1;",
+                (campaign_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_qa_report(row)
+        return None
+
+    def list_qa_records(
+        self,
+        campaign_id: Optional[str] = None,
+    ) -> List[WhopJobQAReport]:
+        """Lists QA reports, optionally filtered by campaign."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if campaign_id:
+                cursor.execute(
+                    "SELECT * FROM whop_qa_records WHERE campaign_id = ? ORDER BY id DESC;",
+                    (campaign_id,),
+                )
+            else:
+                cursor.execute("SELECT * FROM whop_qa_records ORDER BY id DESC;")
+            rows = cursor.fetchall()
+            return [self._row_to_qa_report(r) for r in rows]

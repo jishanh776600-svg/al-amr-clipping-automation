@@ -31,6 +31,7 @@ class CampaignState(str, Enum):
     INGESTED = "INGESTED"
     RENDERING = "RENDERING"
     RENDER_READY = "RENDER_READY"
+    RENDER_WARN = "RENDER_WARN"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
     APPROVED = "APPROVED"
     SUBMITTING = "SUBMITTING"
@@ -81,11 +82,19 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     },
     CampaignState.RENDERING: {
         CampaignState.RENDER_READY,
+        CampaignState.RENDER_WARN,
         CampaignState.RENDER_FAILED,
+        CampaignState.INSUFFICIENT_VALID_CLIPS,
     },
     CampaignState.RENDER_READY: {
         CampaignState.AWAITING_APPROVAL,
         CampaignState.SUBMITTING,  # if autonomous mode approved
+    },
+    CampaignState.RENDER_WARN: {
+        CampaignState.AWAITING_APPROVAL,
+        CampaignState.SUBMITTING,
+        CampaignState.RENDERING,
+        CampaignState.REJECTED,
     },
     CampaignState.AWAITING_APPROVAL: {
         CampaignState.APPROVED,
@@ -102,7 +111,7 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     CampaignState.CLAIM_FAILED: {CampaignState.CLAIMING, CampaignState.REJECTED},
     CampaignState.INGEST_FAILED: {CampaignState.INGESTED, CampaignState.REJECTED},
     CampaignState.RENDER_FAILED: {CampaignState.RENDERING, CampaignState.REJECTED},
-    CampaignState.INSUFFICIENT_VALID_CLIPS: {CampaignState.INGESTED, CampaignState.REJECTED},
+    CampaignState.INSUFFICIENT_VALID_CLIPS: {CampaignState.INGESTED, CampaignState.RENDERING, CampaignState.REJECTED},
     CampaignState.APPROVAL_REJECTED: {CampaignState.REJECTED},
     CampaignState.SUBMISSION_FAILED: {CampaignState.SUBMITTING, CampaignState.REJECTED},
     CampaignState.SUBMITTED: set(),  # Terminal successful state
@@ -480,3 +489,134 @@ def validate_campaign_brief(brief: WhopCampaignBrief) -> List[str]:
             errors.append(f"Validation Error: Rule '{rule.rule_id}' has invalid platform scope '{rule.platform}'")
 
     return errors
+
+
+# ==============================================================================
+# Step 6: Production Render & Quality Verification Models
+# ==============================================================================
+
+class RuleComplianceStatus(str, Enum):
+    """Categorical compliance status for each CampaignBrief rule."""
+    SUPPORTED_AND_SATISFIED = "SUPPORTED_AND_SATISFIED"
+    SUPPORTED_AND_FAILED = "SUPPORTED_AND_FAILED"
+    UNSUPPORTED_REQUIRES_REVIEW = "UNSUPPORTED_REQUIRES_REVIEW"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class RuleComplianceResult:
+    """Evaluation outcome of a single guideline rule against a candidate clip or campaign."""
+    rule_id: str
+    rule_text: str
+    category: str
+    mandatory: bool
+    status: RuleComplianceStatus
+    reason: str = ""
+    evidence: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["status"] = self.status.value
+        return d
+
+
+@dataclass
+class ClipTechnicalQAResult:
+    """Comprehensive technical video/audio/codec QA result for a rendered MP4 clip."""
+    clip_id: str
+    duration_s: float
+    width: int
+    height: int
+    fps: float
+    video_codec: str
+    audio_codec: str
+    channels: int = 2
+    sample_rate: int = 48000
+    mean_volume_db: float = -14.0
+    true_peak_db: float = -1.5
+    av_sync_diff_s: float = 0.0
+    decode_ok: bool = True
+    broll_coverage_pct: float = 0.0
+    longest_a_roll_gap_s: float = 0.0
+    file_size_bytes: int = 0
+    warnings: List[str] = field(default_factory=list)
+    rejection_reasons: List[str] = field(default_factory=list)
+    is_valid: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ClipQARecord:
+    """Authoritative evaluation record for a single clip candidate."""
+    clip_id: str
+    candidate_index: int
+    technical_qa: ClipTechnicalQAResult
+    compliance_results: List[RuleComplianceResult] = field(default_factory=list)
+    artifact_path: str = ""
+    drive_file_id: Optional[str] = None
+    artifact_url: Optional[str] = None
+    is_durable: bool = False
+    is_distinct: bool = True
+    quality_score: float = 100.0
+    is_valid: bool = True
+    rejection_summary: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "clip_id": self.clip_id,
+            "candidate_index": self.candidate_index,
+            "technical_qa": self.technical_qa.to_dict(),
+            "compliance_results": [r.to_dict() for r in self.compliance_results],
+            "artifact_path": self.artifact_path,
+            "drive_file_id": self.drive_file_id,
+            "artifact_url": self.artifact_url,
+            "is_durable": self.is_durable,
+            "is_distinct": self.is_distinct,
+            "quality_score": self.quality_score,
+            "is_valid": self.is_valid,
+            "rejection_summary": self.rejection_summary,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class WhopJobQAReport:
+    """Authoritative durable record of a complete Render & Quality Verification run."""
+    campaign_id: str
+    guideline_hash: str
+    autoclip_job_id: str
+    artifact_hash: str
+    qa_status: str  # RENDER_PASS, RENDER_WARN, RENDER_FAILED, INSUFFICIENT_VALID_CLIPS
+    overall_quality_score: float
+    valid_clips_count: int
+    total_clips_evaluated: int
+    clips: List[ClipQARecord] = field(default_factory=list)
+    compliance_summary: Dict[str, int] = field(default_factory=dict)
+    unsupported_rules: List[RuleComplianceResult] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    failures: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "guideline_hash": self.guideline_hash,
+            "autoclip_job_id": self.autoclip_job_id,
+            "artifact_hash": self.artifact_hash,
+            "qa_status": self.qa_status,
+            "overall_quality_score": self.overall_quality_score,
+            "valid_clips_count": self.valid_clips_count,
+            "total_clips_evaluated": self.total_clips_evaluated,
+            "clips": [c.to_dict() for c in self.clips],
+            "compliance_summary": self.compliance_summary,
+            "unsupported_rules": [r.to_dict() for r in self.unsupported_rules],
+            "warnings": self.warnings,
+            "failures": self.failures,
+            "created_at": self.created_at,
+        }

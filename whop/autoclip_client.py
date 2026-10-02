@@ -749,3 +749,62 @@ class AutoClipClient:
             "updated_at": resp_data.get("updated_at"),
             "raw": resp_data,
         }
+
+    def get_job_final_renders(
+        self,
+        job_id: str,
+        approved_only: bool = False,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves Step 22 final render records from the AutoClip control plane."""
+        if job_id.startswith("dry_run_"):
+            return []
+
+        query_params = []
+        if approved_only:
+            query_params.append("approved_only=true")
+        if status:
+            query_params.append(f"status={status}")
+
+        endpoint = f"/api/jobs/{job_id}/final-renders"
+        if query_params:
+            endpoint += "?" + "&".join(query_params)
+
+        res = self._request("GET", endpoint)
+        if isinstance(res, list):
+            return res
+        return []
+
+    def get_job_clips(self, job_id: str) -> List[Dict[str, Any]]:
+        """Retrieves candidate/clip records associated with an AutoClip job."""
+        if job_id.startswith("dry_run_"):
+            return []
+
+        res = self._request("GET", f"/api/jobs/{job_id}/clips")
+        if isinstance(res, list):
+            return res
+        return []
+
+    def poll_job_completion(
+        self,
+        job_id: str,
+        timeout_s: float = 600.0,
+        poll_interval_s: float = 5.0,
+    ) -> Dict[str, Any]:
+        """Polls job status until render execution reaches terminal state or timeout."""
+        start_t = time.monotonic()
+        while True:
+            info = self.get_job_status(job_id)
+            raw_st = str(info.get("status", "")).lower()
+
+            if raw_st in ("done", "failed", "cancelled", "cancel_requested", "dry_run_validated"):
+                return info
+
+            elapsed = time.monotonic() - start_t
+            if elapsed >= timeout_s:
+                raise AutoClipTimeoutError(
+                    f"Job {job_id} did not complete within {timeout_s:.1f}s (current status: {raw_st})"
+                )
+
+            time.sleep(poll_interval_s)
+
