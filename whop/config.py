@@ -21,6 +21,22 @@ class WhopDryRunViolationError(Exception):
     pass
 
 
+# Central registry of mutation actions blocked under WHOP_DRY_RUN=true
+FORBIDDEN_MUTATION_ACTIONS = frozenset([
+    "join",
+    "apply",
+    "accept",
+    "claim",
+    "submit",
+    "send",
+    "message",
+    "upload",
+    "download_asset",
+    "modify",
+    "delete",
+])
+
+
 def sanitize_text(text: str, secret_to_redact: Optional[str] = None) -> str:
     """Redacts sensitive strings and sanitizes authentication parameters from text/URLs."""
     if not text:

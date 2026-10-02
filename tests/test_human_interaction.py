@@ -160,7 +160,7 @@ def test_live_browser_dom_mouse_trapping():
         </style>
     </head>
     <body>
-        <button id="btn">Join Campaign</button>
+        <button id="btn">View Details</button>
         <script>
             window.mouseLog = {
                 moves: [],

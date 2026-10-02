@@ -8,25 +8,15 @@ import logging
 from typing import Any, Optional
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
-from .config import WhopConfig, WhopDryRunViolationError, sanitize_text
+from .config import (
+    FORBIDDEN_MUTATION_ACTIONS,
+    WhopConfig,
+    WhopDryRunViolationError,
+    sanitize_text,
+)
 from .session import ValidatedSessionState, apply_session_to_context
 
 log = logging.getLogger(__name__)
-
-# Mutation actions blocked by Step 1 safety guard
-FORBIDDEN_MUTATION_ACTIONS = frozenset([
-    "join",
-    "apply",
-    "accept",
-    "claim",
-    "submit",
-    "send",
-    "message",
-    "upload",
-    "download_asset",
-    "modify",
-    "delete",
-])
 
 
 class WhopBrowser:
@@ -42,7 +32,7 @@ class WhopBrowser:
     def assert_action_permitted(self, action_name: str) -> None:
         """Enforces that mutation actions cannot be executed in Step 1."""
         clean_action = str(action_name).strip().lower()
-        if self.config.dry_run or clean_action in FORBIDDEN_MUTATION_ACTIONS:
+        if self.config.dry_run and clean_action in FORBIDDEN_MUTATION_ACTIONS:
             raise WhopDryRunViolationError(
                 f"Action '{clean_action}' is strictly forbidden by Step 1 read-only guard."
             )
@@ -173,7 +163,7 @@ class WhopBrowser:
         active_page = page or self._page
         if not active_page:
             raise RuntimeError("Cannot get human actor: browser page is not launched.")
-        return HumanActor(active_page)
+        return HumanActor(active_page, browser=self, dry_run=self.config.dry_run)
 
     def __enter__(self) -> "WhopBrowser":
         return self

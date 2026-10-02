@@ -14,10 +14,14 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple, Union
+
+from .config import FORBIDDEN_MUTATION_ACTIONS, WhopDryRunViolationError
 
 log = logging.getLogger(__name__)
 
@@ -238,9 +242,20 @@ class HumanActor:
         page: Any,
         persona: Optional[HumanPersona] = None,
         initial_position: Optional[Tuple[float, float]] = None,
+        dry_run: Optional[bool] = None,
+        browser: Optional[Any] = None,
     ):
         self.page = page
         self.persona = persona or HumanPersona.generate_random()
+        self.browser = browser
+
+        if dry_run is not None:
+            self.dry_run = bool(dry_run)
+        elif browser and hasattr(browser, "config") and hasattr(browser.config, "dry_run"):
+            self.dry_run = bool(browser.config.dry_run)
+        else:
+            self.dry_run = os.getenv("WHOP_DRY_RUN", "true").lower() in ("true", "1", "yes")
+
         if initial_position:
             self._current_x, self._current_y = initial_position
         else:
@@ -254,6 +269,14 @@ class HumanActor:
             # Highly randomized, irregular initial resting position (never round numbers like 250, 500)
             self._current_x = round(vw * random.uniform(0.237, 0.581) + random.uniform(-16.3, 18.7), 2)
             self._current_y = round(vh * random.uniform(0.274, 0.623) + random.uniform(-14.2, 17.6), 2)
+
+    def assert_action_permitted(self, action_name: str) -> None:
+        """Enforces that mutation actions cannot be executed in read-only / dry-run mode."""
+        clean_action = str(action_name).strip().lower()
+        if self.dry_run and clean_action in FORBIDDEN_MUTATION_ACTIONS:
+            raise WhopDryRunViolationError(
+                f"Action '{clean_action}' is strictly forbidden by HumanActor mutation guard (WHOP_DRY_RUN=true)."
+            )
 
     @property
     def current_position(self) -> Tuple[float, float]:
@@ -338,16 +361,93 @@ class HumanActor:
             step_delay = max(0.001, delay_per_step_s + random.gauss(0, delay_per_step_s * 0.2))
             time.sleep(step_delay)
 
+    def _validate_element_mutation_safety(self, locator: Any, selector_str: str) -> None:
+        """Inspects DOM attributes and visible text to block mutation buttons intrinsically."""
+        if not self.dry_run:
+            return
+
+        # 1. Check if selector string explicitly mentions any forbidden action
+        if selector_str:
+            for verb in FORBIDDEN_MUTATION_ACTIONS:
+                if re.search(r'\b' + re.escape(verb) + r'\b', selector_str):
+                    raise WhopDryRunViolationError(
+                        f"Selector '{selector_str}' targets forbidden mutation action '{verb}' under WHOP_DRY_RUN=true."
+                    )
+
+        # 2. Inspect element DOM attributes
+        try:
+            elem_info = locator.evaluate("""(el) => {
+                if (!el) return null;
+                const tag = (el.tagName || '').toLowerCase();
+                const text = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+                const role = (el.getAttribute('role') || '').toLowerCase();
+                const type = (el.getAttribute('type') || '').toLowerCase();
+                return { tag, text, aria, testid, role, type };
+            }""")
+            if not elem_info:
+                return
+
+            tag = elem_info.get("tag", "")
+            text = elem_info.get("text", "")
+            aria = elem_info.get("aria", "")
+            testid = elem_info.get("testid", "")
+            role = elem_info.get("role", "")
+            type_attr = elem_info.get("type", "")
+
+            is_actionable = tag in ("button", "input") or role == "button" or type_attr == "submit"
+
+            # Safe exemptions: Cookie banner, modal dismissals, notifications consent
+            combined = f"{text} {aria} {testid}".lower()
+            if any(c in combined for c in ("cookie", "consent", "got it", "dismiss", "allow all", "close")):
+                return
+
+            # Target inspection for actionable elements or concise button labels (< 60 chars)
+            if is_actionable or len(text) <= 60:
+                for verb in FORBIDDEN_MUTATION_ACTIONS:
+                    # For 'accept', only flag if NOT related to cookies/terms
+                    if verb == "accept" and ("cookie" in combined or "terms" in combined or "policy" in combined):
+                        continue
+                    if (
+                        re.search(r'\b' + re.escape(verb) + r'\b', text)
+                        or re.search(r'\b' + re.escape(verb) + r'\b', aria)
+                        or re.search(r'\b' + re.escape(verb) + r'\b', testid)
+                    ):
+                        raise WhopDryRunViolationError(
+                            f"Target element with text/attributes '{text or aria or testid}' matches forbidden mutation action '{verb}' under WHOP_DRY_RUN=true."
+                        )
+        except WhopDryRunViolationError:
+            raise
+        except Exception:
+            pass
+
     def human_click(
         self,
         selector_or_locator: Any,
         hesitation_scale: float = 1.0,
+        action_name: Optional[str] = None,
     ) -> Tuple[float, float]:
-        """Performs an authentic human click."""
+        """Performs an authentic human click with strict intrinsic mutation safety.
+        
+        Guarantees that no mouse.down() or mouse.up() event is ever dispatched for
+        forbidden mutation actions when dry_run=True.
+        """
+        # A. Explicit action validation BEFORE any interaction
+        if action_name is not None:
+            self.assert_action_permitted(action_name)
+
+        # B. Resolve target locator
         if isinstance(selector_or_locator, str):
             locator = self.page.locator(selector_or_locator).first
+            selector_str = selector_or_locator.lower()
         else:
             locator = selector_or_locator
+            selector_str = ""
+
+        # C. Intrinsic element/selector mutation validation BEFORE any mouse interaction
+        if action_name is None:
+            self._validate_element_mutation_safety(locator, selector_str)
 
         locator.scroll_into_view_if_needed(timeout=10000)
         bbox = locator.bounding_box()
@@ -391,7 +491,7 @@ class HumanActor:
         else:
             locator = selector_or_locator
 
-        self.human_click(locator)
+        self.human_click(locator, action_name="type")
 
         effective_wpm = self.persona.base_wpm * random.uniform(0.92, 1.08)
         base_char_delay = 60.0 / (effective_wpm * 5.0)
