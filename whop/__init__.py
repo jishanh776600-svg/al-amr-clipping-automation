@@ -157,6 +157,8 @@ __all__ = [
     "ClipQARecord",
     "WhopJobQAReport",
     "QualityVerifier",
+    "WhopReviewSession",
+    "TelegramApprovalGate",
 ]
 
 from .config import AutoClipConfig
@@ -167,6 +169,7 @@ from .models import (
     ClipTechnicalQAResult,
     ClipQARecord,
     WhopJobQAReport,
+    WhopReviewSession,
 )
 from .autoclip_client import (
     AutoClipClient,
@@ -187,5 +190,7 @@ from .autoclip_client import (
     HealthCheckResult,
 )
 from .quality_verifier import QualityVerifier
+from .telegram_approval import TelegramApprovalGate
+
 
 

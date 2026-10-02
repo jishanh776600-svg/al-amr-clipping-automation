@@ -125,7 +125,7 @@ async def test_telegram_send_video_downloads_from_google_drive(clean_env):
 
     # Mock GoogleDriveStorage to simulate downloading the MP4
     def fake_download_file(file_id, dest_path):
-        Path(dest_path).write_bytes(b"FAKE_MP4_CONTENT_" + b"0" * 5000)
+        Path(dest_path).write_bytes(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41" + b"\x00" * 60000)
         return dest_path
 
     cleaned_up = False

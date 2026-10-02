@@ -30,6 +30,7 @@ from .models import (
     ClipTechnicalQAResult,
     RuleComplianceResult,
     RuleComplianceStatus,
+    WhopReviewSession,
     validate_transition,
 )
 
@@ -139,6 +140,35 @@ CREATE TABLE IF NOT EXISTS whop_qa_records (
 CREATE INDEX IF NOT EXISTS idx_whop_qa_campaign ON whop_qa_records(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_whop_qa_job ON whop_qa_records(autoclip_job_id);
 CREATE INDEX IF NOT EXISTS idx_whop_qa_lookup ON whop_qa_records(campaign_id, guideline_hash, autoclip_job_id, artifact_hash);
+
+CREATE TABLE IF NOT EXISTS whop_review_sessions (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_session_id    TEXT NOT NULL UNIQUE,
+    campaign_id          TEXT NOT NULL REFERENCES whop_campaigns(campaign_id) ON DELETE CASCADE,
+    guideline_hash       TEXT NOT NULL,
+    autoclip_job_id      TEXT NOT NULL,
+    artifact_hash        TEXT NOT NULL,
+    idempotency_key      TEXT NOT NULL UNIQUE,
+    review_state         TEXT NOT NULL DEFAULT 'PENDING',
+    chat_id              TEXT NOT NULL DEFAULT '',
+    message_ids_json     TEXT NOT NULL DEFAULT '{}',
+    telegram_file_ids_json TEXT NOT NULL DEFAULT '{}',
+    clip_ids_json        TEXT NOT NULL DEFAULT '[]',
+    clip_order_json      TEXT NOT NULL DEFAULT '[]',
+    reviewer_id          TEXT,
+    reviewer_username    TEXT,
+    decision             TEXT,
+    decision_note        TEXT,
+    metadata_json        TEXT NOT NULL DEFAULT '{}',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_review_session_id ON whop_review_sessions(review_session_id);
+CREATE INDEX IF NOT EXISTS idx_whop_review_campaign ON whop_review_sessions(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_review_job ON whop_review_sessions(autoclip_job_id);
+CREATE INDEX IF NOT EXISTS idx_whop_review_lookup ON whop_review_sessions(campaign_id, guideline_hash, autoclip_job_id, artifact_hash);
+CREATE INDEX IF NOT EXISTS idx_whop_review_idempotency ON whop_review_sessions(idempotency_key);
 """
 
 
@@ -1183,3 +1213,228 @@ class CampaignLedger:
                 cursor.execute("SELECT * FROM whop_qa_records ORDER BY id DESC;")
             rows = cursor.fetchall()
             return [self._row_to_qa_report(r) for r in rows]
+
+    # ==========================================================================
+    # Step 7: Telegram Review Session Methods
+    # ==========================================================================
+
+    def _row_to_review_session(self, row: sqlite3.Row) -> WhopReviewSession:
+        """Converts SQLite row to WhopReviewSession object."""
+        return WhopReviewSession(
+            id=row["id"],
+            review_session_id=row["review_session_id"],
+            campaign_id=row["campaign_id"],
+            guideline_hash=row["guideline_hash"],
+            autoclip_job_id=row["autoclip_job_id"],
+            artifact_hash=row["artifact_hash"],
+            idempotency_key=row["idempotency_key"],
+            review_state=row["review_state"],
+            chat_id=row["chat_id"],
+            message_ids=json.loads(row["message_ids_json"]),
+            telegram_file_ids=json.loads(row["telegram_file_ids_json"]),
+            clip_ids=json.loads(row["clip_ids_json"]),
+            clip_order=json.loads(row["clip_order_json"]),
+            reviewer_id=row["reviewer_id"],
+            reviewer_username=row["reviewer_username"],
+            decision=row["decision"],
+            decision_note=row["decision_note"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def save_review_session(self, session: WhopReviewSession) -> WhopReviewSession:
+        """Saves a new review session to the ledger."""
+        camp = self.get_campaign(session.campaign_id)
+        if not camp:
+            try:
+                self.save_campaign(
+                    CampaignRecord(
+                        campaign_id=session.campaign_id,
+                        title=f"Campaign {session.campaign_id}",
+                        campaign_url=f"https://whop.com/{session.campaign_id}",
+                        current_state=CampaignState.RENDER_READY,
+                    )
+                )
+            except Exception as e:
+                log.warning("Could not auto-create campaign placeholder: %s", e)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO whop_review_sessions (
+                    review_session_id,
+                    campaign_id,
+                    guideline_hash,
+                    autoclip_job_id,
+                    artifact_hash,
+                    idempotency_key,
+                    review_state,
+                    chat_id,
+                    message_ids_json,
+                    telegram_file_ids_json,
+                    clip_ids_json,
+                    clip_order_json,
+                    reviewer_id,
+                    reviewer_username,
+                    decision,
+                    decision_note,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    session.review_session_id,
+                    session.campaign_id,
+                    session.guideline_hash,
+                    session.autoclip_job_id,
+                    session.artifact_hash,
+                    session.idempotency_key,
+                    session.review_state,
+                    session.chat_id,
+                    json.dumps(session.message_ids),
+                    json.dumps(session.telegram_file_ids),
+                    json.dumps(session.clip_ids),
+                    json.dumps(session.clip_order),
+                    session.reviewer_id,
+                    session.reviewer_username,
+                    session.decision,
+                    session.decision_note,
+                    json.dumps(session.metadata),
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+            session.id = cursor.lastrowid
+            return session
+
+    def get_review_session(self, review_session_id: str) -> Optional[WhopReviewSession]:
+        """Retrieves a review session by its unique ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_review_sessions WHERE review_session_id = ?;",
+                (review_session_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_review_session(row)
+        return None
+
+    def get_review_session_by_lookup(
+        self,
+        campaign_id: str,
+        guideline_hash: str,
+        autoclip_job_id: str,
+        artifact_hash: str,
+    ) -> Optional[WhopReviewSession]:
+        """Looks up existing review session by composite identity."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM whop_review_sessions
+                WHERE campaign_id = ? AND guideline_hash = ? AND autoclip_job_id = ? AND artifact_hash = ?
+                ORDER BY id DESC LIMIT 1;
+                """,
+                (campaign_id, guideline_hash, autoclip_job_id, artifact_hash),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_review_session(row)
+        return None
+
+    def get_review_session_by_idempotency_key(self, idempotency_key: str) -> Optional[WhopReviewSession]:
+        """Retrieves review session by its deterministic idempotency key."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_review_sessions WHERE idempotency_key = ?;",
+                (idempotency_key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_review_session(row)
+        return None
+
+    def update_review_session(self, session: WhopReviewSession) -> None:
+        """Updates review session state, message IDs, or metadata."""
+        session.updated_at = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE whop_review_sessions
+                SET review_state = ?,
+                    chat_id = ?,
+                    message_ids_json = ?,
+                    telegram_file_ids_json = ?,
+                    clip_ids_json = ?,
+                    clip_order_json = ?,
+                    reviewer_id = ?,
+                    reviewer_username = ?,
+                    decision = ?,
+                    decision_note = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE review_session_id = ?;
+                """,
+                (
+                    session.review_state,
+                    session.chat_id,
+                    json.dumps(session.message_ids),
+                    json.dumps(session.telegram_file_ids),
+                    json.dumps(session.clip_ids),
+                    json.dumps(session.clip_order),
+                    session.reviewer_id,
+                    session.reviewer_username,
+                    session.decision,
+                    session.decision_note,
+                    json.dumps(session.metadata),
+                    session.updated_at,
+                    session.review_session_id,
+                ),
+            )
+
+    def atomic_transition_review(
+        self,
+        review_session_id: str,
+        expected_state: str,
+        new_state: str,
+        decision: str,
+        reviewer_id: str,
+        reviewer_username: str,
+        note: str = "",
+    ) -> bool:
+        """Atomically transitions review session state using compare-and-set semantics.
+        
+        Returns True if the transition succeeded, or False if the session was not in expected_state.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE whop_review_sessions
+                SET review_state = ?,
+                    decision = ?,
+                    reviewer_id = ?,
+                    reviewer_username = ?,
+                    decision_note = ?,
+                    updated_at = ?
+                WHERE review_session_id = ? AND review_state = ?;
+                """,
+                (
+                    new_state,
+                    decision,
+                    reviewer_id,
+                    reviewer_username,
+                    note,
+                    now,
+                    review_session_id,
+                    expected_state,
+                ),
+            )
+            return cursor.rowcount > 0

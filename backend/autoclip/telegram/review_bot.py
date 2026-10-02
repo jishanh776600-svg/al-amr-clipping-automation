@@ -452,7 +452,11 @@ async def send_clip_review(
         f"• Compliance: {ig_comp:.0f}% | Opt: {ig_opt:.0f}/100",
     ]
 
-    tk_adapter = service.get_adapter("tiktok")
+    try:
+        service = PublishingService()
+        tk_adapter = service.get_adapter("tiktok")
+    except Exception:
+        tk_adapter = None
     if tk_adapter and tk_adapter.is_configured():
         tk_user = os.getenv("TIKTOK_ACCOUNT_ID") or "TikTok"
         caption_lines.extend([
@@ -915,6 +919,12 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
         )
         return {"status": "already_handled", "action": cb_data}
 
+    # Whop Campaign Approval Gate callback hook
+    if cb_data.startswith("wh:"):
+        from whop.telegram_approval import TelegramApprovalGate
+        gate = TelegramApprovalGate()
+        return await gate.handle_callback(update)
+
     if not cb_data.startswith("tg:"):
         await _answer_callback_query(bot_token, cb_id, text="Unknown action.")
         return {"status": "ignored"}
@@ -1042,7 +1052,11 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
             store.update_clip_approval(approval)
 
         # Immediate Review Card Update: Show "Publishing started..." and disable interactive buttons
-        tk_adapter = service.get_adapter("tiktok")
+        try:
+            service = PublishingService()
+            tk_adapter = service.get_adapter("tiktok")
+        except Exception:
+            tk_adapter = None
         tk_configured = bool(tk_adapter and tk_adapter.is_configured())
         init_platforms = {
             "YouTube Shorts": "⏳ Queued",

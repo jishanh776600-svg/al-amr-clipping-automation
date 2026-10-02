@@ -34,6 +34,7 @@ class CampaignState(str, Enum):
     RENDER_WARN = "RENDER_WARN"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"
     APPROVED = "APPROVED"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
     SUBMITTING = "SUBMITTING"
     SUBMITTED = "SUBMITTED"
 
@@ -99,6 +100,11 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     CampaignState.AWAITING_APPROVAL: {
         CampaignState.APPROVED,
         CampaignState.APPROVAL_REJECTED,
+        CampaignState.CHANGES_REQUESTED,
+    },
+    CampaignState.CHANGES_REQUESTED: {
+        CampaignState.RENDERING,
+        CampaignState.REJECTED,
     },
     CampaignState.APPROVED: {
         CampaignState.SUBMITTING,
@@ -619,4 +625,57 @@ class WhopJobQAReport:
             "warnings": self.warnings,
             "failures": self.failures,
             "created_at": self.created_at,
+        }
+
+
+# ==============================================================================
+# Step 7: Telegram Human Approval Gate Models
+# ==============================================================================
+
+@dataclass
+class WhopReviewSession:
+    """Authoritative durable record of a Telegram Human Review session."""
+    review_session_id: str
+    campaign_id: str
+    guideline_hash: str
+    autoclip_job_id: str
+    artifact_hash: str
+    idempotency_key: str
+    review_state: str = "PENDING"  # PENDING, APPROVED, CHANGES_REQUESTED, REJECTED
+    chat_id: str = ""
+    message_ids: Dict[str, int] = field(default_factory=dict)
+    telegram_file_ids: Dict[str, str] = field(default_factory=dict)
+    clip_ids: List[str] = field(default_factory=list)
+    clip_order: List[str] = field(default_factory=list)
+    reviewer_id: Optional[str] = None
+    reviewer_username: Optional[str] = None
+    decision: Optional[str] = None
+    decision_note: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "review_session_id": self.review_session_id,
+            "campaign_id": self.campaign_id,
+            "guideline_hash": self.guideline_hash,
+            "autoclip_job_id": self.autoclip_job_id,
+            "artifact_hash": self.artifact_hash,
+            "idempotency_key": self.idempotency_key,
+            "review_state": self.review_state,
+            "chat_id": self.chat_id,
+            "message_ids": self.message_ids,
+            "telegram_file_ids": self.telegram_file_ids,
+            "clip_ids": self.clip_ids,
+            "clip_order": self.clip_order,
+            "reviewer_id": self.reviewer_id,
+            "reviewer_username": self.reviewer_username,
+            "decision": self.decision,
+            "decision_note": self.decision_note,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
