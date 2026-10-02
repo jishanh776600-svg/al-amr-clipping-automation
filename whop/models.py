@@ -679,3 +679,80 @@ class WhopReviewSession:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+
+# ==============================================================================
+# Step 7.4: Video Source Capability Classification & Probe Models
+# ==============================================================================
+
+class SourceCapability(str, Enum):
+    """Deterministic capability classification for campaign media sources."""
+    DIRECT_MEDIA = "DIRECT_MEDIA"
+    GOOGLE_DRIVE = "GOOGLE_DRIVE"
+    GOOGLE_DRIVE_INTEGRATED = "GOOGLE_DRIVE_INTEGRATED"
+    DROPBOX_PUBLIC = "DROPBOX_PUBLIC"
+    PUBLIC_CDN = "PUBLIC_CDN"
+    PUBLIC_S3 = "PUBLIC_S3"
+    PUBLIC_FILE_HOST = "PUBLIC_FILE_HOST"
+    PUBLIC_YT_DLP_SUPPORTED = "PUBLIC_YT_DLP_SUPPORTED"
+    PUBLIC_YOUTUBE_RESTRICTED = "PUBLIC_YOUTUBE_RESTRICTED"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    LOGIN_REQUIRED = "LOGIN_REQUIRED"
+    COOKIE_REQUIRED = "COOKIE_REQUIRED"
+    CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED"
+    PRIVATE = "PRIVATE"
+    UNSUPPORTED = "UNSUPPORTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class SourceTier(int, Enum):
+    """Deterministic selection priority tier for autonomous cloud execution."""
+    TIER_0_DIRECT_CDN_S3 = 0        # Direct media, CDN, public S3 (highest speed, zero anti-bot)
+    TIER_1_GOOGLE_DRIVE = 1         # Google Drive integrated service authentication
+    TIER_2_PUBLIC_FILE_HOST = 2     # Other verified public no-login file hosts
+    TIER_3_DROPBOX_PUBLIC = 3       # Public direct Dropbox media
+    TIER_4_YOUTUBE_RESTRICTED = 4   # YouTube (operationally restricted on cloud workers)
+    TIER_5_AUTH_BLOCKED = 5         # Login/private/auth required (ineligible)
+
+
+@dataclass
+class SourceProbeResult:
+    """Safe read-only source probe inspection and media validation result."""
+    url: str
+    final_url: str = ""
+    domain: str = ""
+    capability: SourceCapability = SourceCapability.UNKNOWN
+    tier: SourceTier = SourceTier.TIER_5_AUTH_BLOCKED
+    is_supported_no_login: bool = False
+    requires_login: bool = False
+    requires_integrated_auth: bool = False
+    status_code: Optional[int] = None
+    content_type: Optional[str] = None
+    content_length: Optional[int] = None
+    supports_range: bool = False
+    is_valid_media: bool = False
+    media_format: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    probe_latency_ms: float = 0.0
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "url": self.url,
+            "final_url": self.final_url,
+            "domain": self.domain,
+            "capability": self.capability.value,
+            "tier": self.tier.value,
+            "is_supported_no_login": self.is_supported_no_login,
+            "requires_login": self.requires_login,
+            "requires_integrated_auth": self.requires_integrated_auth,
+            "status_code": self.status_code,
+            "content_type": self.content_type,
+            "content_length": self.content_length,
+            "supports_range": self.supports_range,
+            "is_valid_media": self.is_valid_media,
+            "media_format": self.media_format,
+            "rejection_reason": self.rejection_reason,
+            "probe_latency_ms": self.probe_latency_ms,
+            "details": self.details,
+        }

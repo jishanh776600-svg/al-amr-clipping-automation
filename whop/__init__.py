@@ -159,6 +159,12 @@ __all__ = [
     "QualityVerifier",
     "WhopReviewSession",
     "TelegramApprovalGate",
+    "SourceCapability",
+    "SourceTier",
+    "SourceProbeResult",
+    "SourceProbe",
+    "classify_source_url",
+    "convert_dropbox_to_direct_url",
 ]
 
 from .config import AutoClipConfig
@@ -170,6 +176,9 @@ from .models import (
     ClipQARecord,
     WhopJobQAReport,
     WhopReviewSession,
+    SourceCapability,
+    SourceTier,
+    SourceProbeResult,
 )
 from .autoclip_client import (
     AutoClipClient,
@@ -184,6 +193,7 @@ from .autoclip_client import (
     AutoClipServerError,
     AutoClipMalformedResponseError,
     AutoClipSourceMissingError,
+    AutoClipSourceRestrictedError,
     AutoClipDuplicateReused,
     AutoClipJobPayload,
     AutoClipJobResult,
@@ -191,6 +201,8 @@ from .autoclip_client import (
 )
 from .quality_verifier import QualityVerifier
 from .telegram_approval import TelegramApprovalGate
-
-
-
+from .source_probe import (
+    SourceProbe,
+    classify_source_url,
+    convert_dropbox_to_direct_url,
+)

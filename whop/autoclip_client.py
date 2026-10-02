@@ -114,6 +114,11 @@ class AutoClipSourceMissingError(AutoClipError):
     code = "AUTCLIP_SOURCE_MISSING"
 
 
+class AutoClipSourceRestrictedError(AutoClipError):
+    """Raised when only restricted/unreliable cloud sources (e.g. throttled YouTube) are available."""
+    code = "AUTCLIP_SOURCE_RESTRICTED"
+
+
 class AutoClipDuplicateReused(AutoClipError):
     """Informational indicator that an existing job was reused (idempotency)."""
     code = "AUTCLIP_DUPLICATE_REUSED"
@@ -450,8 +455,23 @@ class AutoClipClient:
             # Tier 3: YouTube (heavily throttled on cloud VMs)
             return 3
 
-        # Sort primarily by source speed/reliability tier, then alphabetically for deterministic stability
+        # Sort candidates so Tier 0-2 (direct MP4, CDN, S3, Drive, Dropbox) are prioritized at the top
         normalized.sort(key=lambda s: (source_priority(s), s))
+
+        # If allow_youtube_sources is False, completely filter out YouTube links
+        if not self.config.allow_youtube_sources:
+            fast_sources = [
+                s for s in normalized
+                if "youtube.com" not in s.lower() and "youtu.be" not in s.lower()
+            ]
+            if not fast_sources:
+                raise AutoClipSourceRestrictedError(
+                    f"Campaign '{brief.campaign_id}' only provides YouTube sources: {normalized}. "
+                    f"Direct YouTube cloud rendering is restricted due to egress throttling and anti-bot rate limits. "
+                    f"Configure AUTOCLIP_ALLOW_YOUTUBE_SOURCES=true to override or provide a Google Drive / direct media link."
+                )
+            return fast_sources
+
         return normalized
 
     # ==========================================================================

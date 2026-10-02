@@ -160,6 +160,7 @@ class AutoClipConfig:
     max_retries: int = 3
     retry_backoff_factor: float = 0.5
     dry_run: bool = True
+    allow_youtube_sources: bool = True
 
     @classmethod
     def from_env(cls) -> "AutoClipConfig":
@@ -194,9 +195,16 @@ class AutoClipConfig:
         except ValueError:
             timeout_s = 15.0
 
+        allow_yt_str = os.getenv("AUTOCLIP_ALLOW_YOUTUBE_SOURCES")
+        if allow_yt_str is not None:
+            allow_youtube = allow_yt_str.strip().lower() not in ("false", "0", "no", "off")
+        else:
+            allow_youtube = True
+
         return cls(
             base_url=base_url,
             api_token=token,
             timeout_s=timeout_s,
             dry_run=dry_run,
+            allow_youtube_sources=allow_youtube,
         )
