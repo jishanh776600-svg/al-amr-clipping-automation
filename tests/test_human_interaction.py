@@ -91,6 +91,7 @@ def test_gaussian_boundary_invariance_10k_iterations():
 # ---------------------------------------------------------------------------
 
 def test_gaussian_clustering_distribution():
+    random.seed(42)
     bbox = {"x": 100, "y": 100, "width": 200, "height": 100}
     center_x = 200.0
     center_y = 150.0

@@ -47,10 +47,25 @@ def sanitize_text(text: str, secret_to_redact: Optional[str] = None) -> str:
     if secret_to_redact and len(secret_to_redact) >= 4:
         sanitized = sanitized.replace(secret_to_redact, "[REDACTED_SECRET]")
 
-    # Also redact raw WHOP_COOKIES if set in env
-    env_secret = os.getenv("WHOP_COOKIES", "").strip()
-    if env_secret and len(env_secret) >= 4:
-        sanitized = sanitized.replace(env_secret, "[REDACTED_WHOP_COOKIES]")
+    # Redact environment tokens
+    for env_var in (
+        "WHOP_COOKIES",
+        "AUTOCLIP_API_KEY",
+        "OPERATOR_TOKEN",
+        "AL_AMR_MASTER_KEY",
+        "WORKER_CALLBACK_SECRET",
+        "GITHUB_PAT",
+    ):
+        env_secret = os.getenv(env_var, "").strip()
+        if env_secret and len(env_secret) >= 4:
+            sanitized = sanitized.replace(env_secret, f"[REDACTED_{env_var}]")
+
+    # Redact default operator token if present
+    for tok in ("al amr jish2#ji", "al amar jish2#ji"):
+        sanitized = sanitized.replace(tok, "[REDACTED_TOKEN]")
+
+    # Redact Authorization header values / Bearer tokens
+    sanitized = re.sub(r'(Bearer\s+)[A-Za-z0-9_\-\.\#\s]{4,}', r'\1[REDACTED]', sanitized, flags=re.IGNORECASE)
 
     # Sanitize URLs with sensitive query parameters (e.g. token, session, auth, key)
     def _sanitize_url_match(match: re.Match) -> str:
@@ -130,3 +145,48 @@ class WhopConfig:
                 f"Action '{action_name}' is blocked by Step 1 safety guard. "
                 f"WHOP_DRY_RUN is enabled (read-only mode). No campaign mutation allowed."
             )
+
+
+@dataclass(frozen=True)
+class AutoClipConfig:
+    base_url: str = "https://al-amr-clipping-automation.onrender.com"
+    api_token: str = "al amr jish2#ji"
+    timeout_s: float = 15.0
+    max_retries: int = 3
+    retry_backoff_factor: float = 0.5
+    dry_run: bool = True
+
+    @classmethod
+    def from_env(cls) -> "AutoClipConfig":
+        """Loads configuration from environment variables with safe defaults."""
+        base_url = (
+            os.getenv("CONTROL_PLANE_URL")
+            or os.getenv("AUTOCLIP_BASE_URL")
+            or os.getenv("AUTOCLIP_API_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")
+            or "https://al-amr-clipping-automation.onrender.com"
+        ).strip().rstrip("/")
+
+        token = (
+            os.getenv("AUTOCLIP_API_KEY")
+            or os.getenv("OPERATOR_TOKEN")
+            or os.getenv("AL_AMR_MASTER_KEY")
+            or os.getenv("WORKER_CALLBACK_SECRET")
+            or "al amr jish2#ji"
+        ).strip()
+
+        dry_run_str = os.getenv("WHOP_DRY_RUN", "true").strip().lower()
+        dry_run = dry_run_str not in ("false", "0", "no", "off")
+
+        timeout_str = os.getenv("AUTOCLIP_TIMEOUT_S", "15.0").strip()
+        try:
+            timeout_s = float(timeout_str)
+        except ValueError:
+            timeout_s = 15.0
+
+        return cls(
+            base_url=base_url,
+            api_token=token,
+            timeout_s=timeout_s,
+            dry_run=dry_run,
+        )

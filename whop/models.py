@@ -63,6 +63,8 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
         CampaignState.VALIDATING,  # re-evaluation on rediscovery
         CampaignState.REJECTED,    # disqualified on rediscovery
         CampaignState.CLAIMING,
+        CampaignState.INGESTED,
+        CampaignState.INGEST_FAILED,
     },
     CampaignState.CLAIMING: {
         CampaignState.CLAIMED,
@@ -169,6 +171,26 @@ class CampaignRecord:
         d = asdict(self)
         d["current_state"] = self.current_state.value
         return d
+
+
+@dataclass
+class WhopAutoClipJobRecord:
+    """Authoritative durable record linking a Whop campaign to an AutoClip job."""
+    campaign_id: str
+    guideline_hash: str
+    autoclip_job_id: str
+    idempotency_key: str
+    status: str
+    request_hash: str
+    source_hash: str
+    id: Optional[int] = None
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    last_error: Optional[str] = None
+    metadata_json: str = "{}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 # ==============================================================================
@@ -382,6 +404,9 @@ class WhopCampaignBrief:
         if min_dur > max_dur:
             min_dur, max_dur = max_dur, min_dur
 
+        mandatory_rules = [r.text for r in self.rules if getattr(r, "mandatory", False) and getattr(r, "text", "")]
+        preference_rules = [r.text for r in self.rules if not getattr(r, "mandatory", False) and getattr(r, "text", "")]
+
         return CampaignBrief(
             campaign_id=self.campaign_id,
             name=self.title[:80],
@@ -401,6 +426,8 @@ class WhopCampaignBrief:
             cta_text=self.cta_wording,
             cta_instructions=self.cta_instructions,
             branding_rules=self.branding_rules,
+            mandatory_rules=mandatory_rules,
+            preference_rules=preference_rules,
         )
 
 

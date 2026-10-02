@@ -24,6 +24,7 @@ from .models import (
     CampaignState,
     InvalidStateTransitionError,
     WhopCampaignBrief,
+    WhopAutoClipJobRecord,
     validate_transition,
 )
 
@@ -91,6 +92,26 @@ CREATE TABLE IF NOT EXISTS whop_campaign_briefs (
 
 CREATE INDEX IF NOT EXISTS idx_whop_briefs_campaign ON whop_campaign_briefs(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_whop_briefs_hash ON whop_campaign_briefs(guideline_hash);
+
+CREATE TABLE IF NOT EXISTS whop_autoclip_jobs (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id          TEXT NOT NULL REFERENCES whop_campaigns(campaign_id) ON DELETE CASCADE,
+    guideline_hash       TEXT NOT NULL,
+    autoclip_job_id      TEXT NOT NULL,
+    idempotency_key      TEXT NOT NULL UNIQUE,
+    status               TEXT NOT NULL,
+    request_hash         TEXT NOT NULL,
+    source_hash          TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    last_error           TEXT,
+    metadata_json        TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_autoclip_campaign ON whop_autoclip_jobs(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_autoclip_job_id ON whop_autoclip_jobs(autoclip_job_id);
+CREATE INDEX IF NOT EXISTS idx_whop_autoclip_idempotency ON whop_autoclip_jobs(idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_whop_autoclip_logical ON whop_autoclip_jobs(campaign_id, guideline_hash, source_hash);
 """
 
 
@@ -742,3 +763,179 @@ class CampaignLedger:
             submission_url=row["submission_url"],
             submitted_at=row["submitted_at"],
         )
+
+    def _row_to_autoclip_job(self, row: sqlite3.Row) -> WhopAutoClipJobRecord:
+        return WhopAutoClipJobRecord(
+            id=row["id"],
+            campaign_id=row["campaign_id"],
+            guideline_hash=row["guideline_hash"],
+            autoclip_job_id=row["autoclip_job_id"],
+            idempotency_key=row["idempotency_key"],
+            status=row["status"],
+            request_hash=row["request_hash"],
+            source_hash=row["source_hash"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            last_error=row["last_error"],
+            metadata_json=row["metadata_json"] or "{}",
+        )
+
+    def save_autoclip_job(self, record: WhopAutoClipJobRecord) -> WhopAutoClipJobRecord:
+        """Persists or updates an AutoClip job record in the ledger."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO whop_autoclip_jobs (
+                    campaign_id, guideline_hash, autoclip_job_id, idempotency_key,
+                    status, request_hash, source_hash, created_at, updated_at,
+                    last_error, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(idempotency_key) DO UPDATE SET
+                    status=excluded.status,
+                    autoclip_job_id=excluded.autoclip_job_id,
+                    updated_at=excluded.updated_at,
+                    last_error=excluded.last_error,
+                    metadata_json=excluded.metadata_json
+                RETURNING id;
+                """,
+                (
+                    record.campaign_id,
+                    record.guideline_hash,
+                    record.autoclip_job_id,
+                    record.idempotency_key,
+                    record.status,
+                    record.request_hash,
+                    record.source_hash,
+                    record.created_at,
+                    record.updated_at,
+                    record.last_error,
+                    record.metadata_json,
+                ),
+            )
+            row = cursor.fetchone()
+            record_id = row[0] if row else record.id
+            conn.commit()
+
+        record.id = record_id
+        return record
+
+    def get_autoclip_job(
+        self,
+        campaign_id: str,
+        guideline_hash: str,
+        source_hash: str,
+    ) -> Optional[WhopAutoClipJobRecord]:
+        """Finds an existing AutoClip job by campaign, guideline hash, and source hash."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM whop_autoclip_jobs
+                WHERE campaign_id = ? AND guideline_hash = ? AND source_hash = ?
+                ORDER BY id DESC LIMIT 1;
+                """,
+                (campaign_id, guideline_hash, source_hash),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_autoclip_job(row)
+        return None
+
+    def get_autoclip_job_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> Optional[WhopAutoClipJobRecord]:
+        """Finds an existing AutoClip job by its unique deterministic idempotency key."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_autoclip_jobs WHERE idempotency_key = ? LIMIT 1;",
+                (idempotency_key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_autoclip_job(row)
+        return None
+
+    def get_autoclip_job_by_job_id(
+        self,
+        autoclip_job_id: str,
+    ) -> Optional[WhopAutoClipJobRecord]:
+        """Finds an existing AutoClip job by the AutoClip server job ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_autoclip_jobs WHERE autoclip_job_id = ? LIMIT 1;",
+                (autoclip_job_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_autoclip_job(row)
+        return None
+
+    def update_autoclip_job_status(
+        self,
+        autoclip_job_id: str,
+        status: str,
+        last_error: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[WhopAutoClipJobRecord]:
+        """Updates the status and metadata of an AutoClip job."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM whop_autoclip_jobs WHERE autoclip_job_id = ? LIMIT 1;",
+                (autoclip_job_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            current_meta = {}
+            if row["metadata_json"]:
+                try:
+                    current_meta = json.loads(row["metadata_json"])
+                except Exception:
+                    pass
+            if metadata:
+                current_meta.update(metadata)
+
+            meta_json = json.dumps(current_meta)
+
+            cursor.execute(
+                """
+                UPDATE whop_autoclip_jobs
+                SET status = ?, updated_at = ?, last_error = ?, metadata_json = ?
+                WHERE autoclip_job_id = ?;
+                """,
+                (status, now_iso, last_error, meta_json, autoclip_job_id),
+            )
+            conn.commit()
+
+            cursor.execute(
+                "SELECT * FROM whop_autoclip_jobs WHERE autoclip_job_id = ? LIMIT 1;",
+                (autoclip_job_id,),
+            )
+            updated_row = cursor.fetchone()
+            if updated_row:
+                return self._row_to_autoclip_job(updated_row)
+        return None
+
+    def list_autoclip_jobs(
+        self,
+        campaign_id: Optional[str] = None,
+    ) -> List[WhopAutoClipJobRecord]:
+        """Lists AutoClip jobs, optionally filtered by campaign."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if campaign_id:
+                cursor.execute(
+                    "SELECT * FROM whop_autoclip_jobs WHERE campaign_id = ? ORDER BY id DESC;",
+                    (campaign_id,),
+                )
+            else:
+                cursor.execute("SELECT * FROM whop_autoclip_jobs ORDER BY id DESC;")
+            rows = cursor.fetchall()
+            return [self._row_to_autoclip_job(r) for r in rows]

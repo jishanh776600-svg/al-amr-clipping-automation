@@ -133,6 +133,45 @@ __all__ = [
     "STEALTH_INIT_SCRIPT",
     "apply_stealth_to_context",
     "apply_stealth_to_page",
+    "AutoClipConfig",
+    "AutoClipClient",
+    "AutoClipError",
+    "AutoClipUnavailableError",
+    "AutoClipTimeoutError",
+    "AutoClipAuthError",
+    "AutoClipForbiddenError",
+    "AutoClipBadRequestError",
+    "AutoClipValidationError",
+    "AutoClipNotFoundError",
+    "AutoClipServerError",
+    "AutoClipMalformedResponseError",
+    "AutoClipSourceMissingError",
+    "AutoClipDuplicateReused",
+    "AutoClipJobPayload",
+    "AutoClipJobResult",
+    "HealthCheckResult",
+    "WhopAutoClipJobRecord",
 ]
+
+from .config import AutoClipConfig
+from .models import WhopAutoClipJobRecord
+from .autoclip_client import (
+    AutoClipClient,
+    AutoClipError,
+    AutoClipUnavailableError,
+    AutoClipTimeoutError,
+    AutoClipAuthError,
+    AutoClipForbiddenError,
+    AutoClipBadRequestError,
+    AutoClipValidationError,
+    AutoClipNotFoundError,
+    AutoClipServerError,
+    AutoClipMalformedResponseError,
+    AutoClipSourceMissingError,
+    AutoClipDuplicateReused,
+    AutoClipJobPayload,
+    AutoClipJobResult,
+    HealthCheckResult,
+)
 
 
