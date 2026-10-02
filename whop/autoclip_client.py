@@ -455,8 +455,8 @@ class AutoClipClient:
             # Tier 3: YouTube (heavily throttled on cloud VMs)
             return 3
 
-        # Sort candidates so Tier 0-2 (direct MP4, CDN, S3, Drive, Dropbox) are prioritized at the top
-        normalized.sort(key=lambda s: (source_priority(s), s))
+        # Sort candidates deterministically by priority tier (Tier 0-2 first) then canonical URL
+        normalized.sort(key=lambda u: (source_priority(u), u))
 
         # If allow_youtube_sources is False, completely filter out YouTube links
         if not self.config.allow_youtube_sources:
@@ -692,7 +692,7 @@ class AutoClipClient:
             payload.video_url,
         )
 
-        resp_data = self._request("POST", "/api/jobs/create-autonomous", json_data=request_body)
+        resp_data = self._request("POST", "/api/jobs/create-autonomous", json_data=request_body, timeout=60.0)
 
         job_id = resp_data.get("id")
         server_status = resp_data.get("status", "queued")
