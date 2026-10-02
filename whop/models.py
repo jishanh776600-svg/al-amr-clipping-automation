@@ -169,3 +169,287 @@ class CampaignRecord:
         d = asdict(self)
         d["current_state"] = self.current_state.value
         return d
+
+
+# ==============================================================================
+# Step 4: CampaignBrief, Guidelines & Rule Provenance Models
+# ==============================================================================
+
+class RuleCategory(str, Enum):
+    CONTENT = "CONTENT"
+    SOURCE = "SOURCE"
+    DURATION = "DURATION"
+    EDITING = "EDITING"
+    CAPTIONS = "CAPTIONS"
+    SUBTITLES = "SUBTITLES"
+    VISUAL = "VISUAL"
+    AUDIO = "AUDIO"
+    BGM = "BGM"
+    SFX = "SFX"
+    BRANDING = "BRANDING"
+    CTA = "CTA"
+    SEO = "SEO"
+    HASHTAGS = "HASHTAGS"
+    PUBLISHING = "PUBLISHING"
+    SUBMISSION = "SUBMISSION"
+    COPYRIGHT = "COPYRIGHT"
+    OTHER = "OTHER"
+
+
+class ParsingStatus(str, Enum):
+    PARSED = "PARSED"
+    PARTIAL = "PARTIAL"
+    GUIDELINES_UNAVAILABLE = "GUIDELINES_UNAVAILABLE"
+    FAILED = "FAILED"
+
+
+@dataclass
+class CampaignRule:
+    """An individual atomic rule with strict provenance and classification."""
+    rule_id: str
+    category: RuleCategory
+    text: str
+    normalized_value: Any = None
+    mandatory: bool = False
+    prohibited: bool = False
+    platform: str = "all"  # "all", "youtube", "instagram", "tiktok"
+    source_reference: str = ""
+    source_excerpt: str = ""
+    confidence: str = "explicit"  # "explicit", "inferred"
+    status: str = "ACTIVE"  # "ACTIVE", "INTERPRETATION_REQUIRED", "OPERATIONAL"
+    is_operational: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["category"] = self.category.value
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> CampaignRule:
+        cat = d.get("category", RuleCategory.OTHER.value)
+        if isinstance(cat, str):
+            cat = RuleCategory(cat)
+        return cls(
+            rule_id=d["rule_id"],
+            category=cat,
+            text=d.get("text", ""),
+            normalized_value=d.get("normalized_value"),
+            mandatory=bool(d.get("mandatory", False)),
+            prohibited=bool(d.get("prohibited", False)),
+            platform=d.get("platform", "all"),
+            source_reference=d.get("source_reference", ""),
+            source_excerpt=d.get("source_excerpt", ""),
+            confidence=d.get("confidence", "explicit"),
+            status=d.get("status", "ACTIVE"),
+            is_operational=bool(d.get("is_operational", False)),
+        )
+
+
+@dataclass
+class WhopCampaignBrief:
+    """Canonical structured representation of campaign compliance requirements."""
+    # Identity
+    campaign_id: str
+    title: str
+    campaign_url: str
+    source_platform: str = "whop"
+    payout_raw: str = ""
+    cpm: Optional[float] = None
+    supported_platforms: List[str] = field(default_factory=list)
+
+    # Guideline Provenance
+    guideline_source_type: str = "detail_page"  # "detail_page", "pdf", "dropbox", "google_drive", "external_doc", "none"
+    guideline_source_reference: str = ""
+    guideline_hash: str = ""
+    guideline_version: Optional[str] = None
+    parsed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    raw_guideline_text: str = ""
+    parser_version: str = "1.0.0"
+    parsing_status: ParsingStatus = ParsingStatus.PARSED
+
+    # Content Requirements & Technical Constraints
+    duration_min_s: Optional[float] = None
+    duration_max_s: Optional[float] = None
+    duration_preferred_s: Optional[float] = None
+    duration_exact_s: Optional[float] = None
+    required_topics: List[str] = field(default_factory=list)
+    allowed_sources: List[str] = field(default_factory=list)
+    forbidden_sources: List[str] = field(default_factory=list)
+    banned_words: List[str] = field(default_factory=list)
+    banned_topics: List[str] = field(default_factory=list)
+    visual_instructions: List[str] = field(default_factory=list)
+    caption_preset: str = "bold_pop"
+    caption_rules: List[str] = field(default_factory=list)
+    cta_wording: str = ""
+    cta_placement: str = ""
+    cta_instructions: List[str] = field(default_factory=list)
+    bgm_rules: List[str] = field(default_factory=list)
+    sfx_rules: List[str] = field(default_factory=list)
+    branding_rules: List[str] = field(default_factory=list)
+    logo_watermark_required: bool = False
+    hook_instructions: List[str] = field(default_factory=list)
+
+    # Publishing & Platform-Specific Requirements
+    youtube_requirements: List[str] = field(default_factory=list)
+    instagram_requirements: List[str] = field(default_factory=list)
+    tiktok_requirements: List[str] = field(default_factory=list)
+    title_requirements: List[str] = field(default_factory=list)
+    description_guidelines: List[str] = field(default_factory=list)
+    hashtags: List[str] = field(default_factory=list)
+    required_mentions: List[str] = field(default_factory=list)
+    link_in_bio: Optional[str] = None
+    approval_gate_required: bool = False
+
+    # Operational Instructions (explicitly separated from video-editing rules)
+    operational_instructions: List[str] = field(default_factory=list)
+
+    # Atomic Rules Collection
+    rules: List[CampaignRule] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["parsing_status"] = self.parsing_status.value
+        d["rules"] = [r.to_dict() for r in self.rules]
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> WhopCampaignBrief:
+        p_status = d.get("parsing_status", ParsingStatus.PARSED.value)
+        if isinstance(p_status, str):
+            p_status = ParsingStatus(p_status)
+
+        rules = [CampaignRule.from_dict(r) for r in d.get("rules", [])]
+
+        return cls(
+            campaign_id=d["campaign_id"],
+            title=d["title"],
+            campaign_url=d.get("campaign_url", ""),
+            source_platform=d.get("source_platform", "whop"),
+            payout_raw=d.get("payout_raw", ""),
+            cpm=d.get("cpm"),
+            supported_platforms=d.get("supported_platforms", []),
+            guideline_source_type=d.get("guideline_source_type", "detail_page"),
+            guideline_source_reference=d.get("guideline_source_reference", ""),
+            guideline_hash=d.get("guideline_hash", ""),
+            guideline_version=d.get("guideline_version"),
+            parsed_at=d.get("parsed_at") or datetime.now(timezone.utc).isoformat(),
+            raw_guideline_text=d.get("raw_guideline_text", ""),
+            parser_version=d.get("parser_version", "1.0.0"),
+            parsing_status=p_status,
+            duration_min_s=d.get("duration_min_s"),
+            duration_max_s=d.get("duration_max_s"),
+            duration_preferred_s=d.get("duration_preferred_s"),
+            duration_exact_s=d.get("duration_exact_s"),
+            required_topics=d.get("required_topics", []),
+            allowed_sources=d.get("allowed_sources", []),
+            forbidden_sources=d.get("forbidden_sources", []),
+            banned_words=d.get("banned_words", []),
+            banned_topics=d.get("banned_topics", []),
+            visual_instructions=d.get("visual_instructions", []),
+            caption_preset=d.get("caption_preset", "bold_pop"),
+            caption_rules=d.get("caption_rules", []),
+            cta_wording=d.get("cta_wording", ""),
+            cta_placement=d.get("cta_placement", ""),
+            cta_instructions=d.get("cta_instructions", []),
+            bgm_rules=d.get("bgm_rules", []),
+            sfx_rules=d.get("sfx_rules", []),
+            branding_rules=d.get("branding_rules", []),
+            logo_watermark_required=bool(d.get("logo_watermark_required", False)),
+            hook_instructions=d.get("hook_instructions", []),
+            youtube_requirements=d.get("youtube_requirements", []),
+            instagram_requirements=d.get("instagram_requirements", []),
+            tiktok_requirements=d.get("tiktok_requirements", []),
+            title_requirements=d.get("title_requirements", []),
+            description_guidelines=d.get("description_guidelines", []),
+            hashtags=d.get("hashtags", []),
+            required_mentions=d.get("required_mentions", []),
+            link_in_bio=d.get("link_in_bio"),
+            approval_gate_required=bool(d.get("approval_gate_required", False)),
+            operational_instructions=d.get("operational_instructions", []),
+            rules=rules,
+        )
+
+    def to_autoclip_brief(self) -> Any:
+        """Bridges to AutoClip canonical CampaignBrief for seamless downstream clipping."""
+        try:
+            from backend.autoclip.campaign.models import CampaignBrief
+        except ImportError:
+            # Fallback if autoclip package not installed in global namespace
+            from autoclip.campaign.models import CampaignBrief
+
+        min_dur = self.duration_min_s if self.duration_min_s and self.duration_min_s > 0 else 20.0
+        max_dur = self.duration_max_s if self.duration_max_s and self.duration_max_s > 0 else 90.0
+        if min_dur > max_dur:
+            min_dur, max_dur = max_dur, min_dur
+
+        return CampaignBrief(
+            campaign_id=self.campaign_id,
+            name=self.title[:80],
+            description=f"Whop campaign: {self.title}",
+            topic_context=self.title,
+            required_topics=self.required_topics[:10],
+            banned_words=self.banned_words[:20],
+            banned_topics=self.banned_topics[:20],
+            minimum_duration=float(min_dur),
+            maximum_duration=float(max_dur),
+            preferred_duration=float(self.duration_preferred_s) if self.duration_preferred_s else None,
+            caption_preset=self.caption_preset or "bold_pop",
+            hashtags=self.hashtags[:15],
+            title_patterns=self.title_requirements[:5],
+            description_guidelines=self.description_guidelines[:5],
+            required_mentions=self.required_mentions[:10],
+            cta_text=self.cta_wording,
+            cta_instructions=self.cta_instructions,
+            branding_rules=self.branding_rules,
+        )
+
+
+def validate_campaign_brief(brief: WhopCampaignBrief) -> List[str]:
+    """Strictly validates a WhopCampaignBrief.
+    
+    Returns a list of error strings. Empty list indicates valid brief.
+    Preserves legitimate null/unknown values (unknown is NOT invalid).
+    """
+    errors: List[str] = []
+
+    if not brief.campaign_id or not brief.campaign_id.strip():
+        errors.append("Validation Error: Missing campaign_id")
+
+    if not brief.title or not brief.title.strip():
+        errors.append("Validation Error: Missing title")
+
+    if not isinstance(brief.parsing_status, ParsingStatus):
+        errors.append(f"Validation Error: Invalid parsing_status '{brief.parsing_status}'")
+
+    if brief.parsing_status != ParsingStatus.GUIDELINES_UNAVAILABLE and not brief.guideline_hash:
+        errors.append("Validation Error: Missing guideline_hash for parsed/partial guidelines")
+
+    # Contradictory duration
+    if (
+        brief.duration_min_s is not None
+        and brief.duration_max_s is not None
+        and brief.duration_min_s > brief.duration_max_s
+    ):
+        errors.append(
+            f"Validation Error: Contradictory duration constraints (min {brief.duration_min_s}s > max {brief.duration_max_s}s)"
+        )
+
+    # Rule validations
+    seen_rule_ids: Set[str] = set()
+    for idx, rule in enumerate(brief.rules):
+        if not rule.rule_id:
+            errors.append(f"Validation Error: Rule at index {idx} has empty rule_id")
+        elif rule.rule_id in seen_rule_ids:
+            errors.append(f"Validation Error: Duplicate rule_id '{rule.rule_id}' detected")
+        seen_rule_ids.add(rule.rule_id)
+
+        if not rule.text or not rule.text.strip():
+            errors.append(f"Validation Error: Rule '{rule.rule_id}' has empty text")
+
+        if not rule.source_reference:
+            errors.append(f"Validation Error: Rule '{rule.rule_id}' is missing source_reference provenance")
+
+        if rule.platform not in ("all", "youtube", "instagram", "tiktok"):
+            errors.append(f"Validation Error: Rule '{rule.rule_id}' has invalid platform scope '{rule.platform}'")
+
+    return errors

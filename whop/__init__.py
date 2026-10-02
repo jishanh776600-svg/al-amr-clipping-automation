@@ -47,13 +47,24 @@ from .scraper import (
 from .models import (
     CampaignEvent,
     CampaignRecord,
+    CampaignRule,
     CampaignState,
     InvalidStateTransitionError,
+    ParsingStatus,
+    RuleCategory,
+    WhopCampaignBrief,
+    validate_campaign_brief,
     validate_transition,
 )
 from .ledger import (
     CampaignLedger,
     DEFAULT_LEDGER_PATH,
+)
+from .guidelines import (
+    compute_guideline_hash,
+    fetch_guideline_document,
+    normalize_guideline_content,
+    parse_campaign_guidelines,
 )
 
 __all__ = [
@@ -91,6 +102,15 @@ __all__ = [
     "validate_transition",
     "CampaignLedger",
     "DEFAULT_LEDGER_PATH",
+    "CampaignRule",
+    "RuleCategory",
+    "ParsingStatus",
+    "WhopCampaignBrief",
+    "validate_campaign_brief",
+    "compute_guideline_hash",
+    "fetch_guideline_document",
+    "normalize_guideline_content",
+    "parse_campaign_guidelines",
 ]
 
 

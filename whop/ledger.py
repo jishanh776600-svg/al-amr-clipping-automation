@@ -23,6 +23,7 @@ from .models import (
     CampaignRecord,
     CampaignState,
     InvalidStateTransitionError,
+    WhopCampaignBrief,
     validate_transition,
 )
 
@@ -70,6 +71,26 @@ CREATE TABLE IF NOT EXISTS whop_campaign_events (
 
 CREATE INDEX IF NOT EXISTS idx_whop_events_campaign ON whop_campaign_events(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_whop_events_timestamp ON whop_campaign_events(timestamp);
+
+CREATE TABLE IF NOT EXISTS whop_campaign_briefs (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id                 TEXT NOT NULL REFERENCES whop_campaigns(campaign_id) ON DELETE CASCADE,
+    guideline_hash              TEXT NOT NULL,
+    guideline_source_type       TEXT NOT NULL,
+    guideline_source_reference  TEXT NOT NULL,
+    parsing_status              TEXT NOT NULL,
+    brief_json                  TEXT NOT NULL,
+    rules_count                 INTEGER NOT NULL DEFAULT 0,
+    mandatory_rules_count       INTEGER NOT NULL DEFAULT 0,
+    prohibited_rules_count      INTEGER NOT NULL DEFAULT 0,
+    unresolved_rules_count      INTEGER NOT NULL DEFAULT 0,
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL,
+    UNIQUE(campaign_id, guideline_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_briefs_campaign ON whop_campaign_briefs(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_briefs_hash ON whop_campaign_briefs(guideline_hash);
 """
 
 
@@ -478,8 +499,162 @@ class CampaignLedger:
         return stale_records
 
     # --------------------------------------------------------------------------
-    # Internal Transaction Helpers
+    # Step 4: CampaignBrief Persistence & Idempotency Methods
     # --------------------------------------------------------------------------
+
+    def save_campaign_brief(
+        self,
+        brief: WhopCampaignBrief,
+        source: str = "whop_brief_parser",
+    ) -> Tuple[WhopCampaignBrief, bool]:
+        """Persists a CampaignBrief idempotently.
+        
+        Returns (brief, is_new).
+        If (campaign_id, guideline_hash) already exists:
+          Updates record and logs BRIEF_REUSED event.
+        If new:
+          Inserts record and logs BRIEF_PARSED event.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        campaign_id = brief.campaign_id
+        g_hash = brief.guideline_hash
+        brief_json_str = json.dumps(brief.to_dict())
+
+        rules_cnt = len(brief.rules)
+        mandatory_cnt = sum(1 for r in brief.rules if r.mandatory)
+        prohibited_cnt = sum(1 for r in brief.rules if r.prohibited)
+        unresolved_cnt = sum(1 for r in brief.rules if r.status == "INTERPRETATION_REQUIRED")
+
+        with self._get_connection() as conn:
+            # Check existing campaign state
+            c_row = conn.execute(
+                "SELECT current_state FROM whop_campaigns WHERE campaign_id = ?",
+                (campaign_id,)
+            ).fetchone()
+            curr_state = c_row["current_state"] if c_row else CampaignState.ELIGIBLE.value
+
+            existing = conn.execute(
+                "SELECT id FROM whop_campaign_briefs WHERE campaign_id = ? AND guideline_hash = ?",
+                (campaign_id, g_hash)
+            ).fetchone()
+
+            if existing:
+                # Update existing brief idempotently
+                conn.execute(
+                    """
+                    UPDATE whop_campaign_briefs SET
+                        guideline_source_type = ?,
+                        guideline_source_reference = ?,
+                        parsing_status = ?,
+                        brief_json = ?,
+                        rules_count = ?,
+                        mandatory_rules_count = ?,
+                        prohibited_rules_count = ?,
+                        unresolved_rules_count = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        brief.guideline_source_type,
+                        brief.guideline_source_reference,
+                        brief.parsing_status.value,
+                        brief_json_str,
+                        rules_cnt,
+                        mandatory_cnt,
+                        prohibited_cnt,
+                        unresolved_cnt,
+                        now_iso,
+                        existing["id"],
+                    )
+                )
+
+                self._record_event_tx(
+                    conn,
+                    CampaignEvent(
+                        campaign_id=campaign_id,
+                        previous_state=curr_state,
+                        new_state=curr_state,
+                        timestamp=now_iso,
+                        reason="BRIEF_REUSED",
+                        source=source,
+                        metadata_json=json.dumps({
+                            "guideline_hash": g_hash,
+                            "rules_count": rules_cnt,
+                            "parsing_status": brief.parsing_status.value,
+                        }),
+                    )
+                )
+                conn.commit()
+                return brief, False
+
+            else:
+                # Insert new brief
+                conn.execute(
+                    """
+                    INSERT INTO whop_campaign_briefs (
+                        campaign_id, guideline_hash, guideline_source_type, guideline_source_reference,
+                        parsing_status, brief_json, rules_count, mandatory_rules_count,
+                        prohibited_rules_count, unresolved_rules_count, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        campaign_id,
+                        g_hash,
+                        brief.guideline_source_type,
+                        brief.guideline_source_reference,
+                        brief.parsing_status.value,
+                        brief_json_str,
+                        rules_cnt,
+                        mandatory_cnt,
+                        prohibited_cnt,
+                        unresolved_cnt,
+                        now_iso,
+                        now_iso,
+                    )
+                )
+
+                self._record_event_tx(
+                    conn,
+                    CampaignEvent(
+                        campaign_id=campaign_id,
+                        previous_state=curr_state,
+                        new_state=curr_state,
+                        timestamp=now_iso,
+                        reason="BRIEF_PARSED",
+                        source=source,
+                        metadata_json=json.dumps({
+                            "guideline_hash": g_hash,
+                            "rules_count": rules_cnt,
+                            "mandatory_count": mandatory_cnt,
+                            "prohibited_count": prohibited_cnt,
+                            "unresolved_count": unresolved_cnt,
+                            "parsing_status": brief.parsing_status.value,
+                        }),
+                    )
+                )
+                conn.commit()
+                return brief, True
+
+    def get_latest_campaign_brief(self, campaign_id: str) -> Optional[WhopCampaignBrief]:
+        """Retrieves the most recently created or updated CampaignBrief for a campaign."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT brief_json FROM whop_campaign_briefs WHERE campaign_id = ? ORDER BY id DESC LIMIT 1",
+                (campaign_id,)
+            ).fetchone()
+            if not row:
+                return None
+            return WhopCampaignBrief.from_dict(json.loads(row["brief_json"]))
+
+    def list_campaign_briefs(self, campaign_id: str) -> List[WhopCampaignBrief]:
+        """Retrieves all versioned CampaignBrief records for a campaign chronologically."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT brief_json FROM whop_campaign_briefs WHERE campaign_id = ? ORDER BY id ASC",
+                (campaign_id,)
+            ).fetchall()
+            return [WhopCampaignBrief.from_dict(json.loads(r["brief_json"])) for r in rows]
+
 
     def _insert_campaign_tx(self, conn: sqlite3.Connection, r: CampaignRecord) -> None:
         conn.execute(
