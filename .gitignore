@@ -42,6 +42,7 @@ venv.bak/
 # Project Vault / Media Storage
 project_vault/
 secrets/
+artifacts/
 *.mp4
 *.wav
 *.mp3
