@@ -155,6 +155,14 @@ class WhopBrowser:
                 pass
             self._playwright = None
 
+    def get_human_actor(self, page: Optional[Page] = None) -> Any:
+        """Returns a HumanActor wrapping the given page or the active browser page."""
+        from .human_interaction import HumanActor
+        active_page = page or self._page
+        if not active_page:
+            raise RuntimeError("Cannot get human actor: browser page is not launched.")
+        return HumanActor(active_page)
+
     def __enter__(self) -> "WhopBrowser":
         return self
 

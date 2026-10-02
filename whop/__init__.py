@@ -66,6 +66,12 @@ from .guidelines import (
     normalize_guideline_content,
     parse_campaign_guidelines,
 )
+from .human_interaction import (
+    HumanActor,
+    Point,
+    generate_bezier_curve,
+    sample_gaussian_target,
+)
 
 __all__ = [
     "WhopConfig",
@@ -111,6 +117,10 @@ __all__ = [
     "fetch_guideline_document",
     "normalize_guideline_content",
     "parse_campaign_guidelines",
+    "HumanActor",
+    "Point",
+    "generate_bezier_curve",
+    "sample_gaussian_target",
 ]
 
 
