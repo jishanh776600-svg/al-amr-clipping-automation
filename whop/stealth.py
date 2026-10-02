@@ -177,6 +177,30 @@ STEALTH_INIT_SCRIPT = """
             return origToDataURL.apply(this, args);
         };
     } catch (e) {}
+
+    // 8. Hardware & Device Memory Concurrency alignment
+    try {
+        if (!navigator.deviceMemory || navigator.deviceMemory < 8) {
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+        }
+        if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency < 8) {
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 16, configurable: true });
+        }
+    } catch (e) {}
+
+    // 9. SpeechSynthesis voices emulation (anti-bot fingerprinting check)
+    try {
+        if (window.speechSynthesis) {
+            const defaultVoices = [
+                { voiceURI: 'Google US English', name: 'Google US English', lang: 'en-US', default: true, localService: true },
+                { voiceURI: 'Microsoft David - English (United States)', name: 'Microsoft David - English (United States)', lang: 'en-US', default: false, localService: true },
+                { voiceURI: 'Microsoft Zira - English (United States)', name: 'Microsoft Zira - English (United States)', lang: 'en-US', default: false, localService: true }
+            ];
+            window.speechSynthesis.getVoices = function() {
+                return defaultVoices;
+            };
+        }
+    } catch (e) {}
 })();
 """
 

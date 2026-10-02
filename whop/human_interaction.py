@@ -229,15 +229,32 @@ def sample_gaussian_target(
 class HumanActor:
     """Full-spectrum bio-mimetic browser actor for undetectable automation."""
 
-    def __init__(self, page: Any, persona: Optional[HumanPersona] = None):
+    def __init__(
+        self,
+        page: Any,
+        persona: Optional[HumanPersona] = None,
+        initial_position: Optional[Tuple[float, float]] = None,
+    ):
         self.page = page
         self.persona = persona or HumanPersona.generate_random()
-        self._current_x: float = random.uniform(150.0, 500.0)
-        self._current_y: float = random.uniform(150.0, 400.0)
+        if initial_position:
+            self._current_x, self._current_y = initial_position
+        else:
+            self._current_x = random.uniform(250.0, 650.0)
+            self._current_y = random.uniform(200.0, 500.0)
 
     @property
     def current_position(self) -> Tuple[float, float]:
         return self._current_x, self._current_y
+
+    def sync_page(self, new_page: Any) -> None:
+        """Transfers state continuity to a newly navigated or opened page without teleporting."""
+        self.page = new_page
+        # Dispatch mouse move to sync new page's internal position without moving coordinates
+        try:
+            self.page.mouse.move(self._current_x, self._current_y)
+        except Exception:
+            pass
 
     def move_to(
         self,
@@ -275,7 +292,7 @@ class HumanActor:
             # Phase 2: Corrective sub-movement back to intended target
             self._execute_path(overshoot_pt, dest, effective_speed * 0.85)
         else:
-            # Single smooth Bezier movement
+            # Single smooth Flash-Hogan movement
             self._execute_path(start, dest, effective_speed)
 
         self.persona.record_action()
@@ -307,13 +324,7 @@ class HumanActor:
         selector_or_locator: Any,
         hesitation_scale: float = 1.0,
     ) -> Tuple[float, float]:
-        """Performs an authentic human click:
-        - Resolves target coordinates via Gaussian distribution.
-        - Moves with potential overshoot & micro-correction.
-        - Hesitates based on persona reaction time.
-        - Natural mouse-down hold duration.
-        - Post-click recovery delay.
-        """
+        """Performs an authentic human click."""
         if isinstance(selector_or_locator, str):
             locator = self.page.locator(selector_or_locator).first
         else:
@@ -355,81 +366,136 @@ class HumanActor:
         text: str,
         simulate_mistakes: bool = True,
     ) -> None:
-        """Types text with QWERTY bigram mechanics, realistic typo corrections, and burstiness."""
+        """Types text with Cognitive Word-Chunking, QWERTY bigrams, and real key dwell times."""
         if isinstance(selector_or_locator, str):
             locator = self.page.locator(selector_or_locator).first
         else:
             locator = selector_or_locator
 
-        # Natural click into input field
         self.human_click(locator)
 
-        effective_wpm = self.persona.base_wpm * random.uniform(0.9, 1.1)
+        effective_wpm = self.persona.base_wpm * random.uniform(0.92, 1.08)
         base_char_delay = 60.0 / (effective_wpm * 5.0)
 
         keyboard = self.page.keyboard
-        prev_char = ""
 
-        for char in text:
-            # 1. Realistic typo check: hit adjacent key on QWERTY keyboard
-            if (
-                simulate_mistakes
-                and char.lower() in QWERTY_NEIGHBORS
-                and random.random() < self.persona.typo_rate
-            ):
-                typo_char = random.choice(QWERTY_NEIGHBORS[char.lower()])
-                # Down -> Dwell -> Up
-                keyboard.down(typo_char)
-                time.sleep(random.uniform(0.045, 0.085))
-                keyboard.up(typo_char)
+        # Guaranteed organic typo target index for strings >= 16 chars when simulate_mistakes is True
+        guaranteed_typo_idx = None
+        if simulate_mistakes and len(text) >= 16:
+            eligible_indices = [
+                i for i, c in enumerate(text)
+                if 3 <= i < len(text) - 3 and c.lower() in QWERTY_NEIGHBORS and c != " "
+            ]
+            if eligible_indices:
+                guaranteed_typo_idx = random.choice(eligible_indices)
 
-                # Human hesitation noticing the mistake (cognitive reaction delay)
-                time.sleep(random.uniform(0.14, 0.28))
-                keyboard.down("Backspace")
-                time.sleep(random.uniform(0.05, 0.09))
-                keyboard.up("Backspace")
-                time.sleep(random.uniform(0.08, 0.16))
+        global_char_idx = 0
+        typo_occurred = False
 
-            # 2. Authentic key lifecycle: KeyDown -> Biological Dwell Time -> KeyUp
-            # Real human key dwell duration: 60ms to 125ms
-            key_dwell = random.gauss(0.080, 0.015)
-            key_dwell = max(0.045, min(0.140, key_dwell))
+        # Split into cognitive word chunks so intra-word typing is bursty and word boundaries pause
+        words = text.split(" ")
+        for w_idx, word in enumerate(words):
+            # Intra-word typing speed (faster burst within a familiar word)
+            word_speed_factor = random.uniform(0.75, 0.95)
 
-            keyboard.down(char)
-            time.sleep(key_dwell)
-            keyboard.up(char)
+            for char in word:
+                # 1. Realistic typo check: hit adjacent key on QWERTY
+                trigger_typo = False
+                if simulate_mistakes and char.lower() in QWERTY_NEIGHBORS:
+                    if not typo_occurred and global_char_idx == guaranteed_typo_idx:
+                        trigger_typo = True
+                    elif random.random() < self.persona.typo_rate:
+                        trigger_typo = True
 
-            # 3. Flight time to next key (time finger takes to travel to next key)
-            flight_time = random.gauss(
-                base_char_delay,
-                base_char_delay * self.persona.typing_rhythm_entropy
-            )
-            flight_time = max(0.025, flight_time)
+                if trigger_typo:
+                    typo_occurred = True
+                    typo_char = random.choice(QWERTY_NEIGHBORS[char.lower()])
+                    keyboard.down(typo_char)
+                    time.sleep(random.uniform(0.045, 0.085))
+                    keyboard.up(typo_char)
 
-            # Punctuation / word-boundary thinking pauses
-            if char in " .!?,:\n":
-                flight_time += random.uniform(0.10, 0.28)
-            elif char.isupper():
-                flight_time += random.uniform(0.05, 0.12)
+                    # Cognitive hesitation noticing typo
+                    time.sleep(random.uniform(0.16, 0.32))
+                    keyboard.down("Backspace")
+                    time.sleep(random.uniform(0.05, 0.09))
+                    keyboard.up("Backspace")
+                    time.sleep(random.uniform(0.09, 0.18))
 
-            time.sleep(flight_time)
-            prev_char = char
+                # 2. KeyDown -> Biological Dwell -> KeyUp
+                key_dwell = random.gauss(0.075, 0.014)
+                key_dwell = max(0.040, min(0.130, key_dwell))
+                keyboard.down(char)
+                time.sleep(key_dwell)
+                keyboard.up(char)
+
+                # 3. Flight time to next character within word
+                flight_time = random.gauss(
+                    base_char_delay * word_speed_factor,
+                    base_char_delay * 0.2
+                )
+                flight_time = max(0.020, flight_time)
+                if char.isupper():
+                    flight_time += random.uniform(0.04, 0.10)
+                time.sleep(flight_time)
+
+                global_char_idx += 1
+
+            # Space between words (Cognitive word boundary pause)
+            if w_idx < len(words) - 1:
+                # Type the space key
+                space_dwell = random.uniform(0.055, 0.095)
+                keyboard.down(" ")
+                time.sleep(space_dwell)
+                keyboard.up(" ")
+
+                # Human pause formulating next word: 160ms to 380ms
+                word_thinking_pause = random.uniform(0.16, 0.38)
+                time.sleep(word_thinking_pause)
+                global_char_idx += 1
 
         self.persona.record_action()
 
-    def idle_drift(self, duration_seconds: float = 1.5) -> None:
-        """Simulates passive cursor drifting and fidgeting while user reads or waits."""
+    def idle_drift(
+        self,
+        duration_seconds: float = 2.0,
+        focus_region: Optional[Tuple[float, float]] = None,
+        gaze_bias: Optional[str] = None,
+    ) -> None:
+        """Simulates biological gaze-attracted breathing and fidgeting instead of freezing.
+        
+        Args:
+            duration_seconds: Time to spend idling.
+            focus_region: Optional (x, y) target region to drift around.
+            gaze_bias: Optional bias ('right', 'left', 'center'). For video players (YouTube Shorts),
+                       'right' places cursor in the action margin near comments/like buttons.
+        """
         end_time = time.time() + duration_seconds
+
+        target_focus = focus_region
+        if gaze_bias == "right" and not target_focus:
+            # Common right-hand interaction gutter (e.g. YouTube Shorts right bar at X: 750-850)
+            target_focus = (random.uniform(750.0, 830.0), random.uniform(390.0, 530.0))
+
+        # If a focus region is specified, gently bias towards it
         while time.time() < end_time:
-            drift_x = self._current_x + random.gauss(0, 18)
-            drift_y = self._current_y + random.gauss(0, 15)
-            drift_x = max(10.0, min(1800.0, drift_x))
-            drift_y = max(10.0, min(950.0, drift_y))
+            if target_focus:
+                fx, fy = target_focus
+                # Attracted towards focus center with organic offset
+                drift_x = fx + random.gauss(0, 26)
+                drift_y = fy + random.gauss(0, 22)
+            else:
+                # Organic wander around current area
+                drift_x = self._current_x + random.gauss(0, 18)
+                drift_y = self._current_y + random.gauss(0, 15)
+
+            drift_x = max(80.0, min(1750.0, drift_x))
+            drift_y = max(120.0, min(900.0, drift_y))
 
             start = Point(self._current_x, self._current_y)
             dest = Point(drift_x, drift_y)
-            self._execute_path(start, dest, speed=0.45)
-            time.sleep(random.uniform(0.2, 0.6))
+            # Gentle breathing velocity (0.35x speed)
+            self._execute_path(start, dest, speed=0.38)
+            time.sleep(random.uniform(0.4, 0.85))
 
     def human_scroll(
         self,
@@ -437,22 +503,30 @@ class HumanActor:
         steps: Optional[int] = None,
         reading_pause: bool = True,
     ) -> None:
-        """Inertial wheel scrolling with natural acceleration bursts and content inspection pauses."""
+        """Simulates smooth trackpad/wheel momentum with friction decay and micro-settling."""
         if steps is None:
-            steps = max(3, abs(delta_y) // random.randint(80, 130))
+            # 1 step per 25-45px for ultra-smooth fluid scrolling
+            steps = max(6, abs(delta_y) // random.randint(25, 45))
 
         step_amount = delta_y / float(steps)
 
         for i in range(steps):
             progress = i / float(steps)
+            # Biological S-curve ease (momentum building then friction stopping)
             ease = math.sin(progress * math.pi)
-            current_step = step_amount * (0.55 + 0.9 * ease)
+            current_step = step_amount * (0.4 + 1.2 * ease)
 
             self.page.mouse.wheel(0, current_step)
-            time.sleep(random.uniform(0.025, 0.075))
+            # Trackpad frame rate ~ 60fps (12-20ms per tick)
+            time.sleep(random.uniform(0.012, 0.024))
+
+        # Tiny micro-settle bounce at stop
+        settle_bounce = -1.0 * math.copysign(random.uniform(2.0, 8.0), delta_y)
+        self.page.mouse.wheel(0, settle_bounce)
+        time.sleep(0.05)
 
         if reading_pause:
-            time.sleep(random.uniform(0.6, 2.2))
+            time.sleep(random.uniform(0.8, 2.4))
 
         self.persona.record_action()
 

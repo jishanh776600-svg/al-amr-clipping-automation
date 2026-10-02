@@ -47,7 +47,11 @@ class WhopBrowser:
                 f"Action '{clean_action}' is strictly forbidden by Step 1 read-only guard."
             )
 
-    def launch(self, session_state: Optional[ValidatedSessionState] = None) -> Page:
+    def launch(
+        self,
+        session_state: Optional[ValidatedSessionState] = None,
+        record_video_dir: Optional[str] = None,
+    ) -> Page:
         """Launches Chromium, configures context/timeouts, attaches session, and creates page."""
         log.info("Launching Chromium browser in headless=%s mode.", self.config.headless)
         self._playwright = sync_playwright().start()
@@ -75,6 +79,10 @@ class WhopBrowser:
             "locale": "en-US",
             "timezone_id": "America/New_York",
         }
+
+        if record_video_dir:
+            context_kwargs["record_video_dir"] = record_video_dir
+            context_kwargs["record_video_size"] = {"width": 1280, "height": 720}
 
         # If a full Playwright storage state is provided, use it directly in context creation
         if session_state and session_state.raw_storage_dict:

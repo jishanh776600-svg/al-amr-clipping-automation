@@ -1,4 +1,4 @@
-﻿"""Rigorous tests for Enterprise-Grade Stealth & Flash-Hogan Neuro-Kinematics.
+"""Rigorous tests for Enterprise-Grade Stealth & Flash-Hogan Neuro-Kinematics.
 
 Verifies:
 1. navigator.webdriver is strictly undefined (no prototype leaks).
@@ -145,4 +145,52 @@ def test_keystroke_dwell_time_in_dom():
     for d in dwells:
         # Every human keystroke dwell time must be between 40ms and 180ms (never 0ms!)
         assert 35.0 <= d["dwellMs"] <= 200.0, f"Robotic key dwell time: {d['dwellMs']}ms for {d['key']}"
+
+
+def test_stealth_hardware_and_voices():
+    """Verifies deviceMemory, hardwareConcurrency, and speechSynthesis voices are masked."""
+    with WhopBrowser(WhopConfig(dry_run=True, headless=True)) as browser:
+        page = browser.launch()
+        mem = page.evaluate("navigator.deviceMemory")
+        cores = page.evaluate("navigator.hardwareConcurrency")
+        voices_count = page.evaluate("window.speechSynthesis ? window.speechSynthesis.getVoices().length : 0")
+
+        assert mem >= 8, f"Suspicious device memory: {mem}"
+        assert cores >= 8, f"Suspicious hardware concurrency: {cores}"
+        assert voices_count >= 2, f"Empty speech synthesis voices: {voices_count}"
+
+
+def test_human_typing_typo_correction_dynamics():
+    """Verifies that long typed strings naturally trigger typo, hesitation, and backspace."""
+    test_html = """
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <input type="text" id="inp" style="margin: 50px;">
+        <script>
+            window.keyEvents = [];
+            const input = document.getElementById('inp');
+            input.addEventListener('keydown', (e) => {
+                window.keyEvents.push({ type: 'down', key: e.key });
+            });
+        </script>
+    </body>
+    </html>
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1000, "height": 700})
+        page.set_content(test_html)
+
+        actor = HumanActor(page)
+        test_phrase = "gaming highlights reaction moments"
+        actor.human_type("#inp", test_phrase, simulate_mistakes=True)
+
+        events = page.evaluate("window.keyEvents")
+        browser.close()
+
+    keys = [e["key"] for e in events]
+    # Check that Backspace was pressed to fix the simulated organic mistake
+    assert "Backspace" in keys, "Expected organic typo and backspace correction during human typing"
+
 
