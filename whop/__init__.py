@@ -68,7 +68,9 @@ from .guidelines import (
 )
 from .human_interaction import (
     HumanActor,
+    HumanPersona,
     Point,
+    QWERTY_NEIGHBORS,
     generate_bezier_curve,
     sample_gaussian_target,
 )
@@ -118,7 +120,9 @@ __all__ = [
     "normalize_guideline_content",
     "parse_campaign_guidelines",
     "HumanActor",
+    "HumanPersona",
     "Point",
+    "QWERTY_NEIGHBORS",
     "generate_bezier_curve",
     "sample_gaussian_target",
 ]

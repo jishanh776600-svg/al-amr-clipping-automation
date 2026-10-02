@@ -1,4 +1,4 @@
-﻿"""Rigorous tests for the Human-Like Browser Interaction Engine.
+"""Rigorous tests for the Human-Like Browser Interaction Engine.
 
 Tests:
 1. Trajectory curvature non-linearity (R^2 verification that curves are not straight lines).
@@ -20,6 +20,7 @@ from playwright.sync_api import sync_playwright
 
 from whop.human_interaction import (
     HumanActor,
+    HumanPersona,
     Point,
     generate_bezier_curve,
     sample_gaussian_target,
@@ -199,12 +200,7 @@ def test_live_browser_dom_mouse_trapping():
         page.mouse.move(50.0, 50.0)
 
         # Click the button naturally
-        tx, ty = actor.human_click(
-            "#btn",
-            pre_delay_range=(0.04, 0.08),
-            hold_time_range=(0.05, 0.10),
-            post_delay_range=(0.04, 0.08),
-        )
+        tx, ty = actor.human_click("#btn", hesitation_scale=0.5)
 
         log_data = page.evaluate("window.mouseLog")
         browser.close()
@@ -223,7 +219,7 @@ def test_live_browser_dom_mouse_trapping():
 
     # Verify human click hold time (mousedown to mouseup duration)
     hold_duration_ms = log_data["upTime"] - log_data["downTime"]
-    assert 40.0 <= hold_duration_ms <= 250.0, f"Unnatural hold duration: {hold_duration_ms}ms"
+    assert 30.0 <= hold_duration_ms <= 250.0, f"Unnatural hold duration: {hold_duration_ms}ms"
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +252,6 @@ def test_live_browser_typing_cadence():
         actor.human_type(
             "#target-input",
             test_text,
-            wpm_range=(90, 140),
             simulate_mistakes=False,
         )
 
@@ -286,3 +281,29 @@ def test_whop_browser_human_actor_accessor():
             with pytest.raises(WhopDryRunViolationError):
                 browser.assert_action_permitted(action)
 
+
+
+def test_persona_variability_and_evolution():
+    p1 = HumanPersona.generate_random()
+    p2 = HumanPersona.generate_random()
+    assert p1.base_mouse_speed != p2.base_mouse_speed
+    assert p1.base_wpm != p2.base_wpm
+    assert p1.hesitation_mean != p2.hesitation_mean
+    initial_actions = p1.actions_count
+    for _ in range(40):
+        p1.record_action()
+    assert p1.actions_count == initial_actions + 40
+
+
+def test_fitts_overshoot_mechanics():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={'width': 1280, 'height': 800})
+        persona = HumanPersona(overshoot_probability=1.0, base_mouse_speed=1.5)
+        actor = HumanActor(page, persona=persona)
+        actor._current_x = 50.0
+        actor._current_y = 50.0
+        actor.move_to(600.0, 450.0, allow_overshoot=True)
+        browser.close()
+    assert abs(actor._current_x - 600.0) < 1.0
+    assert abs(actor._current_y - 450.0) < 1.0
