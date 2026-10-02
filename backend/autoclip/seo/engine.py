@@ -504,22 +504,53 @@ class SEOEngine:
         return store.create_clip_metadata(record)
 
     def _synthesize_title(self, hook: str, topic: str, slice_text: str) -> str:
-        """Synthesizes a compelling, concise title (<=100 chars) obeying campaign patterns and keywords."""
+        """Synthesizes a compelling, high-CTR viral title (<=100 chars, optimal 45-75 chars)
+        following ShortGPT / Hormozi short-form hook patterns and obeying campaign constraints."""
         candidate_title = ""
+        clean_hook = hook.strip().rstrip(".!?,;: ")
+        clean_topic = topic.strip().rstrip(".!?,;: ")
+
         if self.reqs.title_patterns:
             pat = self.reqs.title_patterns[0]
-            clean_hook = hook.strip().rstrip(".!?,")
-            clean_topic = topic.strip()
             candidate_title = pat.replace("{hook}", clean_hook).replace("{topic}", clean_topic)
             if "{" in candidate_title:
                 candidate_title = clean_hook or clean_topic
 
         if not candidate_title:
-            if hook and len(hook) > 10:
-                clean_h = hook.strip().rstrip(".!?,")
-                candidate_title = clean_h
+            # 1. Clean out conversational verbal filler from the spoken hook
+            conversational_prefixes = [
+                r"^(so|well|like|honestly|i mean|i think that|you know what i mean|what you have to understand is|at the end of the day|when it comes to|the thing is)\b[\s,]*",
+                r"^(today we are going to look at|in this video we are going to discuss|let me tell you about|here is what happened when)\b[\s,]*",
+            ]
+            scrubbed_hook = clean_hook
+            for cp in conversational_prefixes:
+                scrubbed_hook = re.sub(cp, "", scrubbed_hook, flags=re.IGNORECASE).strip()
+
+            # 2. Check if the hook already has strong viral triggers or questions
+            has_strong_trigger = any(
+                tw in scrubbed_hook.lower()
+                for tw in ("why", "how to", "mistake", "never", "secret", "truth", "rule", "stop", "fail", "avoid", "vs", "exposed", "warning")
+            ) or ("?" in clean_hook or "!" in clean_hook)
+
+            if scrubbed_hook and len(scrubbed_hook) >= 12 and has_strong_trigger:
+                candidate_title = scrubbed_hook.title() if scrubbed_hook.islower() else scrubbed_hook
+            elif scrubbed_hook and len(scrubbed_hook) >= 12:
+                # Use ShortGPT Curiosity / Truth hook formula with the extracted hook essence
+                if len(scrubbed_hook) <= 50 and not scrubbed_hook.lower().startswith(("the", "why", "how")):
+                    candidate_title = f"The Truth About {scrubbed_hook}"
+                else:
+                    candidate_title = scrubbed_hook.title() if scrubbed_hook.islower() else scrubbed_hook
             else:
-                candidate_title = topic.strip()
+                # Use topic with high-CTR ShortGPT formula
+                resolved_topic = clean_topic or "This Essential Rule"
+                if any(tw in resolved_topic.lower() for tw in ("highlight", "clip", "key insight")):
+                    key_words = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", slice_text[:120])
+                    if key_words:
+                        resolved_topic = key_words[0]
+                    else:
+                        resolved_topic = clean_topic
+
+                candidate_title = f"The Biggest {resolved_topic} Mistake"
 
         # Incorporate brand if specified and fits
         if self.reqs.brand_name and self.reqs.brand_name.lower() not in candidate_title.lower():
@@ -547,9 +578,11 @@ class SEOEngine:
         return candidate_title or "Key Insight & Breakdown"
 
     def _synthesize_description(self, hook: str, slice_text: str, topic: str) -> str:
-        """Synthesizes an informative, campaign-compliant description."""
+        """Synthesizes an informative, campaign-compliant description formatted for
+        high engagement and search ranking using the MoneyPrinterTurbo platform structure."""
         parts: list[str] = []
 
+        # 1. Attention-grabbing summary hook
         summary = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
         if not summary:
             clean_h = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,")
@@ -557,6 +590,12 @@ class SEOEngine:
             if not summary.endswith("."):
                 summary += "."
         parts.append(summary)
+
+        # 2. Key Highlights / Takeaways (clean bullet formatting)
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", slice_text) if len(s.strip()) > 25]
+        if len(sentences) >= 2:
+            bullet_points = [f"• {s.rstrip('.')}." for s in sentences[1:3]]
+            parts.append("📌 Key Highlights:\n" + "\n".join(bullet_points))
 
         # Include genuine campaign topics/phrases naturally (avoiding SOP words)
         content_phrases = [
@@ -567,13 +606,16 @@ class SEOEngine:
             phrases_line = "Key Focus: " + ", ".join(content_phrases)
             parts.append(phrases_line)
 
+        # 3. Call to Action line
         cta_text = self._synthesize_cta(topic=topic)
         if cta_text:
-            parts.append(cta_text)
+            parts.append(f"👉 {cta_text}")
 
+        # 4. Campaign URL
         if self.reqs.campaign_url:
             parts.append(f"🔗 Learn more: {self.reqs.campaign_url.strip()}")
 
+        # 5. Featuring / Creator mentions
         if self.reqs.required_mentions:
             parts.append("Featuring: " + " ".join(self.reqs.required_mentions))
 
@@ -583,6 +625,7 @@ class SEOEngine:
                 if len(clean_dg) > 10 and clean_dg not in parts:
                     parts.append(clean_dg)
 
+        # 6. High-volume Hashtags (Campaign tags first, then platform tags)
         if self.reqs.required_hashtags:
             norm_tags = [h if h.startswith("#") else f"#{h}" for h in self.reqs.required_hashtags if "alamr" not in h.lower()]
             if norm_tags:
