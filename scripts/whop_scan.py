@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Add project root to sys.path
 root_dir = Path(__file__).resolve().parent.parent
