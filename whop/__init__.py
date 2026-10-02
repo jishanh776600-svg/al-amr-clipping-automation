@@ -44,6 +44,18 @@ from .scraper import (
     save_discovery_artifacts,
 )
 
+from .models import (
+    CampaignEvent,
+    CampaignRecord,
+    CampaignState,
+    InvalidStateTransitionError,
+    validate_transition,
+)
+from .ledger import (
+    CampaignLedger,
+    DEFAULT_LEDGER_PATH,
+)
+
 __all__ = [
     "WhopConfig",
     "WhopConfigError",
@@ -72,5 +84,13 @@ __all__ = [
     "WhopScraper",
     "generate_markdown_summary",
     "save_discovery_artifacts",
+    "CampaignEvent",
+    "CampaignRecord",
+    "CampaignState",
+    "InvalidStateTransitionError",
+    "validate_transition",
+    "CampaignLedger",
+    "DEFAULT_LEDGER_PATH",
 ]
+
 

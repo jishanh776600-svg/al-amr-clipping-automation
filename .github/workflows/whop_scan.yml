@@ -58,6 +58,7 @@ jobs:
           fi
           python scripts/whop_scan.py \
             --output-dir artifacts/whop_discovery \
+            --ledger-path artifacts/whop_discovery/whop_ledger.db \
             --target-url "${{ inputs.target_url || 'https://whop.com/discover' }}" \
             --max-campaigns "${{ inputs.max_campaigns || '40' }}"
 

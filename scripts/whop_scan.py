@@ -28,6 +28,7 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 from whop import (
+    CampaignLedger,
     WhopBrowser,
     WhopConfig,
     WhopConfigError,
@@ -52,6 +53,7 @@ def run_discovery_scan(
     target_url: str = "https://whop.com/discover",
     max_campaigns: int = 50,
     inspect_details: bool = True,
+    ledger_path: Optional[Path] = None,
 ) -> int:
     """Executes the Step 2 read-only Whop campaign discovery scan."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +103,23 @@ def run_discovery_scan(
         # Save artifacts
         json_path, md_path = save_discovery_artifacts(report, output_dir=output_dir)
 
+        # Step 3: Ingest into persistent ledger
+        ledger = CampaignLedger(db_path=ledger_path)
+        new_count = 0
+        updated_count = 0
+        for camp in report.campaigns:
+            _, is_new = ledger.ingest_discovered_campaign(camp, source="whop_scan")
+            if is_new:
+                new_count += 1
+            else:
+                updated_count += 1
+        log.info(
+            "Persistent ledger synced at %s (%d new, %d updated/rediscovered)",
+            ledger.db_path,
+            new_count,
+            updated_count,
+        )
+
         # Also capture final diagnostic screenshot
         screenshot_path = output_dir / "02_whop_discovery_page.png"
         try:
@@ -117,6 +136,8 @@ def run_discovery_scan(
         print(f"Campaigns Found:   {report.campaign_count}")
         print(f"Eligible:          {report.eligible_count}")
         print(f"Rejected:          {report.rejected_count}")
+        print(f"Ledger Ingested:   {new_count} new, {updated_count} existing")
+        print(f"Ledger Path:       {ledger.db_path}")
         print(f"JSON Artifact:     {json_path}")
         print(f"Markdown Summary:  {md_path}")
         print("=============================================================\n")
@@ -137,12 +158,18 @@ def run_discovery_scan(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Whop Campaign Discovery Scan (Step 2)")
+    parser = argparse.ArgumentParser(description="Run Whop Campaign Discovery Scan (Step 2 & 3)")
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("artifacts/whop_discovery"),
         help="Directory to save discovery artifacts",
+    )
+    parser.add_argument(
+        "--ledger-path",
+        type=Path,
+        default=None,
+        help="Path to SQLite ledger database (defaults to data/whop_ledger.db)",
     )
     parser.add_argument(
         "--target-url",
@@ -168,8 +195,10 @@ def main():
         target_url=args.target_url,
         max_campaigns=args.max_campaigns,
         inspect_details=not args.no_details,
+        ledger_path=args.ledger_path,
     )
     sys.exit(exit_code)
+
 
 
 if __name__ == "__main__":
