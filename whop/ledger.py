@@ -14,7 +14,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .catalog import DiscoveredCampaign
 from .config import sanitize_text
@@ -165,17 +165,34 @@ class CampaignLedger:
 
     def ingest_discovered_campaign(
         self,
-        discovered: DiscoveredCampaign,
+        discovered: Union[DiscoveredCampaign, Dict[str, Any]],
         source: str = "whop_discovery",
     ) -> Tuple[CampaignRecord, bool]:
         """Ingests a discovered campaign idempotently.
         
+        Accepts either a DiscoveredCampaign dataclass or a raw dictionary.
         Returns (record, is_new_campaign).
         If campaign exists, safely updates metadata and logs METADATA_UPDATED event if changed.
         Transitions state:
           - New campaign: DISCOVERED -> VALIDATING -> ELIGIBLE or REJECTED
           - Existing campaign: VALIDATING -> ELIGIBLE or REJECTED
         """
+        if isinstance(discovered, dict):
+            discovered = DiscoveredCampaign(
+                campaign_id=discovered["campaign_id"],
+                title=discovered.get("title", ""),
+                campaign_url=discovered.get("campaign_url", ""),
+                payout_raw=discovered.get("payout_raw", ""),
+                cpm=discovered.get("cpm"),
+                platforms=discovered.get("platforms", []),
+                source_urls=discovered.get("source_urls", []),
+                guideline_urls=discovered.get("guideline_urls", []),
+                eligible=discovered.get("eligible", False),
+                eligibility_reasons=discovered.get("eligibility_reasons", []),
+                recommended_account=discovered.get("recommended_account"),
+                discovered_at=discovered.get("discovered_at"),
+            )
+
         now_iso = datetime.now(timezone.utc).isoformat()
         campaign_id = discovered.campaign_id
 

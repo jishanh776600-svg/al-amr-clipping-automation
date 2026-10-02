@@ -385,3 +385,24 @@ def test_real_step2_json_ingestion(temp_ledger: CampaignLedger):
 
     # Campaign count is strictly 8
     assert len(temp_ledger.list_campaigns(limit=100)) == 8
+
+
+def test_ingest_from_raw_dict(temp_ledger: CampaignLedger):
+    raw = {
+        "campaign_id": "camp-raw-dict-1",
+        "title": "Raw Dict Campaign",
+        "campaign_url": "https://whop.com/discover/camp-raw-dict-1",
+        "payout_raw": "$2.00 CPM",
+        "cpm": 2.0,
+        "platforms": ["youtube"],
+        "source_urls": ["https://youtube.com/watch?v=999"],
+        "guideline_urls": [],
+        "eligible": True,
+        "eligibility_reasons": ["ELIGIBLE_CRITERIA_MET"],
+        "recommended_account": "ACCOUNT_1_FINANCE_BUSINESS",
+    }
+    rec, is_new = temp_ledger.ingest_discovered_campaign(raw)
+    assert is_new is True
+    assert rec.campaign_id == "camp-raw-dict-1"
+    assert rec.current_state == CampaignState.ELIGIBLE
+
