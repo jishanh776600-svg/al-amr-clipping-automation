@@ -1,0 +1,62 @@
+name: Whop Access Test (Step 1 Foundation)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Whop entry point URL to test'
+        required: false
+        default: 'https://whop.com'
+        type: string
+
+concurrency:
+  group: whop-access-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-whop-session:
+    name: Verify Authenticated Whop Session
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright pydantic pytest
+
+      - name: Install Playwright Chromium & System Dependencies
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Verify Configuration & Execute Whop Access Test
+        env:
+          WHOP_COOKIES: ${{ secrets.WHOP_COOKIES }}
+          WHOP_DRY_RUN: 'true'
+          WHOP_HEADLESS: 'true'
+          WHOP_BASE_URL: ${{ inputs.base_url || 'https://whop.com' }}
+          WHOP_NAVIGATION_TIMEOUT_MS: '45000'
+          WHOP_STABILIZE_WAIT_MS: '4000'
+        run: |
+          if [ -z "$WHOP_COOKIES" ]; then
+            echo "::error::WHOP_COOKIES secret is not configured in this repository. Please add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          python scripts/whop_access_test.py --output-dir artifacts/whop_diagnostics
+
+      - name: Upload Diagnostic Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whop-access-diagnostics
+          path: artifacts/whop_diagnostics/
+          retention-days: 14
