@@ -436,7 +436,22 @@ class AutoClipClient:
                 f"AutoClip cannot render clips without a video source link."
             )
 
-        normalized.sort()
+        def source_priority(url: str) -> int:
+            u = url.lower()
+            # Tier 0: Direct MP4/video files or S3 (fastest download, zero anti-bot rate limits)
+            if any(u.split("?")[0].endswith(ext) for ext in (".mp4", ".mov", ".mkv", ".webm")) or "amazonaws.com" in u:
+                return 0
+            # Tier 1: Google Drive (fast download, high bandwidth)
+            if "drive.google.com" in u:
+                return 1
+            # Tier 2: Dropbox / generic
+            if "dropbox.com" in u:
+                return 2
+            # Tier 3: YouTube (heavily throttled on cloud VMs)
+            return 3
+
+        # Sort primarily by source speed/reliability tier, then alphabetically for deterministic stability
+        normalized.sort(key=lambda s: (source_priority(s), s))
         return normalized
 
     # ==========================================================================

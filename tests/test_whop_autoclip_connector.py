@@ -261,6 +261,8 @@ def test_source_normalization(sample_brief):
     assert "https://drive.google.com/drive/folders/testfolder" in norm
     assert not any(s.endswith(".pdf") for s in norm)
     assert not any(s.endswith(".txt") for s in norm)
+    # Drive folder should be prioritized before YouTube in candidate order
+    assert norm[0] == "https://drive.google.com/drive/folders/testfolder"
 
 
 def test_source_missing_raises_error(sample_brief):

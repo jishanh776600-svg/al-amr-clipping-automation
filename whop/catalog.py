@@ -153,6 +153,7 @@ def evaluate_eligibility(
     source_urls: List[str],
     title: str,
     raw_text: str,
+    require_drive_or_direct: bool = False,
 ) -> Tuple[bool, List[str]]:
     """Evaluates campaign eligibility based strictly on read-only acceptance rules.
 
@@ -160,6 +161,7 @@ def evaluate_eligibility(
     B. Supports at least one short-form platform (youtube, instagram, tiktok)
     C. Usable source/media reference exists
     D. Campaign title and data are sufficiently complete
+    E. If require_drive_or_direct is True: must have Google Drive or direct media (S3/MP4) source
     """
     reasons: List[str] = []
 
@@ -179,6 +181,15 @@ def evaluate_eligibility(
     # 3. Source Reference Check
     if not source_urls:
         reasons.append("REJECTED_SOURCE")
+    elif require_drive_or_direct:
+        has_fast_source = any(
+            ("drive.google.com" in str(u).lower())
+            or any(str(u).lower().split("?")[0].endswith(ext) for ext in (".mp4", ".mov", ".mkv", ".webm"))
+            or ("amazonaws.com" in str(u).lower() and not str(u).lower().endswith(".pdf"))
+            for u in source_urls
+        )
+        if not has_fast_source:
+            reasons.append("REJECTED_NON_DRIVE_SOURCE")
 
     # 4. Completeness Check
     if not title or len(title.strip()) < 3:
@@ -243,6 +254,7 @@ def build_discovered_campaign(
     hashtags: Optional[List[str]] = None,
     raw_text: str = "",
     discovered_at: Optional[str] = None,
+    require_drive_or_direct: bool = False,
 ) -> DiscoveredCampaign:
     """Builder that normalizes all fields, evaluates eligibility, and assigns routing."""
     cpm = parse_cpm(payout_raw)
@@ -258,6 +270,7 @@ def build_discovered_campaign(
         source_urls=sources,
         title=title,
         raw_text=raw_text,
+        require_drive_or_direct=require_drive_or_direct,
     )
 
     niche_candidates, recommended_account, routing_reason = route_niche(

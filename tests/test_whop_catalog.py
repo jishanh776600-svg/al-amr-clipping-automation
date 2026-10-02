@@ -122,6 +122,44 @@ def test_evaluate_eligibility_missing_source():
     assert "REJECTED_SOURCE" in reasons
 
 
+def test_evaluate_eligibility_require_drive_or_direct():
+    # YouTube-only source rejected when require_drive_or_direct=True
+    is_eligible, reasons = evaluate_eligibility(
+        cpm=2.00,
+        platforms=["youtube"],
+        source_urls=["https://www.youtube.com/watch?v=DsC3qLVD8_Y"],
+        title="Podcast with YouTube Link",
+        raw_text="Clip our podcast",
+        require_drive_or_direct=True,
+    )
+    assert is_eligible is False
+    assert "REJECTED_NON_DRIVE_SOURCE" in reasons
+
+    # Google Drive source accepted when require_drive_or_direct=True
+    is_eligible_drive, reasons_drive = evaluate_eligibility(
+        cpm=2.00,
+        platforms=["youtube"],
+        source_urls=["https://drive.google.com/drive/folders/1Qb7DigWjEt-eM5ujKL3VXL0h2knwDVZx"],
+        title="Drive Media Campaign",
+        raw_text="Clip our drive folder",
+        require_drive_or_direct=True,
+    )
+    assert is_eligible_drive is True
+    assert reasons_drive == ["ELIGIBLE"]
+
+    # Direct S3 / MP4 accepted when require_drive_or_direct=True
+    is_eligible_s3, reasons_s3 = evaluate_eligibility(
+        cpm=1.50,
+        platforms=["instagram"],
+        source_urls=["https://s3.amazonaws.com/my-bucket/video.mp4"],
+        title="S3 Media Campaign",
+        raw_text="Clip our direct video",
+        require_drive_or_direct=True,
+    )
+    assert is_eligible_s3 is True
+    assert reasons_s3 == ["ELIGIBLE"]
+
+
 def test_route_niche_finance_business():
     candidates, rec_acc, reason = route_niche(
         title="Apex Forex Trading Academy",

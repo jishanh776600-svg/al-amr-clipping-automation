@@ -97,6 +97,7 @@ class WhopConfig:
     base_url: str = "https://whop.com"
     navigation_timeout_ms: int = 30000
     stabilize_wait_ms: int = 3000
+    require_drive_or_direct_sources: bool = False
 
     @classmethod
     def from_env(cls) -> "WhopConfig":
@@ -120,12 +121,16 @@ class WhopConfig:
         except ValueError:
             stabilize_wait = 3000
 
+        req_drive_str = os.getenv("WHOP_REQUIRE_DRIVE_SOURCES", "false").strip().lower()
+        require_drive = req_drive_str in ("true", "1", "yes", "on")
+
         return cls(
             dry_run=dry_run,
             headless=headless,
             base_url=base_url,
             navigation_timeout_ms=nav_timeout,
             stabilize_wait_ms=stabilize_wait,
+            require_drive_or_direct_sources=require_drive,
         )
 
     def get_cookies_secret(self) -> str:
