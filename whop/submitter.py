@@ -50,6 +50,52 @@ class SubmissionTimeoutError(RuntimeError):
     pass
 
 
+class SubmissionVerificationError(ValueError):
+    """Raised when external submission verification invariants are violated."""
+    pass
+
+
+def assert_submission_externally_verified(
+    sub: WhopSubmissionRecord,
+    external_response: Dict[str, Any],
+    dry_run: bool = False,
+) -> None:
+    """Strictly assert that a submission was genuinely submitted and verified externally.
+    
+    Invariants:
+    1. dry_run must be False.
+    2. external_response must indicate success (HTTP 200 or 201).
+    3. whop_submission_id must be non-empty, non-synthetic, and not contain 'sim', 'mock', 'fake', or 'test'.
+    4. Submissions must contain exactly 5 clips with real Drive IDs.
+    """
+    if dry_run:
+        raise SubmissionVerificationError(
+            "Cannot declare authoritative SUBMITTED state under dry_run=True. "
+            "Dry-run executions must use DRY_RUN_VERIFIED state."
+        )
+
+    whop_id = external_response.get("whop_submission_id") or sub.whop_submission_id
+    if not whop_id or not isinstance(whop_id, str):
+        raise SubmissionVerificationError("External submission ID is missing or empty.")
+
+    clean_id = whop_id.strip()
+    if clean_id.lower().startswith(("whop_sim_", "sim_", "mock_", "fake_", "test_")):
+        raise SubmissionVerificationError(
+            f"Synthetic or simulation Whop submission ID detected: '{clean_id}'. "
+            f"Production requires an authoritative external submission ID from Whop."
+        )
+
+    status_code = external_response.get("status_code", 0)
+    if status_code not in (200, 201):
+        raise SubmissionVerificationError(
+            f"Authoritative external verification failed with status code {status_code}."
+        )
+
+    # Validate clips and Drive IDs
+    from .drive_guard import assert_real_drive_artifacts
+    assert_real_drive_artifacts(sub.drive_file_ids, require_five=True)
+
+
 @dataclass
 class WhopSubmissionResult:
     """Structured result of a submission attempt."""
@@ -411,46 +457,42 @@ class WhopSubmitter:
                 },
             )
 
-            simulated_whop_id = f"whop_sim_{sub.idempotency_key[:12]}"
-
             self.ledger.record_event(
                 campaign_id=campaign_id,
                 target_state=CampaignState.SUBMITTING,
-                reason="Simulated Whop submission response received",
+                reason="Dry-run Whop submission payload verified (no remote mutation)",
                 source="WhopSubmitter",
                 metadata={
-                    "event_type": "SUBMISSION_RESPONSE_RECEIVED",
+                    "event_type": "SUBMISSION_PAYLOAD_VERIFIED",
                     "submission_id": submission_id,
-                    "simulated_whop_id": simulated_whop_id,
-                    "status_code": 200,
+                    "dry_run": True,
                 },
             )
 
-            # Mark SUBMITTED in ledger
-            sub.submission_state = SubmissionState.SUBMITTED.value
-            sub.whop_submission_id = simulated_whop_id
+            # Mark DRY_RUN_VERIFIED in ledger (NEVER SUBMITTED under dry run)
+            sub.submission_state = SubmissionState.DRY_RUN_VERIFIED.value
+            sub.whop_submission_id = None
             sub.metadata["dry_run"] = True
             sub.metadata["mutation_executed"] = False
             self.ledger.update_submission(sub)
 
             self.ledger.transition_state(
                 campaign_id=campaign_id,
-                target_state=CampaignState.SUBMITTED,
-                reason="Dry-run Whop submission successfully verified",
+                target_state=CampaignState.DRY_RUN_VERIFIED,
+                reason="Dry-run Whop submission successfully verified (no remote mutation)",
                 source="WhopSubmitter",
                 metadata={
                     "submission_id": submission_id,
-                    "whop_submission_id": simulated_whop_id,
                     "dry_run": True,
                 },
             )
 
             self.ledger.record_event(
                 campaign_id=campaign_id,
-                target_state=CampaignState.SUBMITTED,
-                reason="Submission succeeded (dry-run verified)",
+                target_state=CampaignState.DRY_RUN_VERIFIED,
+                reason="Submission verified in dry-run mode",
                 source="WhopSubmitter",
-                metadata={"event_type": "SUBMISSION_SUCCEEDED", "submission_id": submission_id},
+                metadata={"event_type": "SUBMISSION_DRY_RUN_VERIFIED", "submission_id": submission_id},
             )
 
             return WhopSubmissionResult(
@@ -458,12 +500,12 @@ class WhopSubmitter:
                 submission_id=submission_id,
                 campaign_id=campaign_id,
                 review_session_id=session_id,
-                whop_submission_id=simulated_whop_id,
+                whop_submission_id=None,
                 dry_run=True,
                 mutation_executed=False,
                 payload=payload,
                 details={
-                    "status": "SUBMITTED",
+                    "status": "DRY_RUN_VERIFIED",
                     "mode": "DRY_RUN",
                     "clips_submitted": len(payload.clips),
                 },

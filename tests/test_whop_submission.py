@@ -319,14 +319,14 @@ def test_dry_run_submission_processing(populated_ledger: CampaignLedger):
     assert res.success is True
     assert res.dry_run is True
     assert res.mutation_executed is False
-    assert res.whop_submission_id.startswith("whop_sim_")
+    assert res.whop_submission_id is None
 
     # Verify final ledger states
     camp = populated_ledger.get_campaign("camp_123")
-    assert camp.current_state == CampaignState.SUBMITTED
+    assert camp.current_state == CampaignState.DRY_RUN_VERIFIED
 
     stored_sub = populated_ledger.get_submission(sub.submission_id)
-    assert stored_sub.submission_state == SubmissionState.SUBMITTED.value
+    assert stored_sub.submission_state == SubmissionState.DRY_RUN_VERIFIED.value
     assert stored_sub.attempt_count == 1
 
 
@@ -470,10 +470,10 @@ def test_process_restart_recovery_from_submitting(populated_ledger: CampaignLedg
     # Worker restarts and retries
     res = submitter.process_submission(sub.submission_id, dry_run_override=True)
     assert res.success is True
-    assert res.whop_submission_id.startswith("whop_sim_")
+    assert res.whop_submission_id is None
 
     final_sub = populated_ledger.get_submission(sub.submission_id)
-    assert final_sub.submission_state == SubmissionState.SUBMITTED.value
+    assert final_sub.submission_state == SubmissionState.DRY_RUN_VERIFIED.value
 
 
 def test_stale_callback_wrong_campaign(populated_ledger: CampaignLedger):

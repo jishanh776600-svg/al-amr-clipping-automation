@@ -850,3 +850,24 @@ class AutoClipClient:
 
             time.sleep(poll_interval_s)
 
+    def dispatch_job(
+        self,
+        brief: WhopCampaignBrief,
+        source_urls: Optional[List[str]] = None,
+    ) -> AutoClipJobResult:
+        """Alias for create_job enforcing deterministic job dispatch."""
+        return self.create_job(brief=brief, source_urls=source_urls)
+
+    def poll_worker_run(
+        self,
+        job_id: str,
+        timeout_s: float = 300.0,
+        poll_interval_s: float = 5.0,
+    ) -> Dict[str, Any]:
+        """Polls worker execution status until completion or timeout."""
+        return self.poll_job_completion(
+            job_id=job_id,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+        )
+

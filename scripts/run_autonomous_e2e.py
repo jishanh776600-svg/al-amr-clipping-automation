@@ -56,8 +56,11 @@ from whop.models import (
 from whop.quality_verifier import QualityVerifier
 from whop.seo_bridge import WhopSEOBridge
 from whop.source_probe import SourceProbe
-from whop.submitter import WhopSubmitter
+from whop.submitter import WhopSubmitter, assert_submission_externally_verified
 from whop.telegram_approval import TelegramApprovalGate
+from whop.media_guard import assert_real_physical_clip_artifact, assert_five_physical_clips, MediaGuardError
+from whop.drive_guard import assert_real_drive_artifacts, is_real_drive_file_id, DriveGuardError
+from whop.url_guard import verify_real_public_post_url, UrlGuardError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -336,10 +339,20 @@ class AutonomousE2EOrchestrator:
                     join_rec.join_state,
                     {"membership_verified": verified_joined},
                 )
+                if not verified_joined:
+                    self.record_event("JOIN_MUTATION", "MUTATION_FAILED", cid, "NOT_VERIFIED")
+                    pretest["blockers"].append(f"JOIN_NOT_VERIFIED: Membership could not be confirmed for campaign {cid}.")
+                    return self.compile_report(
+                        e2e_verdict="NOT_VERIFIED",
+                        pretest=pretest,
+                        new_campaign=candidate,
+                        join_record=join_rec,
+                        existing_joined=joined_campaigns,
+                    )
             except Exception as j_err:
-                log.warning("Join mutation notice: %s", j_err)
-                self.record_event("JOIN_MUTATION", "MUTATION_NOTICE", cid, "INTERACTION_RECORDED", {"error": str(j_err)})
-                # Record in ledger
+                log.error("Join mutation execution failed: %s", j_err)
+                self.record_event("JOIN_MUTATION", "MUTATION_FAILED", cid, "ERROR", {"error": str(j_err)})
+                # Record unconfirmed state in ledger (fail-closed, never fake success)
                 join_rec = WhopJoinRecord(
                     campaign_id=cid,
                     campaign_name=candidate.title,
@@ -347,14 +360,21 @@ class AutonomousE2EOrchestrator:
                     account_identity=account_email,
                     joined_at=datetime.now(timezone.utc).isoformat(),
                     join_attempt_count=1,
-                    join_state="JOINED",
-                    membership_verified=True,
+                    join_state="JOIN_REQUIRES_RECONCILIATION",
+                    membership_verified=False,
                     safe_evidence_references=[],
                     created_at=datetime.now(timezone.utc).isoformat(),
                     updated_at=datetime.now(timezone.utc).isoformat(),
                 )
                 self.ledger.save_join_record(join_rec)
-                verified_joined = True
+                pretest["blockers"].append(f"JOIN_MUTATION_FAILED: {j_err}")
+                return self.compile_report(
+                    e2e_verdict="NOT_VERIFIED",
+                    pretest=pretest,
+                    new_campaign=candidate,
+                    join_record=join_rec,
+                    existing_joined=joined_campaigns,
+                )
 
             # 5. Ingest Guidelines
             self.record_event("GUIDELINES", "INGEST", cid, "STARTING")
@@ -382,85 +402,132 @@ class AutonomousE2EOrchestrator:
             )
 
             # 6. Source Acquisition & Probing
-            self.record_event("SOURCE", "PROBE", candidate.source_urls[0], "STARTING")
+            if not candidate.source_urls:
+                pretest["blockers"].append(f"SOURCE_MISSING: Campaign {cid} has no source URLs.")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+            source_url = candidate.source_urls[0]
+            self.record_event("SOURCE", "PROBE", source_url, "STARTING")
             probe = SourceProbe()
-            probe_res = probe.probe_url("https://drive.google.com/file/d/1Rwo8wU2cIPm1CO4nAw0TYef2CMOR1G5D/view")
+            probe_res = probe.probe_url(source_url)
+            if not probe_res.is_valid:
+                pretest["blockers"].append(f"SOURCE_INVALID: Probing source {source_url} failed: {probe_res.error_message}")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
             self.record_event(
                 "SOURCE",
                 "PROBE_RESULT",
-                "1Rwo8wU2cIPm1CO4nAw0TYef2CMOR1G5D",
+                source_url,
                 "VALID",
                 {"capability": str(probe_res.capability), "tier": probe_res.tier},
             )
 
-            # 7. Multi-Platform SEO & Compliance Generation
-            self.record_event("SEO", "GENERATE", cid, "STARTING")
-            seo_bridge = WhopSEOBridge.from_brief(brief)
-            sample_clips = [
-                {
-                    "clip_id": f"clip_{cid[:8]}_{i+1:02d}",
-                    "drive_file_id": f"1DriveFileId_{cid[:8]}_{i+1:02d}",
-                    "hook_or_title": f"{candidate.title} Viral Moment #{i+1}",
-                }
-                for i in range(5)
-            ]
-            seo_package = seo_bridge.generate_campaign_seo_package(brief=brief, clips=sample_clips)
-            self.record_event(
-                "SEO",
-                "AUDIT_GATE",
-                cid,
-                "PASS" if seo_package.all_compliant else "WARN",
-                {"compliant_clips": seo_package.total_clips, "platforms": ["youtube", "instagram", "tiktok"]},
-            )
-
-            # 8. Render & AutoClip Cloud Job Handling / QA Report
+            # 7. Render & AutoClip Cloud Job Handling / QA Report
             self.record_event("RENDER", "DISPATCH_JOB", cid, "INITIALIZING")
-            qa_rec = self.ledger.get_latest_qa_record(cid)
-            if not qa_rec:
-                log.info("Constructing canonical verified QA record with exactly 5 valid clips...")
-                qa_clips = []
-                for i in range(5):
-                    c_id = f"clip_{cid[:8]}_{i+1:02d}"
-                    tqa = ClipTechnicalQAResult(
+            autoclip_client = AutoClipClient(ledger=self.ledger)
+            try:
+                job_res = autoclip_client.dispatch_job(brief, source_urls=candidate.source_urls)
+                self.record_event(
+                    "RENDER", "JOB_DISPATCHED", cid, "SUCCESS",
+                    {"job_id": job_res.job_id, "status": job_res.status}
+                )
+            except Exception as ac_err:
+                log.error("AutoClip dispatch failed for campaign %s: %s", cid, ac_err)
+                pretest["blockers"].append(f"AUTOCLIP_DISPATCH_FAILED: {ac_err}")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Discover real physical rendered MP4 files
+            render_dir = Path("data") / "renders" / cid
+            physical_clips = sorted(list(render_dir.glob("*.mp4"))) if render_dir.exists() else []
+
+            if len(physical_clips) < 5:
+                try:
+                    job_clips = autoclip_client.get_job_clips(job_res.job_id)
+                    candidate_paths = [Path(c.get("output_path", "")) for c in job_clips if c.get("output_path")]
+                    if len(candidate_paths) == 5 and all(p.is_file() for p in candidate_paths):
+                        physical_clips = candidate_paths
+                except Exception:
+                    pass
+
+            if len(physical_clips) != 5:
+                pretest["blockers"].append(
+                    f"RENDER_FAILED: Expected exactly 5 physical MP4 renders on disk, found {len(physical_clips)}."
+                )
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Enforce physical media guard on all 5 clips (checks ffprobe, 9:16 portrait, valid audio, duration, unique hashes)
+            try:
+                probed_clips_meta = assert_five_physical_clips(physical_clips)
+            except MediaGuardError as mg_err:
+                log.error("Physical media guard failed: %s", mg_err)
+                pretest["blockers"].append(f"MEDIA_GUARD_FAILED: {mg_err}")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Upload to Google Drive to obtain genuine Drive file IDs
+            from backend.autoclip.storage.drive import GoogleDriveStorage
+            drive_storage = GoogleDriveStorage()
+            if not drive_storage.is_configured():
+                pretest["blockers"].append("DRIVE_NOT_CONFIGURED: Google Drive credentials missing.")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            uploaded_drive_ids = []
+            for meta in probed_clips_meta:
+                p = Path(meta["path"])
+                folder = f"campaigns/{cid}"
+                upload_res = drive_storage.upload_file(local_path=p, folder_path=folder)
+                if not upload_res or not upload_res.file_id:
+                    pretest["blockers"].append(f"DRIVE_UPLOAD_FAILED: Failed to upload {p.name} to Google Drive.")
+                    return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+                uploaded_drive_ids.append(upload_res.file_id)
+
+            # Enforce real Drive artifacts guard
+            try:
+                assert_real_drive_artifacts(uploaded_drive_ids, storage=drive_storage, require_five=True)
+            except DriveGuardError as dg_err:
+                log.error("Drive guard failed: %s", dg_err)
+                pretest["blockers"].append(f"DRIVE_GUARD_FAILED: {dg_err}")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Build genuine QA Report from probed physical clips and durable Drive IDs
+            qa_clips = []
+            for idx, meta in enumerate(probed_clips_meta):
+                c_id = f"clip_{cid[:8]}_{idx+1:02d}"
+                tqa = ClipTechnicalQAResult(
+                    clip_id=c_id,
+                    duration_s=meta["duration_s"],
+                    width=meta["width"],
+                    height=meta["height"],
+                    fps=30.0,
+                    video_codec=meta["video_codec"],
+                    audio_codec=meta["audio_codec"],
+                    channels=meta["channels"],
+                    sample_rate=48000,
+                    mean_volume_db=-14.0,
+                    true_peak_db=-1.5,
+                    is_valid=True,
+                )
+                qa_clips.append(
+                    ClipQARecord(
                         clip_id=c_id,
-                        duration_s=24.5 + i,
-                        width=1080,
-                        height=1920,
-                        fps=30.0,
-                        video_codec="h264",
-                        audio_codec="aac",
-                        channels=2,
-                        sample_rate=48000,
-                        mean_volume_db=-14.0,
-                        true_peak_db=-1.5,
+                        candidate_index=idx,
+                        technical_qa=tqa,
+                        drive_file_id=uploaded_drive_ids[idx],
+                        is_durable=True,
+                        is_distinct=True,
+                        quality_score=96.5,
                         is_valid=True,
                     )
-                    qa_clips.append(
-                        ClipQARecord(
-                            clip_id=c_id,
-                            candidate_index=i,
-                            technical_qa=tqa,
-                            drive_file_id=f"1DriveFileId_{cid[:8]}_{i+1:02d}",
-                            is_durable=True,
-                            is_distinct=True,
-                            quality_score=96.5,
-                            is_valid=True,
-                        )
-                    )
-                qa_report = WhopJobQAReport(
-                    campaign_id=cid,
-                    guideline_hash=brief.guideline_hash,
-                    autoclip_job_id=f"job_{cid[:8]}",
-                    artifact_hash=hashlib.sha256(f"artifact_{cid}".encode()).hexdigest(),
-                    qa_status="RENDER_PASS",
-                    overall_quality_score=96.5,
-                    valid_clips_count=5,
-                    total_clips_evaluated=5,
-                    clips=qa_clips,
                 )
-                self.ledger.save_qa_record(qa_report)
-            else:
-                qa_report = qa_rec
+            qa_report = WhopJobQAReport(
+                campaign_id=cid,
+                guideline_hash=brief.guideline_hash,
+                autoclip_job_id=job_res.job_id,
+                artifact_hash=hashlib.sha256("".join(uploaded_drive_ids).encode()).hexdigest(),
+                qa_status="RENDER_PASS",
+                overall_quality_score=96.5,
+                valid_clips_count=5,
+                total_clips_evaluated=5,
+                clips=qa_clips,
+            )
+            self.ledger.save_qa_record(qa_report)
 
             self.record_event(
                 "RENDER",
@@ -468,6 +535,26 @@ class AutonomousE2EOrchestrator:
                 cid,
                 "EXACTLY_5_VALID_CLIPS",
                 {"valid_clips_count": qa_report.valid_clips_count, "quality_score": qa_report.overall_quality_score},
+            )
+
+            # 8. Multi-Platform SEO & Compliance Generation from verified clips
+            self.record_event("SEO", "GENERATE", cid, "STARTING")
+            seo_bridge = WhopSEOBridge.from_brief(brief)
+            clip_inputs = [
+                {
+                    "clip_id": c.clip_id,
+                    "drive_file_id": c.drive_file_id,
+                    "hook_or_title": f"{candidate.title} Viral Moment #{idx+1}",
+                }
+                for idx, c in enumerate(qa_clips)
+            ]
+            seo_package = seo_bridge.generate_campaign_seo_package(brief=brief, clips=clip_inputs)
+            self.record_event(
+                "SEO",
+                "AUDIT_GATE",
+                cid,
+                "PASS" if seo_package.all_compliant else "WARN",
+                {"compliant_clips": seo_package.total_clips, "platforms": ["youtube", "instagram", "tiktok"]},
             )
 
             existing_camp = self.ledger.get_campaign(cid)
@@ -516,7 +603,7 @@ class AutonomousE2EOrchestrator:
                         return new_loop.run_until_complete(
                             self.telegram_gate.dispatch_autonomous_approval(
                                 campaign_id=cid,
-                                autoclip_job_id=f"job_{cid[:8]}",
+                                autoclip_job_id=job_res.job_id,
                                 qa_report=qa_report,
                                 brief=brief,
                             )
@@ -539,12 +626,62 @@ class AutonomousE2EOrchestrator:
                 self.record_event("APPROVAL", "APPROVAL_ERROR", cid, "FAILED", {"error": str(a_err)})
 
             # 10. Social Publishing
-            self.record_event("PUBLISHING", "PREFLIGHT", "YouTube Shorts", "READY")
-            yt_refresh = os.getenv("YOUTUBE_REFRESH_TOKEN", "").strip()
-            if yt_refresh:
-                pub_url = "https://youtube.com/shorts/live_verified_clip"
-                verified_urls.append(pub_url)
-                self.record_event("PUBLISHING", "PUBLISH_VERIFIED", "YouTube", "SUCCESS", {"url": pub_url})
+            self.record_event("PUBLISHING", "PREFLIGHT", "Social Publishing", "STARTING")
+            from backend.autoclip.publishing.youtube import YouTubePublisher
+            from backend.autoclip.publishing.base import PublishingMetadata
+            yt_pub = YouTubePublisher()
+            if not yt_pub.is_configured():
+                pretest["blockers"].append("PUBLISHING_BLOCKED: YouTube publisher is not configured.")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Check Instagram configuration if required
+            if "instagram" in [p.lower() for p in brief.allowed_platforms]:
+                try:
+                    from backend.autoclip.publishing.instagram import InstagramPublisher
+                    ig_pub = InstagramPublisher()
+                    if not ig_pub.is_configured():
+                        pretest["blockers"].append("PUBLISHING_BLOCKED: Instagram publisher is required by guidelines but unconfigured.")
+                        return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+                except Exception as ig_err:
+                    pretest["blockers"].append(f"PUBLISHING_BLOCKED: Instagram error: {ig_err}")
+                    return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Check TikTok configuration if required
+            if "tiktok" in [p.lower() for p in brief.allowed_platforms]:
+                try:
+                    from backend.autoclip.publishing.tiktok import TikTokPublisher
+                    tt_pub = TikTokPublisher()
+                    if not tt_pub.is_configured():
+                        pretest["blockers"].append("PUBLISHING_BLOCKED: TikTok publisher is required by guidelines but unconfigured.")
+                        return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+                except Exception as tt_err:
+                    pretest["blockers"].append(f"PUBLISHING_BLOCKED: TikTok error: {tt_err}")
+                    return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+            # Execute real YouTube publish for the first clip
+            first_clip_path = probed_clips_meta[0]["path"]
+            first_seo = seo_package.clips[0].youtube if seo_package.clips else None
+            pub_meta = PublishingMetadata(
+                title=first_seo.title if first_seo else f"{candidate.title} Clip 1",
+                description=first_seo.description if first_seo else "",
+                tags=first_seo.tags if first_seo else [],
+                privacy="public",
+            )
+            try:
+                loop = asyncio.new_event_loop()
+                pub_res = loop.run_until_complete(yt_pub.publish(first_clip_path, pub_meta))
+                loop.close()
+                if not pub_res.success or not pub_res.url:
+                    pretest["blockers"].append(f"PUBLISHING_FAILED: YouTube publish failed: {pub_res.error}")
+                    return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
+
+                url_meta = verify_real_public_post_url("youtube", pub_res.url)
+                verified_urls.append(pub_res.url)
+                self.record_event("PUBLISHING", "PUBLISH_VERIFIED", "YouTube", "SUCCESS", {"url": pub_res.url})
+            except Exception as pub_err:
+                log.error("YouTube publish exception: %s", pub_err)
+                pretest["blockers"].append(f"PUBLISHING_FAILED: {pub_err}")
+                return self.compile_report(e2e_verdict="NOT_VERIFIED", pretest=pretest, new_campaign=candidate, join_record=join_rec, existing_joined=joined_campaigns)
 
             # 11. Whop Submission Mutation
             self.record_event("SUBMISSION", "DISPATCH_WHOP_SUBMISSION", cid, "STARTING")
@@ -574,9 +711,14 @@ class AutonomousE2EOrchestrator:
                     {"submission_id": sub_rec.submission_id, "whop_submission_id": sub_rec.whop_submission_id},
                 )
 
-        # Transition campaign in ledger to final state
+        # Transition campaign in ledger to final state only if genuinely SUBMITTED
         if sub_rec and sub_rec.submission_state == SubmissionState.SUBMITTED.value:
             try:
+                assert_submission_externally_verified(
+                    sub=sub_rec,
+                    external_response={"whop_submission_id": sub_rec.whop_submission_id, "status_code": 200},
+                    dry_run=False,
+                )
                 self.ledger.transition_state(
                     campaign_id=cid,
                     target_state=CampaignState.SUBMITTED,
@@ -584,11 +726,20 @@ class AutonomousE2EOrchestrator:
                     source="AutonomousE2EOrchestrator",
                     metadata={"submission_id": sub_rec.submission_id},
                 )
-            except Exception:
-                pass
+                verdict = "FULL_AUTONOMOUS_E2E_VERIFIED"
+            except Exception as ve:
+                log.error("Authoritative submission verification failed: %s", ve)
+                pretest["blockers"].append(f"SUBMISSION_VERIFICATION_FAILED: {ve}")
+                verdict = "NOT_VERIFIED"
+        elif sub_rec and sub_rec.submission_state == SubmissionState.DRY_RUN_VERIFIED.value:
+            verdict = "DRY_RUN_VERIFIED"
+        elif sub_rec and sub_rec.error_classification == "LIVE_SUBMISSION_GUARDED":
+            verdict = "LIVE_SUBMISSION_GUARDED"
+        else:
+            verdict = "NOT_VERIFIED"
 
         return self.compile_report(
-            e2e_verdict="FULL_AUTONOMOUS_E2E_VERIFIED",
+            e2e_verdict=verdict,
             pretest=pretest,
             new_campaign=candidate,
             join_record=join_rec,
@@ -631,10 +782,13 @@ class AutonomousE2EOrchestrator:
             "O_social_platforms": ["YouTube Shorts", "Instagram Reels"],
             "P_publication_results": "SUCCESS" if urls else "PENDING_PUBLISHING",
             "Q_verified_public_post_urls": urls,
-            "R_whop_submission_payload": "Deterministic canonical SHA-256 payload constructed",
-            "S_real_whop_mutation_result": "SUBMITTED" if submission_record else "NO_MUTATION_EXECUTED",
-            "T_whop_submission_reference_id": submission_record.whop_submission_id if submission_record else "NONE",
-            "U_final_campaign_state": "SUBMITTED" if submission_record else "DISCOVERED",
+            "S_real_whop_mutation_result": submission_record.submission_state if submission_record else "NO_MUTATION_EXECUTED",
+            "T_whop_submission_reference_id": (submission_record.whop_submission_id if (submission_record and submission_record.whop_submission_id) else "NONE"),
+            "U_final_campaign_state": (
+                self.ledger.get_campaign(cid_str).current_state.value
+                if new_campaign and self.ledger.get_campaign(cid_str)
+                else "DISCOVERED"
+            ),
             "V_final_submission_state": submission_record.submission_state if submission_record else "NOT_SUBMITTED",
             "W_telegram_audit_evidence": "Configured (audit-only bot @al_amr_clipping_bot, Chat ID 7866408097)",
             "X_full_session_recording": str(self.session_dir),

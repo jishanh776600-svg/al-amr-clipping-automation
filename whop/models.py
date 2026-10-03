@@ -38,6 +38,7 @@ class CampaignState(str, Enum):
     CHANGES_REQUESTED = "CHANGES_REQUESTED"
     SUBMITTING = "SUBMITTING"
     SUBMITTED = "SUBMITTED"
+    DRY_RUN_VERIFIED = "DRY_RUN_VERIFIED"
 
     # Failure / terminal states
     CLAIM_FAILED = "CLAIM_FAILED"
@@ -113,11 +114,17 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     CampaignState.APPROVED: {
         CampaignState.SUBMITTING,
         CampaignState.SUBMISSION_BLOCKED,
+        CampaignState.DRY_RUN_VERIFIED,
     },
     CampaignState.SUBMITTING: {
         CampaignState.SUBMITTED,
         CampaignState.SUBMISSION_FAILED,
         CampaignState.SUBMISSION_BLOCKED,
+        CampaignState.DRY_RUN_VERIFIED,
+    },
+    CampaignState.DRY_RUN_VERIFIED: {
+        CampaignState.SUBMITTING,
+        CampaignState.REJECTED,
     },
     # Failure states can transition to retries or re-evaluation
     CampaignState.CLAIM_FAILED: {CampaignState.CLAIMING, CampaignState.REJECTED},
@@ -776,6 +783,7 @@ class SubmissionState(str, Enum):
     SUBMISSION_FAILED = "SUBMISSION_FAILED"
     SUBMISSION_BLOCKED = "SUBMISSION_BLOCKED"
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+    DRY_RUN_VERIFIED = "DRY_RUN_VERIFIED"
 
 
 @dataclass
