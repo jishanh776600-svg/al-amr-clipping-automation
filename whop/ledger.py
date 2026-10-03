@@ -1657,6 +1657,7 @@ class CampaignLedger:
         destination: str = "whop",
         note: str = "",
         metadata: Optional[Dict[str, Any]] = None,
+        decision: str = "APPROVE",
     ) -> Tuple[bool, str, Optional[WhopSubmissionRecord]]:
         """Atomically validates pre-conditions, transitions campaign to APPROVED,
         transitions review session to APPROVED, creates the durable submission record,
@@ -1703,7 +1704,7 @@ class CampaignLedger:
             if not row_camp:
                 return (False, "CAMPAIGN_NOT_FOUND", None)
             
-            if row_camp["current_state"] != CampaignState.AWAITING_APPROVAL.value:
+            if row_camp["current_state"] not in (CampaignState.AWAITING_APPROVAL.value, CampaignState.RENDER_READY.value, CampaignState.RENDER_WARN.value):
                 if row_camp["current_state"] == CampaignState.APPROVED.value:
                     cursor.execute(
                         "SELECT * FROM whop_submissions WHERE review_session_id = ?;",
@@ -1719,7 +1720,7 @@ class CampaignLedger:
                 review_session_id=review_session_id,
                 expected_state="PENDING",
                 new_state="APPROVED",
-                decision="APPROVE",
+                decision=decision,
                 reviewer_id=reviewer_id,
                 reviewer_username=reviewer_username,
                 note=note,
@@ -1741,7 +1742,7 @@ class CampaignLedger:
                 UPDATE whop_campaigns
                 SET current_state = 'APPROVED',
                     updated_at = ?
-                WHERE campaign_id = ? AND current_state IN ('AWAITING_APPROVAL', 'APPROVED');
+                WHERE campaign_id = ? AND current_state IN ('AWAITING_APPROVAL', 'RENDER_READY', 'RENDER_WARN', 'APPROVED');
                 """,
                 (now, campaign_id),
             )
@@ -1753,10 +1754,11 @@ class CampaignLedger:
                 """
                 INSERT INTO whop_campaign_events (
                     campaign_id, previous_state, new_state, timestamp, reason, source, metadata_json
-                ) VALUES (?, 'AWAITING_APPROVAL', 'APPROVED', ?, ?, 'TelegramApprovalGate', ?);
+                ) VALUES (?, ?, 'APPROVED', ?, ?, 'TelegramApprovalGate', ?);
                 """,
                 (
                     campaign_id,
+                    row_camp["current_state"],
                     now,
                     f"Operator APPROVE in Telegram by @{reviewer_username}",
                     json.dumps({

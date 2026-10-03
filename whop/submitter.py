@@ -226,6 +226,7 @@ class WhopSubmitter:
                 "artifact_hash": session.artifact_hash,
                 "campaign_url": camp_url,
                 "total_valid_clips": len(submission_clips),
+                "seo_package": session.metadata.get("seo_package", {}),
             },
         )
         return payload

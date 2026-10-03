@@ -545,3 +545,72 @@ def test_autoclip_brief_interoperability():
     assert autoclip_brief.caption_preset == "bold_pop"
     assert "#gaming" in autoclip_brief.hashtags
     assert "leaked" in autoclip_brief.banned_words
+
+
+# ---------------------------------------------------------------------------
+# Test 22: Deep DOCX and PDF Extraction
+# ---------------------------------------------------------------------------
+
+def test_deep_docx_and_pdf_document_extraction(tmp_path: Path):
+    import io
+    import docx
+    from whop.guidelines import fetch_guideline_document
+
+    # Create an in-memory DOCX
+    doc = docx.Document()
+    doc.add_heading("Candid Club Video Guidelines", 0)
+    doc.add_paragraph("Must include #CandidClub and tag @candidclub official account.")
+    doc.add_paragraph("No profanity or NSFW content allowed.")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Min Duration"
+    table.cell(0, 1).text = "20s"
+    table.cell(1, 0).text = "Max Duration"
+    table.cell(1, 1).text = "30s"
+
+    docx_path = tmp_path / "test_guidelines.docx"
+    doc.save(str(docx_path))
+
+    # Test direct file extraction
+    text, dtype, err = fetch_guideline_document(str(docx_path))
+    assert err is None
+    assert "docx" in dtype
+    assert "Candid Club Video Guidelines" in text
+    assert "#CandidClub" in text
+    assert "@candidclub" in text
+    assert "20s" in text
+
+
+# ---------------------------------------------------------------------------
+# Test 23: Mandatory Hashtag, Mention, and CTA Extraction
+# ---------------------------------------------------------------------------
+
+def test_mandatory_hashtag_mention_and_cta_extraction():
+    guideline_text = """
+    Welcome to The Candid Club Creator Campaign!
+    Please make sure every clip has #CandidClub and #ClipHouse tags.
+    Tag our official creator handle @thecandidclub and @whop.
+    Prohibited: vulgarity, competitor links.
+    Add link in bio: https://whop.com/candid
+    Call to action: Check out the app and join today!
+    Duration between 20 and 30 seconds.
+    """
+    brief = parse_campaign_guidelines(
+        campaign_id="c-deep-1",
+        title="The Candid Club",
+        campaign_url="https://whop.com/candid",
+        raw_text=guideline_text,
+    )
+    assert "#CandidClub" in brief.hashtags
+    assert "#ClipHouse" in brief.hashtags
+    assert "@thecandidclub" in brief.required_mentions
+    assert "@whop" in brief.required_mentions
+    assert brief.link_in_bio == "https://whop.com/candid"
+    assert brief.duration_min_s == 20.0
+    assert brief.duration_max_s == 30.0
+    assert len(brief.rules) > 5
+
+    # Verify rule categories
+    rule_texts = [r.text for r in brief.rules]
+    assert any("Mandatory Hashtag: #CandidClub" in t for t in rule_texts)
+    assert any("Required Account Mention: @thecandidclub" in t for t in rule_texts)
+

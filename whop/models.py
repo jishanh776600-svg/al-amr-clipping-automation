@@ -91,10 +91,12 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     },
     CampaignState.RENDER_READY: {
         CampaignState.AWAITING_APPROVAL,
+        CampaignState.APPROVED,    # if autonomous mode approved
         CampaignState.SUBMITTING,  # if autonomous mode approved
     },
     CampaignState.RENDER_WARN: {
         CampaignState.AWAITING_APPROVAL,
+        CampaignState.APPROVED,    # if autonomous mode approved
         CampaignState.SUBMITTING,
         CampaignState.RENDERING,
         CampaignState.REJECTED,
@@ -860,4 +862,55 @@ class WhopSubmissionRecord:
             "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+        }
+
+
+# ==============================================================================
+# Autonomous Zero-Tolerance SEO Models
+# ==============================================================================
+
+@dataclass
+class WhopSEOClipMetadata:
+    """Deterministic, verified SEO metadata package for a single clip across platforms."""
+    clip_id: str
+    drive_file_id: str
+    youtube_title: str
+    youtube_description: str
+    youtube_tags: List[str]
+    instagram_caption: str
+    instagram_hashtags: List[str]
+    instagram_mentions: List[str]
+    tiktok_caption: str
+    tiktok_hashtags: List[str]
+    tiktok_mentions: List[str]
+    cta: str = ""
+    compliance_score: float = 100.0
+    is_compliant: bool = True
+    matched_phrases: List[str] = field(default_factory=list)
+    matched_mentions: List[str] = field(default_factory=list)
+    matched_hashtags: List[str] = field(default_factory=list)
+    violations: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class WhopSEOPackage:
+    """Full campaign-level verified SEO package binding all clips to the campaign brief."""
+    campaign_id: str
+    guideline_hash: str
+    clips_metadata: List[WhopSEOClipMetadata]
+    total_clips: int
+    all_compliant: bool = True
+    verified_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "campaign_id": self.campaign_id,
+            "guideline_hash": self.guideline_hash,
+            "clips_metadata": [m.to_dict() for m in self.clips_metadata],
+            "total_clips": self.total_clips,
+            "all_compliant": self.all_compliant,
+            "verified_at": self.verified_at,
         }

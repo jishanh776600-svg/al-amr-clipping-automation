@@ -84,7 +84,7 @@ def fetch_guideline_document(
     source_url: str,
     timeout_seconds: int = 15,
 ) -> Tuple[Optional[str], str, Optional[str]]:
-    """Safely retrieves external guideline document content (e.g. Dropbox PDF, direct PDF).
+    """Safely retrieves external guideline document content (Dropbox, PDF, DOCX, Google Docs/Drive).
     
     Returns (extracted_text, document_type, error_reason).
     Read-only, zero side-effects.
@@ -93,6 +93,33 @@ def fetch_guideline_document(
         return None, "none", "Empty source URL"
 
     clean_url = source_url.strip()
+
+    def _extract_from_bytes(data: bytes, default_name: str = "document") -> Tuple[Optional[str], str, Optional[str]]:
+        try:
+            from backend.autoclip.campaign.extractor import extract_text_from_docx, extract_text_from_pdf
+        except ImportError:
+            from autoclip.campaign.extractor import extract_text_from_docx, extract_text_from_pdf
+
+        if data.startswith(b"%PDF"):
+            try:
+                text = extract_text_from_pdf(data)
+                return text, "pdf", None
+            except Exception as e:
+                return None, "pdf_error", f"Failed extracting PDF text: {e}"
+        elif data.startswith(b"PK\x03\x04"):
+            try:
+                text = extract_text_from_docx(data)
+                return text, "docx", None
+            except Exception as e:
+                return None, "docx_error", f"Failed extracting DOCX text: {e}"
+        else:
+            try:
+                text = data.decode("utf-8")
+                if len(text.strip()) > 20:
+                    return text, "text", None
+            except Exception:
+                pass
+            return None, "unknown_binary", "Downloaded bytes are neither PDF nor DOCX nor UTF-8 text"
 
     # 1. Dropbox link handling: convert dl=0 to dl=1 for direct binary stream
     if "dropbox.com" in clean_url:
@@ -111,20 +138,58 @@ def fetch_guideline_document(
             with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
                 data = resp.read()
 
-            if data.startswith(b"%PDF"):
-                try:
-                    from backend.autoclip.campaign.extractor import extract_text_from_pdf
-                except ImportError:
-                    from autoclip.campaign.extractor import extract_text_from_pdf
-                text = extract_text_from_pdf(data)
-                return text, "dropbox_pdf", None
-            else:
-                return None, "dropbox_binary", "Downloaded Dropbox file is not a valid PDF"
+            text, dtype, err = _extract_from_bytes(data, "dropbox_file")
+            return text, f"dropbox_{dtype}", err
         except Exception as exc:
             return None, "dropbox_error", f"Could not retrieve Dropbox guideline: {exc}"
 
-    # 2. Direct PDF links
-    if clean_url.lower().endswith(".pdf"):
+    # 2. Google Docs export handling
+    gdoc_match = re.search(r"docs\.google\.com/document/d/([a-zA-Z0-9_-]+)", clean_url)
+    if gdoc_match:
+        doc_id = gdoc_match.group(1)
+        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+        try:
+            req = urllib.request.Request(
+                export_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AL-AMR/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                data = resp.read()
+            text = data.decode("utf-8", errors="replace").strip()
+            if text and len(text) > 30:
+                return text, "google_doc", None
+        except Exception as exc:
+            log.warning("Could not export Google Doc %s as text: %s", doc_id, exc)
+
+    # 3. Google Drive file handling
+    gdrive_file_match = re.search(r"drive\.google\.com/file/d/([a-zA-Z0-9_-]+)", clean_url)
+    if gdrive_file_match:
+        file_id = gdrive_file_match.group(1)
+        direct_dl = f"https://drive.google.com/uc?export=download&id={file_id}"
+        try:
+            req = urllib.request.Request(
+                direct_dl,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AL-AMR/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                data = resp.read()
+            text, dtype, err = _extract_from_bytes(data, f"gdrive_{file_id}")
+            return text, f"gdrive_{dtype}", err
+        except Exception as exc:
+            return None, "gdrive_error", f"Could not retrieve Google Drive file: {exc}"
+
+    # 4. Direct PDF, DOCX, TXT, MD links or local filesystem paths
+    local_path = Path(clean_url)
+    if local_path.is_file():
+        try:
+            data = local_path.read_bytes()
+            text, dtype, err = _extract_from_bytes(data, local_path.name)
+            return text, f"local_{dtype}", err
+        except Exception as exc:
+            return None, "local_error", f"Could not read local guideline file: {exc}"
+
+    url_lower = clean_url.lower()
+    if url_lower.endswith((".pdf", ".docx", ".txt", ".md")) or url_lower.startswith(("http://", "https://")):
         try:
             req = urllib.request.Request(
                 clean_url,
@@ -132,18 +197,12 @@ def fetch_guideline_document(
             )
             with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
                 data = resp.read()
-
-            if data.startswith(b"%PDF"):
-                try:
-                    from backend.autoclip.campaign.extractor import extract_text_from_pdf
-                except ImportError:
-                    from autoclip.campaign.extractor import extract_text_from_pdf
-                text = extract_text_from_pdf(data)
-                return text, "direct_pdf", None
+            text, dtype, err = _extract_from_bytes(data, "direct_file")
+            return text, f"direct_{dtype}", err
         except Exception as exc:
-            return None, "pdf_error", f"Could not retrieve direct PDF guideline: {exc}"
+            return None, "direct_error", f"Could not retrieve direct guideline: {exc}"
 
-    # 3. Google Drive reference
+    # 5. Generic Google Drive folder or unknown scheme
     if "drive.google.com" in clean_url:
         return None, "google_drive", "Google Drive folder reference (media asset source)"
 
@@ -183,8 +242,11 @@ def parse_campaign_guidelines(
     # Check external guideline documents
     external_text = None
     if download_external:
-        # Check source_urls and guideline_urls for PDFs
-        candidate_urls = [u for u in (guideline_urls + source_urls) if "dropbox.com" in u or u.lower().endswith(".pdf")]
+        # Check source_urls and guideline_urls for external docs
+        candidate_urls = [
+            u for u in (guideline_urls + source_urls)
+            if any(kw in u.lower() for kw in ("dropbox.com", ".pdf", ".docx", ".txt", ".md", "docs.google.com", "drive.google.com/file"))
+        ]
         for u in candidate_urls:
             ext_text, doc_type, err = fetch_guideline_document(u)
             if ext_text and len(ext_text.strip()) > 50:
@@ -331,7 +393,7 @@ def parse_campaign_guidelines(
 
     # 3. Link-in-bio & CTA Extraction
     link_in_bio: Optional[str] = None
-    bio_match = re.search(r"add link in bio\s+([^\s\n\r]+)", full_guideline_content, re.I)
+    bio_match = re.search(r"add link in bio\s*[:\-]?\s*([^\s\n\r]+)", full_guideline_content, re.I)
     if bio_match:
         link_in_bio = bio_match.group(1).strip()
         add_rule(
@@ -429,7 +491,6 @@ def parse_campaign_guidelines(
                 confidence="explicit",
             )
 
-
     # 8. Ambiguous / Subjective Requirements (Flagged INTERPRETATION_REQUIRED)
     ambiguous_patterns = [
         ("engaging", r"([^\.\n]*engaging[^\.\n]*)"),
@@ -441,7 +502,6 @@ def parse_campaign_guidelines(
         m = re.search(pat, full_guideline_content, re.I)
         if m:
             excerpt = m.group(1).strip()
-            # Avoid adding if already added
             if not any(r.text == excerpt for r in rules):
                 add_rule(
                     category=RuleCategory.EDITING,
@@ -480,7 +540,6 @@ def parse_campaign_guidelines(
         pat = rf"([^\.\n]*\b{platform_name}\b[^\.\n]*)"
         for match in re.finditer(pat, full_guideline_content, re.I):
             matched_line = match.group(1).strip()
-            # If line is operational, already handled
             if any(op_pat.search(matched_line) for op_pat in OPERATIONAL_PATTERNS):
                 continue
 
@@ -501,7 +560,54 @@ def parse_campaign_guidelines(
                     confidence="explicit",
                 )
 
-    # Build structured brief
+    # 11. Mandatory Hashtags Extraction (0% Hallucination)
+    extracted_hashtags: List[str] = []
+    raw_tags = re.findall(r"(?:^|[\s,;:(])#([A-Za-z0-9_]{2,40})", full_guideline_content)
+    for tag in raw_tags:
+        # Exclude hex color codes (e.g. #ffffff)
+        if re.match(r"^[0-9a-fA-F]{3,6}$", tag) and any(c in tag.lower() for c in "abcdef"):
+            continue
+        norm_tag = f"#{tag}"
+        if norm_tag not in extracted_hashtags:
+            extracted_hashtags.append(norm_tag)
+            add_rule(
+                category=RuleCategory.PUBLISHING,
+                text=f"Mandatory Hashtag: {norm_tag}",
+                normalized_value=norm_tag,
+                mandatory=True,
+                platform="all",
+                confidence="explicit",
+            )
+
+    # 12. Required Account Mentions (0% Hallucination)
+    extracted_mentions: List[str] = []
+    raw_mentions = re.findall(r"(?:^|[\s,;:(])@([A-Za-z0-9_.-]{2,40})", full_guideline_content)
+    for mention in raw_mentions:
+        clean_m = mention.rstrip(".")
+        norm_m = f"@{clean_m}"
+        if norm_m not in extracted_mentions and clean_m.lower() not in ("gmail", "yahoo", "outlook", "example"):
+            extracted_mentions.append(norm_m)
+            add_rule(
+                category=RuleCategory.PUBLISHING,
+                text=f"Required Account Mention: {norm_m}",
+                normalized_value=norm_m,
+                mandatory=True,
+                platform="all",
+                confidence="explicit",
+            )
+
+    # 13. Call-To-Action (CTA) Extraction
+    cta_wording = ""
+    cta_instructions: List[str] = []
+    cta_matches = re.findall(r"(?:cta|call to action|link in bio|visit|check out|sign up|use code|download)\s*[:\-]?\s*([^\n\r.]+)", full_guideline_content, re.I)
+    for cm in cta_matches:
+        c_clean = cm.strip()
+        if len(c_clean) >= 4 and not any(op.search(c_clean) for op in OPERATIONAL_PATTERNS):
+            cta_instructions.append(c_clean)
+            if not cta_wording:
+                cta_wording = c_clean
+
+    # Build structured brief with all extracted parameters
     brief = WhopCampaignBrief(
         campaign_id=campaign_id,
         title=title,
@@ -534,6 +640,10 @@ def parse_campaign_guidelines(
         youtube_requirements=youtube_reqs,
         instagram_requirements=instagram_reqs,
         tiktok_requirements=tiktok_reqs,
+        hashtags=extracted_hashtags,
+        required_mentions=extracted_mentions,
+        cta_wording=cta_wording,
+        cta_instructions=cta_instructions,
         link_in_bio=link_in_bio,
         approval_gate_required=approval_gate_required,
         operational_instructions=operational_instructions,

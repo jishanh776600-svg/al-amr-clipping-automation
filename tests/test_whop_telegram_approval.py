@@ -33,6 +33,7 @@ from whop.models import (
     RuleCategory,
     RuleComplianceResult,
     RuleComplianceStatus,
+    WhopCampaignBrief,
     WhopJobQAReport,
     WhopReviewSession,
 )
@@ -1111,5 +1112,101 @@ async def test_telegram_approval_passes_drive_file_id_to_materializer(temp_ledge
         for idx, (cid, dfid) in enumerate(recorded_calls, 1):
             assert cid == f"c_{idx}"
             assert dfid == f"drive_fid_{idx}"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_autonomous_approval_zero_defect(temp_ledger):
+    campaign_id = "camp_auto_appr_1"
+    temp_ledger.save_campaign(
+        CampaignRecord(
+            campaign_id=campaign_id,
+            title="Auto Approval Test Campaign",
+            campaign_url="https://whop.com/auto",
+            current_state=CampaignState.RENDER_READY,
+        )
+    )
+
+    clips = []
+    for i in range(1, 6):
+        clips.append(
+            ClipQARecord(
+                clip_id=f"clip_auto_{i}",
+                candidate_index=i,
+                technical_qa=ClipTechnicalQAResult(
+                    clip_id=f"clip_auto_{i}",
+                    duration_s=25.0,
+                    width=1080,
+                    height=1920,
+                    fps=30.0,
+                    video_codec="h264",
+                    audio_codec="aac",
+                    is_valid=True,
+                ),
+                compliance_results=[],
+                artifact_path="/tmp/clip.mp4",
+                drive_file_id=f"drive_auto_{i}",
+                is_durable=True,
+                is_distinct=True,
+                quality_score=95.0,
+                is_valid=True,
+            )
+        )
+
+    qa_report = WhopJobQAReport(
+        campaign_id=campaign_id,
+        guideline_hash="ghash_auto",
+        autoclip_job_id="job_auto",
+        artifact_hash="arthash_auto",
+        qa_status="RENDER_PASS",
+        overall_quality_score=95.0,
+        valid_clips_count=5,
+        total_clips_evaluated=5,
+        clips=clips,
+    )
+    temp_ledger.save_qa_record(qa_report)
+
+    brief = WhopCampaignBrief(
+        campaign_id=campaign_id,
+        title="Auto Approval Test Campaign",
+        campaign_url="https://whop.com/auto",
+        guideline_hash="ghash_auto",
+        hashtags=["#AutoApprove", "#Viral"],
+        required_mentions=["@official"],
+        duration_min_s=20.0,
+        duration_max_s=30.0,
+        link_in_bio="https://whop.com/auto",
+    )
+
+    gate = TelegramApprovalGate(ledger=temp_ledger)
+
+    with patch("whop.telegram_approval.get_telegram_config", return_value=("mock_tok", "mock_chat", None)), \
+         patch("whop.telegram_approval._safe_send_telegram_message", new_callable=AsyncMock) as mock_send:
+
+        mock_send.return_value = {"ok": True, "result": {"message_id": 1001}}
+
+        session, seo_pkg = await gate.dispatch_autonomous_approval(
+            campaign_id=campaign_id,
+            autoclip_job_id="job_auto",
+            qa_report=qa_report,
+            brief=brief,
+        )
+
+        assert session.review_state == "APPROVED"
+        assert session.decision == "AUTO_APPROVED_ZERO_DEFECT"
+        assert session.reviewer_id == "AUTONOMOUS_ZERO_DEFECT_GATE"
+        assert len(session.clip_ids) == 5
+        assert seo_pkg.all_compliant is True
+        assert len(seo_pkg.clips_metadata) == 5
+
+        # Check ledger campaign state transitioned to APPROVED
+        updated_camp = temp_ledger.get_campaign(campaign_id)
+        assert updated_camp.current_state == CampaignState.APPROVED
+
+        # Check approved submission record was created
+        sub = temp_ledger.get_submission_by_review_session(session.review_session_id)
+        assert sub is not None
+        assert sub.review_session_id == session.review_session_id
+        assert sub.metadata.get("autonomous_mode") is True
+
 
 
