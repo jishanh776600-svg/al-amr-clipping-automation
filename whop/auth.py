@@ -159,26 +159,56 @@ class WhopAuthenticator:
                             pwd_loc = loc.first
                             break
 
-                # 2. Fill password
-                if pwd_loc:
+                # 2. Check for OTP verification screen or Password field
+                otp_loc = None
+                for otp_sel in ("input[name='otp']", "input[inputmode='numeric']", "input[placeholder*='code' i]"):
+                    loc = page.locator(otp_sel)
+                    if loc.count() > 0 and loc.first.is_visible():
+                        otp_loc = loc.first
+                        break
+
+                if otp_loc or page.locator(":text-matches('Verify it\\'s you|entering the code', 'i')").count() > 0:
+                    log.info("Whop requested 6-digit email OTP verification code.")
+                    from .gmail_otp import GmailOTPReader
+                    reader = GmailOTPReader()
+                    if reader.is_configured():
+                        log.info("Fetching Whop OTP autonomously from Gmail inbox via IMAP...")
+                        otp_code = reader.fetch_latest_whop_otp(timeout_seconds=60.0)
+                        log.info("Entering 6-digit OTP code into Whop login screen...")
+                        if otp_loc:
+                            actor.human_click(otp_loc)
+                            page.keyboard.type(otp_code, delay=150)
+                        else:
+                            page.keyboard.type(otp_code, delay=150)
+                        page.wait_for_timeout(2000)
+
+                        sign_in_btn = page.locator("button:has-text('Sign in'), button:has-text('Submit')")
+                        if sign_in_btn.count() > 0 and sign_in_btn.first.is_visible():
+                            actor.human_click(sign_in_btn.first, action_name="submit")
+                            page.wait_for_timeout(4000)
+                    else:
+                        raise WhopAuthenticationError(
+                            "Whop requested OTP verification code, but GMAIL_APP_PASSWORD is not configured in .env. "
+                            "Please set GMAIL_APP_PASSWORD to enable autonomous OTP fetching."
+                        )
+                elif pwd_loc:
                     log.info("Entering password via secure human typing cadence...")
                     actor.human_type(pwd_loc, user_pass, simulate_mistakes=False)
                     page.wait_for_timeout(1000)
 
-                # 3. Click Submit
-                submit_btn = None
-                for b_sel in LOGIN_SUBMIT_SELECTORS:
-                    loc = page.locator(b_sel)
-                    if loc.count() > 0 and loc.first.is_visible():
-                        submit_btn = loc.first
-                        break
+                    submit_btn = None
+                    for b_sel in LOGIN_SUBMIT_SELECTORS:
+                        loc = page.locator(b_sel)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            submit_btn = loc.first
+                            break
 
-                if submit_btn:
-                    actor.human_click(submit_btn, action_name="submit")
-                    page.wait_for_timeout(4000)
-                else:
-                    page.keyboard.press("Enter")
-                    page.wait_for_timeout(4000)
+                    if submit_btn:
+                        actor.human_click(submit_btn, action_name="submit")
+                        page.wait_for_timeout(4000)
+                    else:
+                        page.keyboard.press("Enter")
+                        page.wait_for_timeout(4000)
 
                 # 4. Wait for redirect or check authentication
                 auth_status = detect_whop_authentication(page)
