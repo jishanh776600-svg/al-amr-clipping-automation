@@ -211,13 +211,13 @@ class WhopAuthenticator:
                         page.wait_for_timeout(4000)
 
                 # 4. Wait for redirect or check authentication
-                auth_status = detect_whop_authentication(page)
-                if not auth_status.authenticated:
+                is_auth, reason = detect_whop_authentication(page)
+                if not is_auth:
                     # Give it up to 10 more seconds to settle
                     for _ in range(5):
                         page.wait_for_timeout(2000)
-                        auth_status = detect_whop_authentication(page)
-                        if auth_status.authenticated:
+                        is_auth, reason = detect_whop_authentication(page)
+                        if is_auth:
                             break
 
                 # 5. Extract fresh session cookies
