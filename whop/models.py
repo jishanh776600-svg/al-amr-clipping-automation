@@ -914,3 +914,26 @@ class WhopSEOPackage:
             "all_compliant": self.all_compliant,
             "verified_at": self.verified_at,
         }
+
+
+@dataclass
+class WhopJoinRecord:
+    """Authoritative durable record tracking a genuine Whop campaign join mutation."""
+    campaign_id: str
+    campaign_name: str
+    campaign_url: str
+    account_identity: str
+    guideline_hash: Optional[str] = None
+    joined_at: Optional[str] = None
+    join_attempt_count: int = 0
+    join_state: str = "PENDING"
+    membership_verified: bool = False
+    safe_evidence_references: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    last_error: Optional[str] = None
+    metadata_json: str = "{}"
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)

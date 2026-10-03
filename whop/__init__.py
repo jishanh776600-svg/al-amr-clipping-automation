@@ -165,6 +165,12 @@ __all__ = [
     "SourceProbe",
     "classify_source_url",
     "convert_dropbox_to_direct_url",
+    "WhopJoinRecord",
+    "WhopCampaignJoiner",
+    "WhopJoinError",
+    "WhopAlreadyJoinedError",
+    "WhopJoinTimeoutError",
+    "WhopCandidateNotEligibleError",
 ]
 
 from .config import AutoClipConfig
@@ -176,6 +182,7 @@ from .models import (
     ClipQARecord,
     WhopJobQAReport,
     WhopReviewSession,
+    WhopJoinRecord,
     SourceCapability,
     SourceTier,
     SourceProbeResult,
@@ -206,3 +213,11 @@ from .source_probe import (
     classify_source_url,
     convert_dropbox_to_direct_url,
 )
+from .joiner import (
+    WhopCampaignJoiner,
+    WhopJoinError,
+    WhopAlreadyJoinedError,
+    WhopJoinTimeoutError,
+    WhopCandidateNotEligibleError,
+)
+

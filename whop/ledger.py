@@ -32,6 +32,7 @@ from .models import (
     RuleComplianceStatus,
     WhopReviewSession,
     WhopSubmissionRecord,
+    WhopJoinRecord,
     validate_transition,
 )
 
@@ -198,6 +199,27 @@ CREATE INDEX IF NOT EXISTS idx_whop_submission_campaign ON whop_submissions(camp
 CREATE INDEX IF NOT EXISTS idx_whop_submission_review ON whop_submissions(review_session_id);
 CREATE INDEX IF NOT EXISTS idx_whop_submission_idempotency ON whop_submissions(idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_whop_submission_state ON whop_submissions(submission_state);
+
+CREATE TABLE IF NOT EXISTS whop_joins (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id          TEXT NOT NULL,
+    campaign_name        TEXT NOT NULL,
+    campaign_url         TEXT NOT NULL,
+    account_identity     TEXT NOT NULL,
+    guideline_hash       TEXT,
+    joined_at            TEXT,
+    join_attempt_count   INTEGER NOT NULL DEFAULT 0,
+    join_state           TEXT NOT NULL DEFAULT 'PENDING',
+    membership_verified  INTEGER NOT NULL DEFAULT 0,
+    safe_evidence_json   TEXT NOT NULL DEFAULT '[]',
+    last_error           TEXT,
+    metadata_json        TEXT NOT NULL DEFAULT '{}',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_joins_campaign ON whop_joins(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_joins_state ON whop_joins(join_state);
 """
 
 
@@ -1930,3 +1952,113 @@ class CampaignLedger:
                 ),
             )
             return (True, "SUCCESS")
+
+    def save_join_record(self, join_rec: WhopJoinRecord) -> int:
+        """Saves or updates a WhopJoinRecord in the persistent ledger."""
+        now = datetime.now(timezone.utc).isoformat()
+        evidence_json = json.dumps(join_rec.safe_evidence_references)
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO whop_joins (
+                    campaign_id, campaign_name, campaign_url, account_identity,
+                    guideline_hash, joined_at, join_attempt_count, join_state,
+                    membership_verified, safe_evidence_json, last_error, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    join_rec.campaign_id,
+                    join_rec.campaign_name,
+                    join_rec.campaign_url,
+                    join_rec.account_identity,
+                    join_rec.guideline_hash,
+                    join_rec.joined_at,
+                    join_rec.join_attempt_count,
+                    join_rec.join_state,
+                    1 if join_rec.membership_verified else 0,
+                    evidence_json,
+                    join_rec.last_error,
+                    join_rec.metadata_json,
+                    join_rec.created_at or now,
+                    now,
+                ),
+            )
+            inserted_id = cur.lastrowid
+            conn.commit()
+            return inserted_id
+
+    def get_join_record(self, campaign_id: str) -> Optional[WhopJoinRecord]:
+        """Retrieves the latest WhopJoinRecord for a given campaign ID."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT * FROM whop_joins
+                WHERE campaign_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (campaign_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            evidence = []
+            try:
+                evidence = json.loads(row["safe_evidence_json"])
+            except Exception:
+                pass
+            return WhopJoinRecord(
+                id=row["id"],
+                campaign_id=row["campaign_id"],
+                campaign_name=row["campaign_name"],
+                campaign_url=row["campaign_url"],
+                account_identity=row["account_identity"],
+                guideline_hash=row["guideline_hash"],
+                joined_at=row["joined_at"],
+                join_attempt_count=row["join_attempt_count"],
+                join_state=row["join_state"],
+                membership_verified=bool(row["membership_verified"]),
+                safe_evidence_references=evidence,
+                last_error=row["last_error"],
+                metadata_json=row["metadata_json"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+
+    def update_join_state(
+        self,
+        campaign_id: str,
+        new_state: str,
+        membership_verified: bool = False,
+        error: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Updates the join state and verification flag for a campaign in the ledger."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE whop_joins
+                SET join_state = ?,
+                    membership_verified = CASE WHEN ? = 1 THEN 1 ELSE membership_verified END,
+                    last_error = COALESCE(?, last_error),
+                    metadata_json = COALESCE(?, metadata_json),
+                    joined_at = CASE WHEN ? = 'JOINED' AND joined_at IS NULL THEN ? ELSE joined_at END,
+                    updated_at = ?
+                WHERE campaign_id = ?
+                """,
+                (
+                    new_state,
+                    1 if membership_verified else 0,
+                    error,
+                    json.dumps(metadata) if metadata else None,
+                    new_state,
+                    now,
+                    now,
+                    campaign_id,
+                ),
+            )
+            conn.commit()
