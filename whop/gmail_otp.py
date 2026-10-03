@@ -97,18 +97,15 @@ class GmailOTPReader:
             mail.login(self.email_address, self.app_password)
             mail.select("INBOX")
 
-            # Search recent emails
-            status, messages = mail.search(None, '(OR FROM "whop.com" SUBJECT "Whop")')
-            if status != "OK" or not messages or not messages[0]:
-                # Fallback: search ALL recent messages
-                status, messages = mail.search(None, "ALL")
+            # Search ALL recent messages in inbox to get the truly newest ones
+            status, messages = mail.search(None, "ALL")
 
             if status != "OK" or not messages or not messages[0]:
                 return None
 
             msg_ids = messages[0].split()
-            # Inspect the latest 5 messages
-            for msg_id in reversed(msg_ids[-5:]):
+            # Inspect the latest 10 messages from newest to oldest
+            for msg_id in reversed(msg_ids[-10:]):
                 _, msg_data = mail.fetch(msg_id, "(RFC822)")
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):
@@ -116,15 +113,27 @@ class GmailOTPReader:
                         sender = msg.get("From", "").lower()
                         subject = msg.get("Subject", "").lower()
 
-                        # Check if from Whop or subject contains Whop / code / verify
+                        # Check if from Whop or ContentRewards or subject contains Whop / code / verify
                         is_relevant = (
                             "whop" in sender
+                            or "contentrewards" in sender
                             or "whop" in subject
+                            or "content rewards" in subject
                             or "verification code" in subject
                             or "verify" in subject
                         )
                         if not is_relevant:
                             continue
+
+                        # Check message date against cutoff_time
+                        date_str = msg.get("Date")
+                        if date_str:
+                            try:
+                                msg_dt = email.utils.parsedate_to_datetime(date_str)
+                                if msg_dt.timestamp() < cutoff_time:
+                                    continue
+                            except Exception:
+                                pass
 
                         # Extract body text
                         body = self._extract_body(msg)

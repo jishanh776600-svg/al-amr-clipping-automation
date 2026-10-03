@@ -1329,6 +1329,9 @@ class CampaignLedger:
 
     def save_review_session(self, session: WhopReviewSession) -> WhopReviewSession:
         """Saves a new review session to the ledger."""
+        existing = self.get_review_session_by_idempotency_key(session.idempotency_key)
+        if existing:
+            return existing
         camp = self.get_campaign(session.campaign_id)
         if not camp:
             try:
