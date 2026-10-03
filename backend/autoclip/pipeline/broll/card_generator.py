@@ -13,6 +13,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from .models import PresentationMode, VisualType
+
 log = logging.getLogger(__name__)
 
 CANVAS_WIDTH = 1080
@@ -23,6 +25,55 @@ CARD_WIDTH = 760
 CARD_HEIGHT = 440
 CARD_LEFT = (CANVAS_WIDTH - CARD_WIDTH) // 2  # 160
 CARD_TOP = 980
+
+# Distinct color themes for visual variety (no two cards look identical)
+COLOR_THEMES = [
+    {
+        "name": "cyber_emerald",
+        "bg": (15, 23, 20, 235),
+        "border": (16, 185, 129, 220),
+        "badge_bg": (16, 185, 129, 45),
+        "badge_border": (16, 185, 129, 200),
+        "badge_text": (52, 211, 153, 255),
+        "accent": (16, 185, 129, 255),
+    },
+    {
+        "name": "electric_blue",
+        "bg": (15, 23, 42, 235),
+        "border": (59, 130, 246, 220),
+        "badge_bg": (59, 130, 246, 45),
+        "badge_border": (59, 130, 246, 200),
+        "badge_text": (96, 165, 250, 255),
+        "accent": (59, 130, 246, 255),
+    },
+    {
+        "name": "neon_purple",
+        "bg": (24, 15, 36, 235),
+        "border": (168, 85, 247, 220),
+        "badge_bg": (168, 85, 247, 45),
+        "badge_border": (168, 85, 247, 200),
+        "badge_text": (216, 180, 254, 255),
+        "accent": (168, 85, 247, 255),
+    },
+    {
+        "name": "amber_gold",
+        "bg": (28, 22, 14, 235),
+        "border": (245, 158, 11, 220),
+        "badge_bg": (245, 158, 11, 45),
+        "badge_border": (245, 158, 11, 200),
+        "badge_text": (251, 191, 36, 255),
+        "accent": (245, 158, 11, 255),
+    },
+    {
+        "name": "dark_graphite",
+        "bg": (18, 22, 28, 238),
+        "border": (75, 85, 99, 220),
+        "badge_bg": (75, 85, 99, 50),
+        "badge_border": (156, 163, 175, 200),
+        "badge_text": (229, 231, 235, 255),
+        "accent": (209, 213, 219, 255),
+    },
+]
 
 
 def _get_font(size: int, bold: bool = False) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
@@ -47,7 +98,11 @@ class EvidenceCardGenerator:
     """Generates transparent 1080x1920 PNG evidence cards for partial overlay mode."""
 
     def __init__(self, output_dir: Path | None = None) -> None:
-        self.output_dir = output_dir or Path(r"C:\Users\jisha\.gemini\antigravity\brain\358aea93-cb60-4d8d-8696-eef3d63b204d\scratch\reels_study\generated_cards")
+        if output_dir is None:
+            default_dir = Path(__file__).resolve().parent.parent.parent / "assets" / "visuals" / "cards"
+        else:
+            default_dir = output_dir
+        self.output_dir = default_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def generate_card(
@@ -55,41 +110,55 @@ class EvidenceCardGenerator:
         concept: str,
         metadata: dict[str, Any] | None = None,
         out_path: Path | None = None,
+        variant_idx: int = 0,
     ) -> Path:
-        """Generates an evidence card based on the semantic concept and metadata."""
+        """Generates an evidence card based on the semantic concept and metadata with guaranteed visual variety."""
         meta = metadata or {}
+        theme = COLOR_THEMES[variant_idx % len(COLOR_THEMES)]
         if out_path is None:
-            out_path = self.output_dir / f"card_{concept}_{abs(hash(str(meta)))}.png"
+            meta_hash = abs(hash(str(meta) + str(variant_idx)))
+            out_path = self.output_dir / f"card_{concept}_v{variant_idx}_{meta_hash}.png"
 
-        if concept == "financial_revenue":
+        if concept in ("financial_revenue", "money_cash", "profit_cash"):
             return self.render_revenue_dashboard(
                 title=meta.get("title", "TOTAL REVENUE"),
                 value=meta.get("value", "$1,248,331"),
                 badge=meta.get("badge", "+18.4% YOY"),
                 out_path=out_path,
+                theme=theme,
             )
-        elif concept == "business_growth":
+        elif concept in ("business_growth", "growth_scale", "scaling"):
             return self.render_growth_chart(
                 title=meta.get("title", "EXPONENTIAL GROWTH"),
                 badge=meta.get("badge", "SCALING"),
                 out_path=out_path,
+                theme=theme,
             )
-        elif concept == "business_shutdown":
+        elif concept in ("business_shutdown", "fire_danger", "warning_risk"):
             return self.render_closed_badge(out_path=out_path)
-        elif concept == "product_marketplace":
+        elif concept in ("product_marketplace", "ecommerce_shopping"):
             return self.render_product_card(
-                title=meta.get("title", "PRIVATE LABEL BRAND"),
+                title=meta.get("title", "FEATURED PRODUCT"),
                 rating=meta.get("rating", "4.9 ★★★★★"),
                 badge=meta.get("badge", "BEST SELLER"),
                 out_path=out_path,
+                theme=theme,
+            )
+        elif concept in ("digital_analytics", "competition_market", "strategy_planning"):
+            return self.render_kpi_metric_card(
+                title=meta.get("title", "MARKET PERFORMANCE"),
+                metric=meta.get("value", "99.4% OPTIMAL"),
+                badge=meta.get("badge", "#1 LEADER"),
+                out_path=out_path,
+                theme=theme,
             )
         else:
-            # Default to clean financial analytics card
-            return self.render_revenue_dashboard(
-                title=meta.get("title", "ANALYTICS & SCALE"),
-                value=meta.get("value", "$1,000,000+"),
-                badge=meta.get("badge", "VERIFIED"),
+            return self.render_kpi_metric_card(
+                title=meta.get("title", concept.replace("_", " ").upper()),
+                metric=meta.get("value", "VERIFIED"),
+                badge=meta.get("badge", "KEY INSIGHT"),
                 out_path=out_path,
+                theme=theme,
             )
 
     def render_revenue_dashboard(
@@ -98,8 +167,10 @@ class EvidenceCardGenerator:
         value: str = "$1,248,331",
         badge: str = "+18.4% YOY",
         out_path: Path | None = None,
+        theme: dict[str, Any] | None = None,
     ) -> Path:
         """Renders an authentic dark-mode analytics revenue dashboard card."""
+        t = theme or COLOR_THEMES[0]
         img = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -116,8 +187,8 @@ class EvidenceCardGenerator:
             fill=(0, 0, 0, 110),
         )
 
-        # 2. Main card background (Sleek dark charcoal with 92% opacity)
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=(18, 22, 28, 235), outline=(55, 65, 81, 220), width=3)
+        # 2. Main card background
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=t["bg"], outline=t["border"], width=3)
 
         # 3. Header badge & title
         font_header = _get_font(28, bold=True)
@@ -176,8 +247,10 @@ class EvidenceCardGenerator:
         title: str = "EXPONENTIAL GROWTH",
         badge: str = "SCALING",
         out_path: Path | None = None,
+        theme: dict[str, Any] | None = None,
     ) -> Path:
         """Renders an upward growth chart card."""
+        t = theme or COLOR_THEMES[1]
         img = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -187,7 +260,7 @@ class EvidenceCardGenerator:
 
         # Shadow & Background
         draw.rounded_rectangle([x0 + 12, y0 + 12, x1 + 12, y1 + 12], radius=radius, fill=(0, 0, 0, 110))
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=(15, 23, 42, 235), outline=(51, 65, 85, 220), width=3)
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=t["bg"], outline=t["border"], width=3)
 
         font_header = _get_font(28, bold=True)
         font_val = _get_font(56, bold=True)
@@ -197,8 +270,8 @@ class EvidenceCardGenerator:
 
         badge_w = 140
         badge_h = 36
-        draw.rounded_rectangle([x1 - badge_w - 40, y0 + 34, x1 - 40, y0 + 34 + badge_h], radius=18, fill=(59, 130, 246, 45), outline=(59, 130, 246, 200), width=2)
-        draw.text((x1 - badge_w - 20, y0 + 39), f"★ {badge}", fill=(96, 165, 250, 255), font=font_badge)
+        draw.rounded_rectangle([x1 - badge_w - 40, y0 + 34, x1 - 40, y0 + 34 + badge_h], radius=18, fill=t["badge_bg"], outline=t["badge_border"], width=2)
+        draw.text((x1 - badge_w - 20, y0 + 39), f"★ {badge}", fill=t["badge_text"], font=font_badge)
 
         draw.text((x0 + 40, y0 + 82), "10X TRAJECTORY", fill=(255, 255, 255, 255), font=font_val)
 
@@ -213,10 +286,10 @@ class EvidenceCardGenerator:
             pts.append((graph_x0 + int(rx * graph_w), graph_y0 + int(ry * graph_h)))
 
         for i in range(len(pts) - 1):
-            draw.line([pts[i], pts[i + 1]], fill=(52, 211, 153, 255), width=6)
+            draw.line([pts[i], pts[i + 1]], fill=t["accent"], width=6)
 
         end_x, end_y = pts[-1]
-        draw.ellipse([end_x - 8, end_y - 8, end_x + 8, end_y + 8], fill=(255, 255, 255, 255), outline=(16, 185, 129, 255), width=3)
+        draw.ellipse([end_x - 8, end_y - 8, end_x + 8, end_y + 8], fill=(255, 255, 255, 255), outline=t["accent"], width=3)
 
         target = out_path or self.output_dir / "growth_chart.png"
         img.save(target, format="PNG")
@@ -253,8 +326,10 @@ class EvidenceCardGenerator:
         rating: str = "4.9 ★★★★★",
         badge: str = "BEST SELLER",
         out_path: Path | None = None,
+        theme: dict[str, Any] | None = None,
     ) -> Path:
         """Renders a clean marketplace product card."""
+        t = theme or COLOR_THEMES[3]
         img = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -263,7 +338,7 @@ class EvidenceCardGenerator:
         radius = 24
 
         draw.rounded_rectangle([x0 + 12, y0 + 12, x1 + 12, y1 + 12], radius=radius, fill=(0, 0, 0, 110))
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=(23, 23, 23, 235), outline=(64, 64, 64, 220), width=3)
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=t["bg"], outline=t["border"], width=3)
 
         font_header = _get_font(26, bold=True)
         font_val = _get_font(52, bold=True)
@@ -274,13 +349,60 @@ class EvidenceCardGenerator:
 
         badge_w = 170
         badge_h = 36
-        draw.rounded_rectangle([x1 - badge_w - 40, y0 + 34, x1 - 40, y0 + 34 + badge_h], radius=18, fill=(245, 158, 11, 45), outline=(245, 158, 11, 200), width=2)
-        draw.text((x1 - badge_w - 20, y0 + 39), f"🏆 {badge}", fill=(251, 191, 36, 255), font=font_badge)
+        draw.rounded_rectangle([x1 - badge_w - 40, y0 + 34, x1 - 40, y0 + 34 + badge_h], radius=18, fill=t["badge_bg"], outline=t["badge_border"], width=2)
+        draw.text((x1 - badge_w - 20, y0 + 39), f"🏆 {badge}", fill=t["badge_text"], font=font_badge)
 
         draw.text((x0 + 40, y0 + 88), title, fill=(255, 255, 255, 255), font=font_val)
         draw.text((x0 + 40, y0 + 190), f"RATING: {rating}", fill=(250, 204, 21, 255), font=font_rating)
         draw.text((x0 + 40, y0 + 260), "10,000+ UNITS SOLD THIS MONTH", fill=(229, 231, 235, 255), font=_get_font(26))
 
         target = out_path or self.output_dir / "product_card.png"
+        img.save(target, format="PNG")
+        return target
+
+    def render_kpi_metric_card(
+        self,
+        title: str = "KEY PERFORMANCE METRIC",
+        metric: str = "99.4% OPTIMAL",
+        badge: str = "VERIFIED",
+        out_path: Path | None = None,
+        theme: dict[str, Any] | None = None,
+    ) -> Path:
+        """Renders a dynamic KPI metric insight card."""
+        t = theme or COLOR_THEMES[2]
+        img = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        x0, y0 = CARD_LEFT, CARD_TOP
+        x1, y1 = x0 + CARD_WIDTH, y0 + CARD_HEIGHT
+        radius = 24
+
+        draw.rounded_rectangle([x0 + 12, y0 + 12, x1 + 12, y1 + 12], radius=radius, fill=(0, 0, 0, 110))
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=t["bg"], outline=t["border"], width=3)
+
+        font_header = _get_font(26, bold=True)
+        font_metric = _get_font(60, bold=True)
+        font_badge = _get_font(24, bold=True)
+        font_sub = _get_font(26, bold=False)
+
+        draw.text((x0 + 40, y0 + 36), title.upper(), fill=(156, 163, 175, 255), font=font_header)
+
+        badge_w = 160
+        badge_h = 36
+        draw.rounded_rectangle([x1 - badge_w - 40, y0 + 34, x1 - 40, y0 + 34 + badge_h], radius=18, fill=t["badge_bg"], outline=t["badge_border"], width=2)
+        draw.text((x1 - badge_w - 20, y0 + 39), f"⚡ {badge}", fill=t["badge_text"], font=font_badge)
+
+        draw.text((x0 + 40, y0 + 95), metric, fill=(255, 255, 255, 255), font=font_metric)
+
+        # Decorative progress accent bar
+        bar_x0 = x0 + 40
+        bar_y0 = y0 + 205
+        bar_w = CARD_WIDTH - 80
+        draw.rounded_rectangle([bar_x0, bar_y0, bar_x0 + bar_w, bar_y0 + 12], radius=6, fill=(38, 45, 56, 200))
+        draw.rounded_rectangle([bar_x0, bar_y0, bar_x0 + int(bar_w * 0.85), bar_y0 + 12], radius=6, fill=t["accent"])
+
+        draw.text((x0 + 40, y0 + 250), "EXCEEDS TOP 1% BENCHMARK ACROSS INDUSTRY", fill=(209, 213, 219, 255), font=font_sub)
+
+        target = out_path or self.output_dir / "kpi_metric_card.png"
         img.save(target, format="PNG")
         return target

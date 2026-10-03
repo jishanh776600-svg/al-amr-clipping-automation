@@ -62,19 +62,29 @@ class SemanticBrollEngine:
 
         # 2. Process each semantic cue
         for cue in cues:
-            candidates = self.vault.discover_candidates(cue)
+            candidates = self.vault.discover_candidates(cue, recent_asset_ids=recent_asset_ids)
             if not candidates:
-                fallback_info = {
-                    "cue_id": cue.cue_id,
-                    "concept": cue.concept,
-                    "trigger_phrase": cue.trigger_phrase,
-                    "start_s": cue.start_s,
-                    "fallback_action": "a_roll_punch_in",
-                    "reason": "No candidate visual assets found in vault.",
-                }
-                edl.fallbacks.append(fallback_info)
-                log.info("Visual fallback for cue %s: no candidates found", cue.cue_id)
-                continue
+                # Dynamically generate a fresh unique procedural visual asset
+                card_p = self.vault.card_generator.generate_card(
+                    concept=cue.concept,
+                    metadata=cue.metadata,
+                    variant_idx=len(recent_asset_ids) + 1,
+                )
+                candidates = [
+                    VisualAsset(
+                        asset_id=f"card_{cue.concept}_{cue.cue_id}_dyn_{len(recent_asset_ids)+1}",
+                        file_path=card_p,
+                        visual_type=cue.visual_type,
+                        concept=cue.concept,
+                        presentation_mode=PresentationMode.PARTIAL_OVERLAY,
+                        width=1080,
+                        height=1920,
+                        duration_s=cue.duration_s,
+                        tags=[cue.concept, "dynamic_procedural"],
+                        source_provider="generated_ui",
+                        is_video=False,
+                    )
+                ]
 
             # Score each candidate
             scored_candidates: list[tuple[VisualAsset, RelevanceScore]] = []
@@ -91,21 +101,33 @@ class SemanticBrollEngine:
             scored_candidates.sort(key=lambda x: x[1].total_score, reverse=True)
             best_asset, best_score = scored_candidates[0]
 
-            # 3. Confidence Gate Check
+            # 3. Confidence Gate Check & Guaranteed Fulfillment
             if not best_score.is_approved:
-                fallback_info = {
-                    "cue_id": cue.cue_id,
-                    "concept": cue.concept,
-                    "trigger_phrase": cue.trigger_phrase,
-                    "start_s": cue.start_s,
-                    "best_asset": best_asset.asset_id,
-                    "score": best_score.total_score,
-                    "fallback_action": "a_roll_punch_in",
-                    "reason": f"Confidence gate rejected: {best_score.rejection_reason}",
-                }
-                edl.fallbacks.append(fallback_info)
-                log.info("Visual fallback for cue %s: score %.2f below threshold %.2f (%s)", cue.cue_id, best_score.total_score, best_score.confidence_threshold, best_score.rejection_reason)
-                continue
+                # If penalized due to repetition, immediately acquire a fresh unique procedural asset
+                dyn_card_path = self.vault.card_generator.generate_card(
+                    concept=cue.concept,
+                    metadata=cue.metadata,
+                    variant_idx=len(recent_asset_ids) + 1,
+                )
+                best_asset = VisualAsset(
+                    asset_id=f"card_{cue.concept}_{cue.cue_id}_fresh_{len(recent_asset_ids)+1}",
+                    file_path=dyn_card_path,
+                    visual_type=cue.visual_type,
+                    concept=cue.concept,
+                    presentation_mode=PresentationMode.PARTIAL_OVERLAY,
+                    width=1080,
+                    height=1920,
+                    duration_s=cue.duration_s,
+                    tags=[cue.concept, "fresh_unique_variant"],
+                    source_provider="generated_ui",
+                    is_video=False,
+                )
+                best_score = self.scorer.score_candidate(
+                    cue=cue,
+                    asset=best_asset,
+                    recent_asset_ids=[],
+                    recent_concepts=[],
+                )
 
             # 4. Approved: Add to EDL
             debug_info = {

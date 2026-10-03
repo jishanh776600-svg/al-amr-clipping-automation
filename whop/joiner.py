@@ -68,6 +68,8 @@ MEMBERSHIP_CONFIRMED_SELECTORS = [
     "[data-testid*='joined-badge']",
     ":text-matches('^Joined$', 'i')",
     ":text-matches('^Claimed$', 'i')",
+    "text='You already have access to this free product'",
+    "text='Visit your membership to access the content'",
 ]
 
 
@@ -198,6 +200,12 @@ class WhopCampaignJoiner:
             armed_block["timestamp"],
         )
 
+        if not self.ledger.get_campaign(campaign.campaign_id):
+            try:
+                self.ledger.ingest_discovered_campaign(campaign, source="WhopCampaignJoiner")
+            except Exception as ing_err:
+                log.warning("Could not ingest campaign '%s' into ledger: %s", campaign.campaign_id, ing_err)
+
         try:
             self.ledger.record_event(
                 campaign_id=campaign.campaign_id,
@@ -220,12 +228,45 @@ class WhopCampaignJoiner:
         """Independently verifies that the authenticated account is an active member/clipper."""
         log.info("Verifying membership for campaign '%s'...", campaign_id)
         try:
+            # 1. Check current page first before navigating away
+            try:
+                body_txt = page.locator("body").inner_text()
+                if (
+                    "you already have access to this free product" in body_txt.lower()
+                    or "visit your membership" in body_txt.lower()
+                    or "payment complete" in body_txt.lower()
+                ):
+                    log.info("Membership confirmed via current page access confirmation text.")
+                    return True
+            except Exception:
+                pass
+
             for sel in MEMBERSHIP_CONFIRMED_SELECTORS:
                 loc = page.locator(sel)
                 if loc.count() > 0 and loc.first.is_visible():
                     log.info("Membership confirmed via selector: %s", sel)
                     return True
 
+            # 2. Check checkout endpoint which authoritatively confirms access
+            try:
+                chk_url = f"https://contentrewards.com/discover/{campaign_id}/join"
+                page.goto(chk_url, timeout=20000, wait_until="domcontentloaded")
+                try:
+                    page.wait_for_selector("text='You already have access', text='Signed in', text='Clip and Get Paid', button:has-text('Join')", timeout=12000)
+                except Exception:
+                    page.wait_for_timeout(6000)
+                body_txt = page.locator("body").inner_text()
+                if (
+                    "you already have access to this free product" in body_txt.lower()
+                    or "visit your membership" in body_txt.lower()
+                    or "payment complete" in body_txt.lower()
+                ):
+                    log.info("Membership confirmed via Whop checkout status: account already owns product.")
+                    return True
+            except Exception as chk_e:
+                log.debug("Checkout access check notice: %s", chk_e)
+
+            # 3. Check base campaign URL
             page.goto(campaign_url, timeout=20000, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
 
@@ -269,6 +310,12 @@ class WhopCampaignJoiner:
             log.info("Campaign '%s' is already joined according to durable ledger; skipping mutation.", cid)
             return existing_join
 
+        if not self.ledger.get_campaign(cid):
+            try:
+                self.ledger.ingest_discovered_campaign(campaign, source="WhopCampaignJoiner")
+            except Exception as ing_err:
+                log.warning("Could not ingest campaign '%s' into ledger: %s", cid, ing_err)
+
         join_record = WhopJoinRecord(
             campaign_id=cid,
             campaign_name=campaign.title,
@@ -302,12 +349,21 @@ class WhopCampaignJoiner:
 
         target_locator: Optional[Locator] = None
         target_selector_used = ""
+        try:
+            page.wait_for_selector("a[href*='/join'], a:has-text('Join'), button:has-text('Join')", timeout=8000)
+        except Exception:
+            pass
+
         for sel in JOIN_BUTTON_SELECTORS:
             loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                target_locator = loc.first
-                target_selector_used = sel
-                break
+            if loc.count() > 0:
+                for idx in range(loc.count()):
+                    if loc.nth(idx).is_visible():
+                        target_locator = loc.nth(idx)
+                        target_selector_used = sel
+                        break
+                if target_locator:
+                    break
 
         if not target_locator:
             err = f"No visible Join/Claim button found on campaign page '{sanitize_text(campaign.campaign_url)}'."
@@ -325,16 +381,33 @@ class WhopCampaignJoiner:
         log.info("MUTATION EXECUTING: Performing genuine human-like click on '%s'...", target_selector_used)
         actor = HumanActor(page=page, dry_run=False)
 
-        self.ledger.record_event(
-            campaign_id=cid,
-            target_state=CampaignState.CLAIMING,
-            reason=f"CAMPAIGN_JOIN_ATTEMPT: Clicking Join button '{target_selector_used}'",
-            source="WhopCampaignJoiner",
-        )
+        try:
+            self.ledger.record_event(
+                campaign_id=cid,
+                target_state=CampaignState.CLAIMING,
+                reason=f"CAMPAIGN_JOIN_ATTEMPT: Clicking Join button '{target_selector_used}'",
+                source="WhopCampaignJoiner",
+            )
+        except Exception as evt_err:
+            log.warning("Could not record join attempt event: %s", evt_err)
 
         try:
+            try:
+                target_locator.evaluate("el => el.removeAttribute('target')")
+            except Exception:
+                pass
             actor.human_click(target_locator, hesitation_scale=1.2, action_name="join")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(4000)
+            if "checkout" in page.url.lower():
+                log.info("Redirected to checkout plan page: %s; clicking checkout Join button...", sanitize_text(page.url))
+                try:
+                    page.wait_for_selector("button:has-text('Join'), button:has-text('Claim')", timeout=15000)
+                except Exception:
+                    pass
+                checkout_btn = page.locator("button:has-text('Join'), button:has-text('Claim')")
+                if checkout_btn.count() > 0 and checkout_btn.first.is_visible():
+                    actor.human_click(checkout_btn.first, hesitation_scale=1.2, action_name="checkout_join")
+                    page.wait_for_timeout(5000)
         except Exception as click_err:
             err_msg = f"Join click failed: {click_err}"
             log.error(err_msg)
@@ -343,12 +416,15 @@ class WhopCampaignJoiner:
             self.ledger.update_join_state(cid, "JOIN_FAILED", error=err_msg)
             raise WhopJoinError(err_msg) from click_err
 
-        self.ledger.record_event(
-            campaign_id=cid,
-            target_state=CampaignState.CLAIMING,
-            reason="CAMPAIGN_JOIN_RESPONSE: Join button clicked; verifying membership.",
-            source="WhopCampaignJoiner",
-        )
+        try:
+            self.ledger.record_event(
+                campaign_id=cid,
+                target_state=CampaignState.CLAIMING,
+                reason="CAMPAIGN_JOIN_RESPONSE: Join button clicked; verifying membership.",
+                source="WhopCampaignJoiner",
+            )
+        except Exception as evt_err:
+            log.warning("Could not record join response event: %s", evt_err)
 
         is_verified = self.verify_campaign_membership(page, cid, campaign.campaign_url)
         if not is_verified:
@@ -363,12 +439,15 @@ class WhopCampaignJoiner:
             self.ledger.update_join_state(cid, "JOINED", membership_verified=True)
             self._transition_campaign_to_claimed(cid)
 
-            self.ledger.record_event(
-                campaign_id=cid,
-                target_state=CampaignState.CLAIMED,
-                reason="CAMPAIGN_JOIN_VERIFIED: Membership confirmed independently.",
-                source="WhopCampaignJoiner",
-            )
+            try:
+                self.ledger.record_event(
+                    campaign_id=cid,
+                    target_state=CampaignState.CLAIMED,
+                    reason="CAMPAIGN_JOIN_VERIFIED: Membership confirmed independently.",
+                    source="WhopCampaignJoiner",
+                )
+            except Exception as evt_err:
+                log.warning("Could not record join verified event: %s", evt_err)
             log.info("SUCCESS: Campaign '%s' joined and membership verified!", cid)
             return join_record
         else:

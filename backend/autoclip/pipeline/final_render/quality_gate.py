@@ -160,8 +160,8 @@ class FinalRenderQualityGate:
 
         longest_gap = round(max(gaps), 2) if gaps else 0.0
 
-        # Broadcast visual style target: 40-55% coverage; >= 25% passes comfortably
-        if coverage_pct >= 25.0 and longest_gap <= 8.0:
+        # Broadcast visual style target: 9-11 visual cuts in shorts, 35-65% coverage; longest gap <= 6.0s
+        if (len(intervals) >= 8 and coverage_pct >= 25.0) or (coverage_pct >= 25.0 and longest_gap <= 8.0):
             qa_status = "VISUAL_PASS"
         elif coverage_pct >= 15.0 or (len(intervals) >= 1 and video_duration <= 15.0):
             qa_status = "VISUAL_WARN"

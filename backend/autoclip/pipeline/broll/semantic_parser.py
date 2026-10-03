@@ -333,14 +333,16 @@ class ContextualSemanticParser:
     def __init__(
         self,
         definitions: dict[str, SemanticConceptDefinition] | None = None,
-        default_dwell_s: float = 2.4,
+        default_dwell_s: float = 2.2,
         min_dwell_s: float = 1.8,
-        max_dwell_s: float = 3.2,
+        max_dwell_s: float = 2.8,
+        min_spacing_s: float = 0.35,
     ) -> None:
         self.definitions = definitions or CONCEPT_DEFINITIONS
         self.default_dwell_s = default_dwell_s
         self.min_dwell_s = min_dwell_s
         self.max_dwell_s = max_dwell_s
+        self.min_spacing_s = min_spacing_s
 
     def parse_transcript(
         self,
@@ -415,7 +417,7 @@ class ContextualSemanticParser:
                             metadata=fig.get("metadata", {}),
                         )
                         # Spacing check
-                        if not cues or (cue.start_s >= cues[-1].end_s + 1.2):
+                        if not cues or (cue.start_s >= cues[-1].end_s + self.min_spacing_s):
                             cues.append(cue)
                             log.info(
                                 "Figurative cue detected: [%.2fs - %.2fs] concept=%s phrase='%s' query='%s'",
@@ -528,8 +530,8 @@ class ContextualSemanticParser:
                 break
 
             if matched_cue:
-                # Spacing check: avoid overlapping cues (require at least 1.0s between cuts)
-                if not cues or (matched_cue.start_s >= cues[-1].end_s + 1.0):
+                # Spacing check: avoid overlapping cues (use min_spacing_s)
+                if not cues or (matched_cue.start_s >= cues[-1].end_s + self.min_spacing_s):
                     cues.append(matched_cue)
                     log.info(
                         "Semantic visual cue detected: [%.2fs - %.2fs] concept=%s phrase='%s' query='%s'",
@@ -544,8 +546,8 @@ class ContextualSemanticParser:
         # Sort cues chronologically
         cues.sort(key=lambda c: c.start_s)
 
-        # Step 3: Contextual Gap Hunter (inspect long uninterrupted A-roll spans > 4.5s)
-        cues = self.fill_long_gaps(cues, words, clip_start_s, clip_end_s, min_gap_s=4.5)
+        # Step 3: Contextual Gap Hunter (guarantees 9 to 11 visual cuts per short)
+        cues = self.fill_long_gaps(cues, words, clip_start_s, clip_end_s, min_gap_s=2.2)
 
         return cues
 
@@ -555,85 +557,155 @@ class ContextualSemanticParser:
         words: list[Word],
         clip_start_s: float,
         clip_end_s: float,
-        min_gap_s: float = 4.5,
+        min_gap_s: float = 2.2,
+        target_cuts_range: tuple[int, int] = (9, 11),
     ) -> list[SemanticVisualCue]:
-        """Proactively identifies secondary visual opportunities inside long uninterrupted A-roll sections."""
-        if not words or (clip_end_s - clip_start_s) < 8.0:
+        """Proactively identifies secondary visual opportunities inside A-roll sections to hit 9-11 cuts per short."""
+        if not words or (clip_end_s - clip_start_s) < 6.0:
             return cues
+
+        clip_dur = clip_end_s - clip_start_s
+        # Target cuts based on duration: 9-11 cuts for standard clips (>= 24s)
+        if clip_dur >= 24.0:
+            target_cut_count = min(target_cuts_range[1], max(target_cuts_range[0], int(round(clip_dur / 3.2))))
+        else:
+            target_cut_count = min(target_cuts_range[0], max(4, int(clip_dur / 2.5)))
 
         def _word_text(w: Word) -> str:
             return getattr(w, "text", getattr(w, "word", str(w)))
 
-        # Identify all A-roll gap intervals
-        gaps: list[tuple[float, float]] = []
-        cursor = clip_start_s
-
-        for c in cues:
-            if c.start_s - cursor >= min_gap_s:
-                gaps.append((cursor, c.start_s))
-            cursor = max(cursor, c.end_s)
-
-        if clip_end_s - cursor >= min_gap_s:
-            gaps.append((cursor, clip_end_s))
+        filled_cues = list(cues)
+        filled_cues.sort(key=lambda c: c.start_s)
 
         # Secondary entity triggers for gap filling
         secondary_triggers = [
-            ("product_marketplace", ["selling", "item", "order", "product", "listing", "store", "buy", "brand"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "ecommerce product selling online store"),
-            ("team_office", ["work", "working", "talking", "people", "started", "built", "doing", "screen", "computer", "laptop"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "modern business workplace people working laptop"),
-            ("digital_analytics", ["metrics", "scale", "stats", "data", "traffic", "ranking", "success"], PresentationMode.PARTIAL_OVERLAY, VisualType.DASHBOARD, "business analytics performance data metrics"),
-            ("ecommerce_shopping", ["customers", "orders", "online", "people buying", "clients"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "customer shopping online smartphone"),
+            ("financial_revenue", ["revenue", "money", "dollar", "dollars", "sales", "cash", "profit", "margins", "cost", "paid", "pricing"], PresentationMode.PARTIAL_OVERLAY, VisualType.DASHBOARD, "ecommerce revenue sales dashboard analytics graph"),
+            ("digital_analytics", ["metrics", "scale", "stats", "data", "traffic", "ranking", "success", "analytics", "numbers", "graph"], PresentationMode.PARTIAL_OVERLAY, VisualType.DASHBOARD, "business analytics performance data metrics"),
+            ("business_growth", ["growing", "growth", "scaled", "scaling", "expanded", "exponential", "faster", "winning", "huge"], PresentationMode.PARTIAL_OVERLAY, VisualType.CHART, "business growth upward trendline graph neon green"),
+            ("competition_market", ["competitor", "market", "niche", "beat", "rival", "industry", "outranking"], PresentationMode.PARTIAL_OVERLAY, VisualType.CHART, "business competitor analysis marketplace comparison chart"),
+            ("product_marketplace", ["selling", "item", "order", "product", "listing", "store", "buy", "brand", "inventory"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "ecommerce product selling online store"),
+            ("mobile_apps_social", ["video", "views", "viral", "tiktok", "instagram", "phone", "screen", "post", "watch", "algorithm"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "person scrolling viral videos smartphone screen closeup"),
+            ("team_office", ["work", "working", "talking", "people", "started", "built", "doing", "screen", "computer", "laptop", "office", "team"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "modern business workplace people working laptop"),
+            ("warehouse_shipping", ["shipping", "amazon", "fba", "delivery", "supplier", "boxes", "package", "packages"], PresentationMode.FULL_SCREEN, VisualType.STOCK_VIDEO, "busy warehouse shipping parcels boxes logistics"),
         ]
 
-        filled_cues = list(cues)
+        concept_cycle = [
+            "digital_analytics", "business_growth", "team_office", "mobile_apps_social",
+            "product_marketplace", "financial_revenue", "competition_market"
+        ]
+        cycle_idx = 0
 
-        for gap_start, gap_end in gaps:
-            gap_dur = gap_end - gap_start
-            if gap_dur < min_gap_s:
-                continue
+        # Multi-pass gap filler: iteratively fill gaps until target cut count or no viable gap remains
+        pass_count = 0
+        while len(filled_cues) < target_cut_count and pass_count < 4:
+            pass_count += 1
+            filled_cues.sort(key=lambda c: c.start_s)
 
-            # Words inside gap
-            gap_words = [w for w in words if gap_start <= w.start <= gap_end]
-            if not gap_words:
-                continue
+            # Find all available gap intervals
+            gaps: list[tuple[float, float]] = []
+            cursor = clip_start_s
+            for c in filled_cues:
+                if c.start_s - cursor >= min_gap_s:
+                    gaps.append((cursor, c.start_s))
+                cursor = max(cursor, c.end_s + self.min_spacing_s)
 
-            gap_text = " ".join(_word_text(w).lower() for w in gap_words)
+            if clip_end_s - cursor >= min_gap_s:
+                gaps.append((cursor, clip_end_s))
 
-            for concept_id, kws, mode, vtype, base_query in secondary_triggers:
-                for kw in kws:
-                    if kw in gap_text:
-                        # Find word timing
-                        kw_word = next((w for w in gap_words if kw in _word_text(w).lower()), gap_words[len(gap_words) // 2])
-                        cue_start = max(gap_start + 0.8, kw_word.start)
-                        dwell = min(self.default_dwell_s, gap_end - cue_start - 0.5)
-                        if dwell >= self.min_dwell_s:
-                            cue_end = cue_start + dwell
-                            ctx_q = synthesize_contextual_query(gap_text, concept_id, [base_query])
-                            meta: dict[str, Any] = {}
-                            if mode == PresentationMode.PARTIAL_OVERLAY:
-                                meta = {"title": "BUSINESS METRICS", "value": "SCALING", "badge": "OPTIMIZED"}
-                            gap_cue = SemanticVisualCue(
-                                cue_id=f"cue_{len(filled_cues)+1}_gap_{concept_id}",
-                                concept=concept_id,
-                                trigger_phrase=gap_text[:120],
-                                trigger_word=kw,
-                                start_s=round(cue_start, 2),
-                                end_s=round(cue_end, 2),
-                                preferred_mode=mode,
-                                visual_type=vtype,
-                                search_queries=[base_query],
-                                context_query=ctx_q,
-                                is_literal=True,
-                                metadata=meta,
-                            )
-                            filled_cues.append(gap_cue)
-                            log.info(
-                                "Contextual Gap Hunter filled gap [%.2fs - %.2fs] with concept=%s (query='%s')",
-                                gap_cue.start_s, gap_cue.end_s, gap_cue.concept, gap_cue.context_query,
-                            )
-                            break
-                # Only 1 visual event per gap
-                if len(filled_cues) > len(cues) + len(gaps):
+            if not gaps:
+                break
+
+            added_in_pass = 0
+            for gap_start, gap_end in gaps:
+                if len(filled_cues) >= target_cut_count:
                     break
+
+                gap_dur = gap_end - gap_start
+                if gap_dur < min_gap_s:
+                    continue
+
+                gap_words = [w for w in words if (gap_start - 0.2) <= w.start <= (gap_end + 0.2)]
+                gap_text = " ".join(_word_text(w).lower() for w in gap_words) if gap_words else "narrative visual insight"
+
+                # How many cuts fit into this gap?
+                max_cuts_here = max(1, int(gap_dur / (self.default_dwell_s + self.min_spacing_s)))
+                if pass_count == 1 and max_cuts_here > 1:
+                    sub_slot = gap_dur / max_cuts_here
+                else:
+                    max_cuts_here = 1
+                    sub_slot = gap_dur
+
+                current_gap_cursor = gap_start
+                for slot_idx in range(max_cuts_here):
+                    if len(filled_cues) >= target_cut_count:
+                        break
+
+                    slot_end = min(gap_end, current_gap_cursor + sub_slot)
+                    slot_available = slot_end - current_gap_cursor
+                    if slot_available < self.min_dwell_s:
+                        break
+
+                    cue_start = current_gap_cursor + 0.15
+                    dwell = min(self.default_dwell_s, slot_end - cue_start - 0.15)
+                    if dwell < self.min_dwell_s:
+                        if (slot_end - cue_start) >= 1.6:
+                            dwell = slot_end - cue_start
+                        else:
+                            break
+                    cue_end = cue_start + dwell
+
+                    # Match concept
+                    matched_concept = None
+                    matched_kw = ""
+                    matched_mode = PresentationMode.PARTIAL_OVERLAY if (slot_idx % 2 == 1) else PresentationMode.FULL_SCREEN
+                    matched_vtype = VisualType.DASHBOARD if matched_mode == PresentationMode.PARTIAL_OVERLAY else VisualType.STOCK_VIDEO
+                    matched_query = ""
+
+                    for cid, kws, mode, vtype, base_q in secondary_triggers:
+                        for kw in kws:
+                            if kw in gap_text:
+                                matched_concept = cid
+                                matched_kw = kw
+                                matched_mode = mode
+                                matched_vtype = vtype
+                                matched_query = base_q
+                                break
+                        if matched_concept:
+                            break
+
+                    if not matched_concept:
+                        matched_concept = concept_cycle[cycle_idx % len(concept_cycle)]
+                        cycle_idx += 1
+                        matched_kw = matched_concept.replace("_", " ")
+                        matched_mode = PresentationMode.FULL_SCREEN if (cycle_idx % 2 == 0) else PresentationMode.PARTIAL_OVERLAY
+                        matched_vtype = VisualType.STOCK_VIDEO if matched_mode == PresentationMode.FULL_SCREEN else VisualType.DASHBOARD
+                        matched_query = f"{matched_kw} modern business footage"
+
+                    ctx_q = synthesize_contextual_query(gap_text, matched_concept, [matched_query])
+                    meta: dict[str, Any] = {}
+                    if matched_mode == PresentationMode.PARTIAL_OVERLAY:
+                        meta = {"title": matched_concept.replace("_", " ").upper(), "value": "SCALING", "badge": "VERIFIED"}
+
+                    gap_cue = SemanticVisualCue(
+                        cue_id=f"cue_{len(filled_cues)+1}_gap_{matched_concept}",
+                        concept=matched_concept,
+                        trigger_phrase=gap_text[:120],
+                        trigger_word=matched_kw,
+                        start_s=round(cue_start, 2),
+                        end_s=round(cue_end, 2),
+                        preferred_mode=matched_mode,
+                        visual_type=matched_vtype,
+                        search_queries=[matched_query],
+                        context_query=ctx_q,
+                        is_literal=True,
+                        metadata=meta,
+                    )
+                    filled_cues.append(gap_cue)
+                    added_in_pass += 1
+                    current_gap_cursor = cue_end + self.min_spacing_s
+
+            if added_in_pass == 0:
+                break
 
         filled_cues.sort(key=lambda c: c.start_s)
         return filled_cues

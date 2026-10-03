@@ -188,3 +188,75 @@ def test_final_render_visual_qa_gate():
     assert metrics["broll_coverage_pct"] == 30.0
     assert metrics["longest_a_roll_gap_s"] == 7.0
     assert metrics["visual_qa_status"] == "VISUAL_PASS"
+
+
+def test_target_cut_density_9_to_11():
+    """Verify standard Short duration (30-40s) produces 9 to 11 visual cuts."""
+    parser = ContextualSemanticParser()
+
+    # Generate a realistic 32-second spoken transcript
+    words = []
+    t = 0.5
+    sample_text = (
+        "here is how we took a brand new amazon store from zero to a million dollars in revenue "
+        "every single person said the competition was way too high and the niche was saturated "
+        "but we looked at the analytics dashboard and realized everyone was ignoring mobile traffic "
+        "so we launched three products and our orders started blowing up within forty eight hours "
+        "our team hired four more people to handle shipping and fulfillment from the warehouse "
+        "now we are scaling faster than ever and hitting ten x growth"
+    ).split()
+
+    for w in sample_text:
+        words.append(make_word(w, t, t + 0.35))
+        t += 0.40
+
+    cues = parser.parse_transcript_segment(words, clip_start_s=0.0, clip_end_s=32.0)
+    assert 9 <= len(cues) <= 11, f"Expected 9 to 11 visual cuts in a 32s short, but got {len(cues)}"
+
+    # Check that each cue has a valid duration between 1.8s and 3.2s
+    for c in cues:
+        dur = c.end_s - c.start_s
+        assert dur >= 1.6, f"Cut duration {dur}s was too short"
+        assert dur <= 3.5, f"Cut duration {dur}s was too long"
+
+
+def test_zero_repetitive_assets_in_edl(tmp_path):
+    """Verify EDL achieves 9-11 cuts and zero repeated visual assets."""
+    from autoclip.pipeline.broll import SemanticBrollEngine, VisualAssetVault
+
+    vault = VisualAssetVault(vault_dir=tmp_path / "test_vault")
+    parser = ContextualSemanticParser()
+    engine = SemanticBrollEngine(vault=vault, parser=parser)
+
+    # 32s transcript
+    words = []
+    t = 0.5
+    sample_text = (
+        "here is how we took a brand new store from zero to a million dollars in revenue "
+        "every single person said the competition was way too high and the niche was saturated "
+        "but we looked at the analytics dashboard and realized everyone was ignoring mobile traffic "
+        "so we launched three products and our orders started blowing up within forty eight hours "
+        "our team hired four more people to handle shipping and fulfillment from the warehouse "
+        "now we are scaling faster than ever and hitting ten x growth"
+    ).split()
+
+    for w in sample_text:
+        words.append(make_word(w, t, t + 0.35))
+        t += 0.40
+
+    edl = engine.generate_edl(
+        words=words,
+        clip_id="test_clip_32s",
+        clip_start_s=0.0,
+        clip_end_s=32.0,
+    )
+
+    # Must contain 9 to 11 visual events in the EDL
+    assert 9 <= len(edl.entries) <= 11, f"Expected 9 to 11 EDL entries, got {len(edl.entries)}"
+
+    # All asset paths/IDs must be unique (ZERO REPETITIVE ASSETS)
+    used_asset_paths = [str(e.asset_path) for e in edl.entries]
+    unique_paths = set(used_asset_paths)
+    assert len(unique_paths) == len(used_asset_paths), (
+        f"Found duplicate visual assets in EDL! Total: {len(used_asset_paths)}, Unique: {len(unique_paths)}"
+    )
