@@ -1,0 +1,9 @@
+{
+  "worker_name": "WhopSubmitter",
+  "dry_run_enabled": true,
+  "preflight_checks_passed": true,
+  "reconciliation_required": false,
+  "last_attempt_at": "2026-10-03T12:51:28.715032+00:00",
+  "attempt_count": 1,
+  "error_classification": null
+}

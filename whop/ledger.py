@@ -31,6 +31,7 @@ from .models import (
     RuleComplianceResult,
     RuleComplianceStatus,
     WhopReviewSession,
+    WhopSubmissionRecord,
     validate_transition,
 )
 
@@ -169,6 +170,34 @@ CREATE INDEX IF NOT EXISTS idx_whop_review_campaign ON whop_review_sessions(camp
 CREATE INDEX IF NOT EXISTS idx_whop_review_job ON whop_review_sessions(autoclip_job_id);
 CREATE INDEX IF NOT EXISTS idx_whop_review_lookup ON whop_review_sessions(campaign_id, guideline_hash, autoclip_job_id, artifact_hash);
 CREATE INDEX IF NOT EXISTS idx_whop_review_idempotency ON whop_review_sessions(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS whop_submissions (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    submission_id        TEXT NOT NULL UNIQUE,
+    campaign_id          TEXT NOT NULL REFERENCES whop_campaigns(campaign_id) ON DELETE CASCADE,
+    guideline_hash       TEXT NOT NULL,
+    review_session_id    TEXT NOT NULL REFERENCES whop_review_sessions(review_session_id) ON DELETE CASCADE,
+    idempotency_key      TEXT NOT NULL UNIQUE,
+    approval_event_id    INTEGER,
+    approved_at          TEXT NOT NULL,
+    submission_state     TEXT NOT NULL DEFAULT 'PENDING',
+    clip_ids_json        TEXT NOT NULL DEFAULT '[]',
+    drive_file_ids_json  TEXT NOT NULL DEFAULT '[]',
+    destination          TEXT NOT NULL DEFAULT 'whop',
+    whop_submission_id   TEXT,
+    attempt_count        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at      TEXT,
+    error_classification TEXT,
+    metadata_json        TEXT NOT NULL DEFAULT '{}',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_whop_submission_id ON whop_submissions(submission_id);
+CREATE INDEX IF NOT EXISTS idx_whop_submission_campaign ON whop_submissions(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_whop_submission_review ON whop_submissions(review_session_id);
+CREATE INDEX IF NOT EXISTS idx_whop_submission_idempotency ON whop_submissions(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_whop_submission_state ON whop_submissions(submission_state);
 """
 
 
@@ -268,6 +297,8 @@ class CampaignLedger:
                     )
                 )
             return events
+
+    get_campaign_events = list_events
 
     def ingest_discovered_campaign(
         self,
@@ -805,6 +836,37 @@ class CampaignLedger:
                 safe_meta,
             )
         )
+
+    def record_event(
+        self,
+        campaign_id: str,
+        target_state: Union[CampaignState, str],
+        reason: str,
+        source: str = "whop_pipeline",
+        metadata: Optional[Dict[str, Any]] = None,
+        previous_state: Optional[str] = None,
+    ) -> None:
+        """Appends an event to the immutable campaign event audit log."""
+        now = datetime.now(timezone.utc).isoformat()
+        meta_json = json.dumps(metadata or {})
+        prev = previous_state
+        if not prev:
+            camp = self.get_campaign(campaign_id)
+            prev = camp.current_state.value if camp else None
+
+        new_st = target_state.value if hasattr(target_state, "value") else str(target_state)
+        evt = CampaignEvent(
+            campaign_id=campaign_id,
+            previous_state=prev,
+            new_state=new_st,
+            timestamp=now,
+            reason=reason,
+            source=source,
+            metadata_json=meta_json,
+        )
+        with self._get_connection() as conn:
+            self._record_event_tx(conn, evt)
+            conn.commit()
 
     def _row_to_record(self, row: sqlite3.Row) -> CampaignRecord:
         return CampaignRecord(
@@ -1438,3 +1500,431 @@ class CampaignLedger:
                 ),
             )
             return cursor.rowcount > 0
+
+    # ==========================================================================
+    # Step 8: Submission Persistence & Atomic Approval CAS
+    # ==========================================================================
+
+    def _row_to_submission(self, row: sqlite3.Row) -> WhopSubmissionRecord:
+        """Converts an SQLite row to a WhopSubmissionRecord."""
+        return WhopSubmissionRecord(
+            id=row["id"],
+            submission_id=row["submission_id"],
+            campaign_id=row["campaign_id"],
+            guideline_hash=row["guideline_hash"],
+            review_session_id=row["review_session_id"],
+            idempotency_key=row["idempotency_key"],
+            approval_event_id=row["approval_event_id"],
+            approved_at=row["approved_at"],
+            submission_state=row["submission_state"],
+            clip_ids=json.loads(row["clip_ids_json"] or "[]"),
+            drive_file_ids=json.loads(row["drive_file_ids_json"] or "[]"),
+            destination=row["destination"],
+            whop_submission_id=row["whop_submission_id"],
+            attempt_count=row["attempt_count"],
+            last_attempt_at=row["last_attempt_at"],
+            error_classification=row["error_classification"],
+            metadata=json.loads(row["metadata_json"] or "{}"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def save_submission(self, submission: WhopSubmissionRecord) -> WhopSubmissionRecord:
+        """Persists a new submission record."""
+        now = datetime.now(timezone.utc).isoformat()
+        if not submission.created_at:
+            submission.created_at = now
+        submission.updated_at = now
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO whop_submissions (
+                    submission_id,
+                    campaign_id,
+                    guideline_hash,
+                    review_session_id,
+                    idempotency_key,
+                    approval_event_id,
+                    approved_at,
+                    submission_state,
+                    clip_ids_json,
+                    drive_file_ids_json,
+                    destination,
+                    whop_submission_id,
+                    attempt_count,
+                    last_attempt_at,
+                    error_classification,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    submission.submission_id,
+                    submission.campaign_id,
+                    submission.guideline_hash,
+                    submission.review_session_id,
+                    submission.idempotency_key,
+                    submission.approval_event_id,
+                    submission.approved_at,
+                    submission.submission_state,
+                    json.dumps(submission.clip_ids),
+                    json.dumps(submission.drive_file_ids),
+                    submission.destination,
+                    submission.whop_submission_id,
+                    submission.attempt_count,
+                    submission.last_attempt_at,
+                    submission.error_classification,
+                    json.dumps(submission.metadata),
+                    submission.created_at,
+                    submission.updated_at,
+                ),
+            )
+            submission.id = cursor.lastrowid
+        return submission
+
+    def get_submission(self, submission_id: str) -> Optional[WhopSubmissionRecord]:
+        """Retrieves submission record by submission_id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM whop_submissions WHERE submission_id = ?;", (submission_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_submission(row)
+        return None
+
+    def get_submission_by_idempotency_key(self, idempotency_key: str) -> Optional[WhopSubmissionRecord]:
+        """Retrieves submission record by idempotency_key."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM whop_submissions WHERE idempotency_key = ?;", (idempotency_key,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_submission(row)
+        return None
+
+    def get_submission_by_review_session(self, review_session_id: str) -> Optional[WhopSubmissionRecord]:
+        """Retrieves submission record by review_session_id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM whop_submissions WHERE review_session_id = ?;", (review_session_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_submission(row)
+        return None
+
+    def update_submission(self, submission: WhopSubmissionRecord) -> None:
+        """Updates submission state, attempts, or metadata."""
+        submission.updated_at = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE whop_submissions
+                SET submission_state = ?,
+                    whop_submission_id = ?,
+                    attempt_count = ?,
+                    last_attempt_at = ?,
+                    error_classification = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE submission_id = ?;
+                """,
+                (
+                    submission.submission_state,
+                    submission.whop_submission_id,
+                    submission.attempt_count,
+                    submission.last_attempt_at,
+                    submission.error_classification,
+                    json.dumps(submission.metadata),
+                    submission.updated_at,
+                    submission.submission_id,
+                ),
+            )
+
+    def atomic_approve_and_create_submission(
+        self,
+        campaign_id: str,
+        review_session_id: str,
+        reviewer_id: str,
+        reviewer_username: str,
+        submission_id: str,
+        idempotency_key: str,
+        clip_ids: List[str],
+        drive_file_ids: List[str],
+        destination: str = "whop",
+        note: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str, Optional[WhopSubmissionRecord]]:
+        """Atomically validates pre-conditions, transitions campaign to APPROVED,
+        transitions review session to APPROVED, creates the durable submission record,
+        and logs audit trail events in a single SQLite transaction.
+        
+        Returns (success: bool, code: str, submission_record: Optional[WhopSubmissionRecord])
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        meta = metadata or {}
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 1. Fetch review session
+            cursor.execute(
+                "SELECT * FROM whop_review_sessions WHERE review_session_id = ?;",
+                (review_session_id,),
+            )
+            row_rev = cursor.fetchone()
+            if not row_rev:
+                return (False, "REVIEW_SESSION_NOT_FOUND", None)
+            
+            if row_rev["campaign_id"] != campaign_id:
+                return (False, "CAMPAIGN_MISMATCH", None)
+            
+            # 2. Check if already decided
+            if row_rev["review_state"] != "PENDING":
+                if row_rev["review_state"] == "APPROVED":
+                    cursor.execute(
+                        "SELECT * FROM whop_submissions WHERE review_session_id = ?;",
+                        (review_session_id,),
+                    )
+                    sub_row = cursor.fetchone()
+                    if sub_row:
+                        return (True, "ALREADY_APPROVED", self._row_to_submission(sub_row))
+                return (False, f"REVIEW_ALREADY_DECIDED:{row_rev['review_state']}", None)
+            
+            # 3. Fetch campaign
+            cursor.execute(
+                "SELECT * FROM whop_campaigns WHERE campaign_id = ?;",
+                (campaign_id,),
+            )
+            row_camp = cursor.fetchone()
+            if not row_camp:
+                return (False, "CAMPAIGN_NOT_FOUND", None)
+            
+            if row_camp["current_state"] != CampaignState.AWAITING_APPROVAL.value:
+                if row_camp["current_state"] == CampaignState.APPROVED.value:
+                    cursor.execute(
+                        "SELECT * FROM whop_submissions WHERE review_session_id = ?;",
+                        (review_session_id,),
+                    )
+                    sub_row = cursor.fetchone()
+                    if sub_row:
+                        return (True, "ALREADY_APPROVED", self._row_to_submission(sub_row))
+                return (False, f"INVALID_CAMPAIGN_STATE:{row_camp['current_state']}", None)
+            
+            # 4. Atomic compare-and-set on review session via atomic_transition_review
+            rev_cas_ok = self.atomic_transition_review(
+                review_session_id=review_session_id,
+                expected_state="PENDING",
+                new_state="APPROVED",
+                decision="APPROVE",
+                reviewer_id=reviewer_id,
+                reviewer_username=reviewer_username,
+                note=note,
+            )
+            if not rev_cas_ok:
+                # Race condition: another callback won
+                cursor.execute(
+                    "SELECT * FROM whop_submissions WHERE review_session_id = ?;",
+                    (review_session_id,),
+                )
+                sub_row = cursor.fetchone()
+                if sub_row:
+                    return (True, "ALREADY_APPROVED", self._row_to_submission(sub_row))
+                return (False, "CONCURRENT_REVIEW_CONFLICT", None)
+            
+            # 5. Atomic compare-and-set on campaign
+            cursor.execute(
+                """
+                UPDATE whop_campaigns
+                SET current_state = 'APPROVED',
+                    updated_at = ?
+                WHERE campaign_id = ? AND current_state IN ('AWAITING_APPROVAL', 'APPROVED');
+                """,
+                (now, campaign_id),
+            )
+            if cursor.rowcount == 0:
+                return (False, "CONCURRENT_CAMPAIGN_CONFLICT", None)
+            
+            # 6. Append audit events
+            cursor.execute(
+                """
+                INSERT INTO whop_campaign_events (
+                    campaign_id, previous_state, new_state, timestamp, reason, source, metadata_json
+                ) VALUES (?, 'AWAITING_APPROVAL', 'APPROVED', ?, ?, 'TelegramApprovalGate', ?);
+                """,
+                (
+                    campaign_id,
+                    now,
+                    f"Operator APPROVE in Telegram by @{reviewer_username}",
+                    json.dumps({
+                        "event_type": "REVIEW_APPROVED",
+                        "review_session_id": review_session_id,
+                        "reviewer_id": reviewer_id,
+                        "reviewer_username": reviewer_username,
+                        "submission_id": submission_id,
+                        **meta,
+                    }),
+                ),
+            )
+            approval_event_id = cursor.lastrowid
+            
+            # 7. Create durable submission record
+            cursor.execute(
+                """
+                INSERT INTO whop_submissions (
+                    submission_id,
+                    campaign_id,
+                    guideline_hash,
+                    review_session_id,
+                    idempotency_key,
+                    approval_event_id,
+                    approved_at,
+                    submission_state,
+                    clip_ids_json,
+                    drive_file_ids_json,
+                    destination,
+                    whop_submission_id,
+                    attempt_count,
+                    last_attempt_at,
+                    error_classification,
+                    metadata_json,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, NULL, 0, NULL, NULL, ?, ?, ?);
+                """,
+                (
+                    submission_id,
+                    campaign_id,
+                    row_rev["guideline_hash"],
+                    review_session_id,
+                    idempotency_key,
+                    approval_event_id,
+                    now,
+                    json.dumps(clip_ids),
+                    json.dumps(drive_file_ids),
+                    destination,
+                    json.dumps(meta),
+                    now,
+                    now,
+                ),
+            )
+            sub_pk = cursor.lastrowid
+
+            record = WhopSubmissionRecord(
+                id=sub_pk,
+                submission_id=submission_id,
+                campaign_id=campaign_id,
+                guideline_hash=row_rev["guideline_hash"],
+                review_session_id=review_session_id,
+                idempotency_key=idempotency_key,
+                approval_event_id=approval_event_id,
+                approved_at=now,
+                submission_state="PENDING",
+                clip_ids=clip_ids,
+                drive_file_ids=drive_file_ids,
+                destination=destination,
+                whop_submission_id=None,
+                attempt_count=0,
+                last_attempt_at=None,
+                error_classification=None,
+                metadata=meta,
+                created_at=now,
+                updated_at=now,
+            )
+            
+            return (True, "SUCCESS", record)
+
+    def atomic_reject_or_change(
+        self,
+        campaign_id: str,
+        review_session_id: str,
+        decision: str,  # 'REJECT' or 'REQUEST_CHANGES'
+        reviewer_id: str,
+        reviewer_username: str,
+        note: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Atomically transitions review and campaign for rejection or change request."""
+        now = datetime.now(timezone.utc).isoformat()
+        meta = metadata or {}
+        
+        target_rev_state = "REJECTED" if decision == "REJECT" else "CHANGES_REQUESTED"
+        target_camp_state = CampaignState.APPROVAL_REJECTED.value if decision == "REJECT" else CampaignState.CHANGES_REQUESTED.value
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "SELECT * FROM whop_review_sessions WHERE review_session_id = ?;",
+                (review_session_id,),
+            )
+            row_rev = cursor.fetchone()
+            if not row_rev:
+                return (False, "REVIEW_SESSION_NOT_FOUND")
+            if row_rev["campaign_id"] != campaign_id:
+                return (False, "CAMPAIGN_MISMATCH")
+            if row_rev["review_state"] not in ("PENDING", target_rev_state):
+                return (False, f"REVIEW_ALREADY_DECIDED:{row_rev['review_state']}")
+            
+            cursor.execute(
+                "SELECT * FROM whop_campaigns WHERE campaign_id = ?;",
+                (campaign_id,),
+            )
+            row_camp = cursor.fetchone()
+            if not row_camp:
+                return (False, "CAMPAIGN_NOT_FOUND")
+            if row_camp["current_state"] not in (CampaignState.AWAITING_APPROVAL.value, target_camp_state):
+                return (False, f"INVALID_CAMPAIGN_STATE:{row_camp['current_state']}")
+            
+            cursor.execute(
+                """
+                UPDATE whop_review_sessions
+                SET review_state = ?,
+                    decision = ?,
+                    reviewer_id = ?,
+                    reviewer_username = ?,
+                    decision_note = ?,
+                    updated_at = ?
+                WHERE review_session_id = ? AND review_state IN ('PENDING', ?);
+                """,
+                (target_rev_state, decision, reviewer_id, reviewer_username, note, now, review_session_id, target_rev_state),
+            )
+            if cursor.rowcount == 0:
+                return (False, "CONCURRENT_REVIEW_CONFLICT")
+            
+            cursor.execute(
+                """
+                UPDATE whop_campaigns
+                SET current_state = ?,
+                    updated_at = ?
+                WHERE campaign_id = ? AND current_state IN ('AWAITING_APPROVAL', ?);
+                """,
+                (target_camp_state, now, campaign_id, target_camp_state),
+            )
+            if cursor.rowcount == 0:
+                return (False, "CONCURRENT_CAMPAIGN_CONFLICT")
+            
+            cursor.execute(
+                """
+                INSERT INTO whop_campaign_events (
+                    campaign_id, previous_state, new_state, timestamp, reason, source, metadata_json
+                ) VALUES (?, 'AWAITING_APPROVAL', ?, ?, ?, 'TelegramApprovalGate', ?);
+                """,
+                (
+                    campaign_id,
+                    target_camp_state,
+                    now,
+                    f"Operator {decision} in Telegram by @{reviewer_username}",
+                    json.dumps({
+                        "review_session_id": review_session_id,
+                        "reviewer_id": reviewer_id,
+                        "reviewer_username": reviewer_username,
+                        "decision": decision,
+                        **meta,
+                    }),
+                ),
+            )
+            return (True, "SUCCESS")

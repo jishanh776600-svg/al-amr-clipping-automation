@@ -6,6 +6,7 @@ and the canonical CampaignRecord structure for the persistent ledger.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -45,6 +46,7 @@ class CampaignState(str, Enum):
     INSUFFICIENT_VALID_CLIPS = "INSUFFICIENT_VALID_CLIPS"
     APPROVAL_REJECTED = "APPROVAL_REJECTED"
     SUBMISSION_FAILED = "SUBMISSION_FAILED"
+    SUBMISSION_BLOCKED = "SUBMISSION_BLOCKED"
 
 
 # Authoritative state transition map
@@ -108,10 +110,12 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     },
     CampaignState.APPROVED: {
         CampaignState.SUBMITTING,
+        CampaignState.SUBMISSION_BLOCKED,
     },
     CampaignState.SUBMITTING: {
         CampaignState.SUBMITTED,
         CampaignState.SUBMISSION_FAILED,
+        CampaignState.SUBMISSION_BLOCKED,
     },
     # Failure states can transition to retries or re-evaluation
     CampaignState.CLAIM_FAILED: {CampaignState.CLAIMING, CampaignState.REJECTED},
@@ -120,6 +124,7 @@ ALLOWED_TRANSITIONS: Dict[CampaignState, Set[CampaignState]] = {
     CampaignState.INSUFFICIENT_VALID_CLIPS: {CampaignState.INGESTED, CampaignState.RENDERING, CampaignState.REJECTED},
     CampaignState.APPROVAL_REJECTED: {CampaignState.REJECTED},
     CampaignState.SUBMISSION_FAILED: {CampaignState.SUBMITTING, CampaignState.REJECTED},
+    CampaignState.SUBMISSION_BLOCKED: {CampaignState.AWAITING_APPROVAL, CampaignState.REJECTED},
     CampaignState.SUBMITTED: set(),  # Terminal successful state
 }
 
@@ -755,4 +760,104 @@ class SourceProbeResult:
             "rejection_reason": self.rejection_reason,
             "probe_latency_ms": self.probe_latency_ms,
             "details": self.details,
+        }
+
+
+# ==============================================================================
+# Step 8: Whop Submission Models & Data Structures
+# ==============================================================================
+
+class SubmissionState(str, Enum):
+    PENDING = "PENDING"
+    SUBMITTING = "SUBMITTING"
+    SUBMITTED = "SUBMITTED"
+    SUBMISSION_FAILED = "SUBMISSION_FAILED"
+    SUBMISSION_BLOCKED = "SUBMISSION_BLOCKED"
+    RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+
+
+@dataclass
+class WhopSubmissionClipRef:
+    """Canonical clip reference within an approved submission payload."""
+    clip_id: str
+    drive_file_id: str
+    duration_s: float
+    width: int
+    height: int
+    quality_score: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class WhopSubmissionPayload:
+    """Canonical deterministic submission payload for Whop."""
+    campaign_id: str
+    guideline_hash: str
+    review_session_id: str
+    destination: str
+    clips: List[WhopSubmissionClipRef]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "campaign_id": self.campaign_id,
+            "guideline_hash": self.guideline_hash,
+            "review_session_id": self.review_session_id,
+            "destination": self.destination,
+            "clips": [c.to_dict() for c in self.clips],
+            "metadata": self.metadata,
+        }
+
+    def compute_hash(self) -> str:
+        """Deterministic SHA-256 fingerprint of the canonical submission payload."""
+        canonical_json = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+@dataclass
+class WhopSubmissionRecord:
+    """Authoritative durable record of a Whop submission in the ledger."""
+    submission_id: str
+    campaign_id: str
+    guideline_hash: str
+    review_session_id: str
+    idempotency_key: str
+    approval_event_id: Optional[int] = None
+    approved_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    submission_state: str = "PENDING"
+    clip_ids: List[str] = field(default_factory=list)
+    drive_file_ids: List[str] = field(default_factory=list)
+    destination: str = "whop"
+    whop_submission_id: Optional[str] = None
+    attempt_count: int = 0
+    last_attempt_at: Optional[str] = None
+    error_classification: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "submission_id": self.submission_id,
+            "campaign_id": self.campaign_id,
+            "guideline_hash": self.guideline_hash,
+            "review_session_id": self.review_session_id,
+            "idempotency_key": self.idempotency_key,
+            "approval_event_id": self.approval_event_id,
+            "approved_at": self.approved_at,
+            "submission_state": self.submission_state,
+            "clip_ids": self.clip_ids,
+            "drive_file_ids": self.drive_file_ids,
+            "destination": self.destination,
+            "whop_submission_id": self.whop_submission_id,
+            "attempt_count": self.attempt_count,
+            "last_attempt_at": self.last_attempt_at,
+            "error_classification": self.error_classification,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }

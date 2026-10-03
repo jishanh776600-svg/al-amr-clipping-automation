@@ -1,0 +1,125 @@
+[
+  {
+    "event_id": 1,
+    "previous_state": "AWAITING_APPROVAL",
+    "new_state": "AWAITING_APPROVAL",
+    "reason": "BRIEF_PARSED",
+    "source": "whop_brief_parser",
+    "timestamp": "2026-10-03T12:51:28.560746+00:00",
+    "metadata": {
+      "guideline_hash": "52b4965892025233443e21bd76111b925dd49a7997911dbeb9fd19b911e954bc",
+      "rules_count": 0,
+      "mandatory_count": 0,
+      "prohibited_count": 0,
+      "unresolved_count": 0,
+      "parsing_status": "PARSED"
+    }
+  },
+  {
+    "event_id": 2,
+    "previous_state": "AWAITING_APPROVAL",
+    "new_state": "APPROVED",
+    "reason": "Operator APPROVE in Telegram by @jishanh760",
+    "source": "TelegramApprovalGate",
+    "timestamp": "2026-10-03T12:51:28.670427+00:00",
+    "metadata": {
+      "event_type": "REVIEW_APPROVED",
+      "review_session_id": "rev_38c6ab4c8544",
+      "reviewer_id": "7866408097",
+      "reviewer_username": "jishanh760",
+      "submission_id": "sub_38c6ab4c_41d3c3e5"
+    }
+  },
+  {
+    "event_id": 3,
+    "previous_state": "APPROVED",
+    "new_state": "APPROVED",
+    "reason": "Starting submission preflight checks",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.697574+00:00",
+    "metadata": {
+      "event_type": "SUBMISSION_PREFLIGHT_STARTED",
+      "submission_id": "sub_38c6ab4c_41d3c3e5"
+    }
+  },
+  {
+    "event_id": 4,
+    "previous_state": "APPROVED",
+    "new_state": "APPROVED",
+    "reason": "Submission preflight checks passed",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.702574+00:00",
+    "metadata": {
+      "event_type": "SUBMISSION_PREFLIGHT_PASSED",
+      "submission_id": "sub_38c6ab4c_41d3c3e5",
+      "payload_hash": "559b513f6bd3d802484902a85b628e728693f9d8400ce1acf20e366259c8dcdd",
+      "clips_count": 5
+    }
+  },
+  {
+    "event_id": 5,
+    "previous_state": "APPROVED",
+    "new_state": "SUBMITTING",
+    "reason": "Operator approved: dispatching Whop submission",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.725039+00:00",
+    "metadata": {
+      "submission_id": "sub_38c6ab4c_41d3c3e5",
+      "attempt": 1,
+      "dry_run": true
+    }
+  },
+  {
+    "event_id": 6,
+    "previous_state": "SUBMITTING",
+    "new_state": "SUBMITTING",
+    "reason": "Simulating Whop submission attempt in dry-run mode",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.753135+00:00",
+    "metadata": {
+      "event_type": "SUBMISSION_ATTEMPT_STARTED",
+      "submission_id": "sub_38c6ab4c_41d3c3e5",
+      "dry_run": true,
+      "mutation_executed": false
+    }
+  },
+  {
+    "event_id": 7,
+    "previous_state": "SUBMITTING",
+    "new_state": "SUBMITTING",
+    "reason": "Simulated Whop submission response received",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.758134+00:00",
+    "metadata": {
+      "event_type": "SUBMISSION_RESPONSE_RECEIVED",
+      "submission_id": "sub_38c6ab4c_41d3c3e5",
+      "simulated_whop_id": "whop_sim_41d3c3e538bf",
+      "status_code": 200
+    }
+  },
+  {
+    "event_id": 8,
+    "previous_state": "SUBMITTING",
+    "new_state": "SUBMITTED",
+    "reason": "Dry-run Whop submission successfully verified",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.782008+00:00",
+    "metadata": {
+      "submission_id": "sub_38c6ab4c_41d3c3e5",
+      "whop_submission_id": "whop_sim_41d3c3e538bf",
+      "dry_run": true
+    }
+  },
+  {
+    "event_id": 9,
+    "previous_state": "SUBMITTED",
+    "new_state": "SUBMITTED",
+    "reason": "Submission succeeded (dry-run verified)",
+    "source": "WhopSubmitter",
+    "timestamp": "2026-10-03T12:51:28.800959+00:00",
+    "metadata": {
+      "event_type": "SUBMISSION_SUCCEEDED",
+      "submission_id": "sub_38c6ab4c_41d3c3e5"
+    }
+  }
+]

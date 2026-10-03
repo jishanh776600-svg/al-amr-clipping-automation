@@ -1,0 +1,16 @@
+{
+  "operator_id": 7866408097,
+  "operator_username": "jishanh760",
+  "callback_data": "wh:appr:rev_38c6ab4c8544",
+  "telegram_message_edits": [
+    {
+      "text": "\u23f3 <b>APPROVAL ACCEPTED</b> by @jishanh760\n\nPreparing Whop submission for campaign <b>Step 8 Production Dry-Run Verification</b>...\n\ud83c\udd94 <b>Submission ID:</b> <code>sub_38c6ab4c_41d3c3e5</code>\n\ud83d\udce6 <b>Clips to Submit:</b> 5 Drive-backed MP4s",
+      "timestamp": "2026-10-03T12:51:28.683380+00:00"
+    },
+    {
+      "text": "\u2705 <b>SUBMITTED TO WHOP SUCCESSFULLY</b> (Dry-Run Verified)\n\n\ud83d\udccc <b>Campaign:</b> <code>step8_dryrun_38c6ab4c8544</code>\n\ud83c\udd94 <b>Submission ID:</b> <code>sub_38c6ab4c_41d3c3e5</code>\n\ud83d\udce6 <b>Valid Clips:</b> 5\n\ud83d\udd11 <b>Whop Ref ID:</b> <code>whop_sim_41d3c3e538bf</code>\n\ud83d\udd52 <b>Recorded at:</b> 2026-10-03 12:51:28 UTC",
+      "timestamp": "2026-10-03T12:51:28.806956+00:00"
+    }
+  ],
+  "decision_card_final_text": "\u2705 <b>SUBMITTED TO WHOP SUCCESSFULLY</b> (Dry-Run Verified)\n\n\ud83d\udccc <b>Campaign:</b> <code>step8_dryrun_38c6ab4c8544</code>\n\ud83c\udd94 <b>Submission ID:</b> <code>sub_38c6ab4c_41d3c3e5</code>\n\ud83d\udce6 <b>Valid Clips:</b> 5\n\ud83d\udd11 <b>Whop Ref ID:</b> <code>whop_sim_41d3c3e538bf</code>\n\ud83d\udd52 <b>Recorded at:</b> 2026-10-03 12:51:28 UTC"
+}

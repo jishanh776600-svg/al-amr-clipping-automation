@@ -1,0 +1,16 @@
+{
+  "session_id": "38c6ab4c8544",
+  "campaign_id": "step8_dryrun_38c6ab4c8544",
+  "review_session_id": "rev_38c6ab4c8544",
+  "submission_id": "sub_38c6ab4c_41d3c3e5",
+  "whop_submission_id": "whop_sim_41d3c3e538bf",
+  "timestamp_utc": "2026-10-03T12:51:28.820039+00:00",
+  "dry_run": true,
+  "mutation_executed": false,
+  "campaign_state": "SUBMITTED",
+  "submission_state": "SUBMITTED",
+  "valid_clips_count": 5,
+  "payload_hash": null,
+  "idempotency_key": "41d3c3e538bf325c71d1ee86762f185a08d854f4761c05ddb877f19ee34485d3",
+  "operator": "jishanh760"
+}

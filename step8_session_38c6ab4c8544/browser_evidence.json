@@ -1,0 +1,5 @@
+{
+  "status": "MUTATION_NOT_EXECUTED",
+  "reason": "WHOP_SUBMISSION_DRY_RUN=true safely intercepted submission call",
+  "whop_endpoint_simulated": "https://whop.com/campaigns/step8_dryrun_38c6ab4c8544/submit"
+}

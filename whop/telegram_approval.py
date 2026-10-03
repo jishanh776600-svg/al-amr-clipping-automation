@@ -38,12 +38,14 @@ from .models import (
     RuleComplianceStatus,
     WhopJobQAReport,
     WhopReviewSession,
+    WhopSubmissionRecord,
 )
 from .quality_verifier import (
     CANONICAL_MAX_DURATION_S,
     CANONICAL_MIN_DURATION_S,
     REQUIRED_VALID_CLIPS_COUNT,
 )
+from .submitter import WhopSubmitter, SubmissionBlockedError, WhopSubmissionResult
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +53,13 @@ log = logging.getLogger(__name__)
 class TelegramApprovalGate:
     """Production Telegram Human Approval Gate for Whop Campaigns."""
 
-    def __init__(self, ledger: Optional[CampaignLedger] = None):
+    def __init__(
+        self,
+        ledger: Optional[CampaignLedger] = None,
+        submitter: Optional[WhopSubmitter] = None,
+    ):
         self.ledger = ledger or CampaignLedger()
+        self.submitter = submitter or WhopSubmitter(ledger=self.ledger)
 
     # ==========================================================================
     # 1. Eligibility Hard Gate
@@ -398,7 +405,7 @@ class TelegramApprovalGate:
         update: Dict[str, Any],
         bot_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Handles operator inline callback query securely and atomically."""
+        """Handles operator inline callback query securely, atomically, and bridges to submission."""
         cb = update.get("callback_query") or {}
         cb_id = str(cb.get("id") or "")
         from_user = cb.get("from") or {}
@@ -415,7 +422,7 @@ class TelegramApprovalGate:
         # 1. Immediate Callback Acknowledgment (stops Telegram spinner instantly)
         await _answer_callback_query(token, cb_id, text="Review action received...", show_alert=False)
 
-        # 2. Operator Authorization Check
+        # 2. Operator Authorization Check (Precondition 1)
         if not is_user_authorized(user_id, allowed_ids, username):
             log.warning("Unauthorized review action attempt from user %s (id=%s)", username, user_id)
             await _answer_callback_query(
@@ -435,12 +442,18 @@ class TelegramApprovalGate:
         action = parts[1]
         session_id = parts[2]
 
+        # Precondition 2: Review session exists
         session = self.ledger.get_review_session(session_id)
         if not session:
             await _answer_callback_query(token, cb_id, text=f"Review session '{session_id}' not found.", show_alert=True)
             return {"status": "session_not_found", "session_id": session_id}
 
-        # 4. Idempotency Check: Already Decided
+        # Precondition 3: Campaign exists
+        camp = self.ledger.get_campaign(session.campaign_id)
+        if not camp:
+            return {"status": "campaign_not_found", "campaign_id": session.campaign_id}
+
+        # Precondition 4 & 8: Check if already decided
         if session.review_state != "PENDING":
             await _answer_callback_query(
                 token,
@@ -454,95 +467,170 @@ class TelegramApprovalGate:
                 "current_decision": session.decision,
             }
 
-        # 5. Map Action to States
         actor = f"telegram:@{username}" if username else f"telegram:{user_id}"
-        if action == "appr":
-            target_review_state = "APPROVED"
-            decision_val = "APPROVE"
-            camp_target_state = CampaignState.APPROVED
-            badge_text = f"✅ <b>CAMPAIGN APPROVED</b> by @{html.escape(username)}"
-            button_label = "✅ Approved"
-        elif action == "chg":
-            target_review_state = "CHANGES_REQUESTED"
-            decision_val = "REQUEST_CHANGES"
-            camp_target_state = CampaignState.CHANGES_REQUESTED
-            badge_text = f"🔄 <b>CHANGES REQUESTED</b> by @{html.escape(username)}"
-            button_label = "🔄 Changes Requested"
-        elif action == "rej":
-            target_review_state = "REJECTED"
-            decision_val = "REJECT"
-            camp_target_state = CampaignState.APPROVAL_REJECTED
-            badge_text = f"❌ <b>CAMPAIGN REJECTED</b> by @{html.escape(username)}"
-            button_label = "❌ Rejected"
+
+        # Handle Rejection or Changes Requested (Zero Submission Mutation)
+        if action in ("chg", "rej"):
+            decision_val = "REJECT" if action == "rej" else "REQUEST_CHANGES"
+            badge_text = "❌ <b>CAMPAIGN REJECTED</b>" if action == "rej" else "🔄 <b>CHANGES REQUESTED</b>"
+            btn_label = "❌ Rejected" if action == "rej" else "🔄 Changes Requested"
+            target_camp_state = CampaignState.APPROVAL_REJECTED.value if action == "rej" else CampaignState.CHANGES_REQUESTED.value
+            target_rev_state = "REJECTED" if action == "rej" else "CHANGES_REQUESTED"
+
+            success, code = self.ledger.atomic_reject_or_change(
+                campaign_id=session.campaign_id,
+                review_session_id=session_id,
+                decision=decision_val,
+                reviewer_id=str(user_id),
+                reviewer_username=str(username),
+                note=f"Action '{decision_val}' by @{username} via Telegram",
+            )
+            if not success:
+                log.warning("Atomic decision CAS conflict on session %s: %s", session_id, code)
+                return {"status": "conflict_already_updated" if "CONFLICT" in code else f"conflict_{code.lower()}", "session_id": session_id}
+
+            if message_id and chat:
+                updated_text = (
+                    f"{badge_text} by @{html.escape(username)}\n\n"
+                    f"<b>Campaign:</b> <code>{html.escape(session.campaign_id)}</code>\n"
+                    f"<b>Session:</b> <code>{html.escape(session_id)}</code>\n"
+                    f"<b>Decision:</b> <code>{decision_val}</code>\n"
+                    f"<b>Recorded at:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                )
+                await _safe_edit_telegram_message(
+                    bot_token=token,
+                    chat_id=chat,
+                    message_id=message_id,
+                    text=updated_text,
+                    has_caption=False,
+                    reply_markup={"inline_keyboard": [[{"text": btn_label, "callback_data": "tg:done"}]]},
+                )
+
+            return {
+                "status": "success",
+                "session_id": session_id,
+                "campaign_id": session.campaign_id,
+                "decision": decision_val,
+                "review_state": target_rev_state,
+                "campaign_state": target_camp_state,
+            }
+
+        elif action == "appr":
+            # Precondition 5: Campaign must be exactly AWAITING_APPROVAL
+            if camp.current_state != CampaignState.AWAITING_APPROVAL:
+                if camp.current_state in (CampaignState.APPROVED, CampaignState.SUBMITTING, CampaignState.SUBMITTED):
+                    existing_sub = self.ledger.get_submission_by_review_session(session_id)
+                    return {
+                        "status": "already_approved",
+                        "session_id": session_id,
+                        "campaign_id": session.campaign_id,
+                        "submission_id": existing_sub.submission_id if existing_sub else None,
+                    }
+                return {
+                    "status": "invalid_campaign_state",
+                    "campaign_state": camp.current_state.value,
+                    "expected_state": CampaignState.AWAITING_APPROVAL.value,
+                }
+
+            # Retrieve QA record to collect Drive file IDs for deterministic idempotency
+            qa_report = self.ledger.get_latest_qa_record(session.campaign_id)
+            drive_file_ids = []
+            if qa_report:
+                drive_file_ids = [c.drive_file_id for c in qa_report.clips if c.is_valid and c.drive_file_id]
+
+            sub_idem_key = WhopSubmitter.compute_submission_idempotency_key(
+                campaign_id=session.campaign_id,
+                guideline_hash=session.guideline_hash,
+                review_session_id=session_id,
+                clip_ids=session.clip_ids,
+                drive_file_ids=drive_file_ids,
+            )
+            submission_id = f"sub_{session_id[4:12]}_{sub_idem_key[:8]}"
+
+            # Atomic Compare-and-Set in Ledger:
+            # Transitions Review to APPROVED, Campaign to APPROVED, creates durable submission record
+            success, code, sub_record = self.ledger.atomic_approve_and_create_submission(
+                campaign_id=session.campaign_id,
+                review_session_id=session_id,
+                reviewer_id=str(user_id),
+                reviewer_username=str(username),
+                submission_id=submission_id,
+                idempotency_key=sub_idem_key,
+                clip_ids=session.clip_ids,
+                drive_file_ids=drive_file_ids,
+                note=f"Approved by @{username} via Telegram",
+            )
+
+            if not success or not sub_record:
+                if code in ("CONCURRENT_REVIEW_CONFLICT", "CONCURRENT_CAMPAIGN_CONFLICT"):
+                    return {"status": "conflict_already_updated", "session_id": session_id}
+                log.warning("Atomic approval CAS failed for session %s: %s", session_id, code)
+                return {"status": f"approval_failed_{code.lower()}", "session_id": session_id, "code": code}
+
+            # Immediate UI update: Inform operator submission preparation is in progress
+            if message_id and chat:
+                prep_text = (
+                    f"⏳ <b>APPROVAL ACCEPTED</b> by @{html.escape(username)}\n\n"
+                    f"Preparing Whop submission for campaign <b>{html.escape(camp.title or session.campaign_id)}</b>...\n"
+                    f"🆔 <b>Submission ID:</b> <code>{sub_record.submission_id}</code>\n"
+                    f"📦 <b>Clips to Submit:</b> 5 Drive-backed MP4s"
+                )
+                await _safe_edit_telegram_message(
+                    bot_token=token,
+                    chat_id=chat,
+                    message_id=message_id,
+                    text=prep_text,
+                    has_caption=False,
+                    reply_markup={"inline_keyboard": [[{"text": "⏳ Submitting...", "callback_data": "tg:progress"}]]},
+                )
+
+            # Trigger Submission Execution Pipeline (guarded by dry-run)
+            sub_res = await asyncio.to_thread(
+                self.submitter.process_submission,
+                sub_record.submission_id,
+            )
+
+            # Final UI Update on Decision Card
+            if message_id and chat:
+                if sub_res.success:
+                    final_badge = "✅ <b>SUBMITTED TO WHOP SUCCESSFULLY</b>"
+                    if sub_res.dry_run:
+                        final_badge += " (Dry-Run Verified)"
+                    btn_text = "✅ Submitted"
+                    body_extra = f"🔑 <b>Whop Ref ID:</b> <code>{sub_res.whop_submission_id}</code>\n"
+                else:
+                    final_badge = "⚠️ <b>APPROVAL RECORDED (SUBMISSION BLOCKED/FAILED)</b>"
+                    btn_text = "⚠️ Submission Blocked"
+                    body_extra = f"❌ <b>Error:</b> {html.escape(sub_res.error_message or 'Unknown error')}\n"
+
+                final_text = (
+                    f"{final_badge}\n\n"
+                    f"📌 <b>Campaign:</b> <code>{html.escape(session.campaign_id)}</code>\n"
+                    f"🆔 <b>Submission ID:</b> <code>{sub_record.submission_id}</code>\n"
+                    f"📦 <b>Valid Clips:</b> 5\n"
+                    f"{body_extra}"
+                    f"🕒 <b>Recorded at:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                )
+                await _safe_edit_telegram_message(
+                    bot_token=token,
+                    chat_id=chat,
+                    message_id=message_id,
+                    text=final_text,
+                    has_caption=False,
+                    reply_markup={"inline_keyboard": [[{"text": btn_text, "callback_data": "tg:done"}]]},
+                )
+
+            return {
+                "status": "success",
+                "session_id": session_id,
+                "campaign_id": session.campaign_id,
+                "decision": "APPROVE",
+                "review_state": "APPROVED",
+                "campaign_state": "APPROVED",
+                "submission_id": sub_record.submission_id,
+                "submission_result": sub_res.to_dict(),
+            }
+
         else:
             return {"status": "unknown_action", "action": action}
 
-        # 6. Concurrency-Safe Atomic Review Transition (Compare-and-set)
-        success = self.ledger.atomic_transition_review(
-            review_session_id=session_id,
-            expected_state="PENDING",
-            new_state=target_review_state,
-            decision=decision_val,
-            reviewer_id=str(user_id),
-            reviewer_username=str(username),
-            note=f"Action '{decision_val}' performed via Telegram by @{username}",
-        )
-        if not success:
-            log.warning("Concurrent callback race detected on session %s", session_id)
-            return {"status": "conflict_already_updated", "session_id": session_id}
-
-        # 7. Transition Campaign State in Ledger
-        camp = self.ledger.get_campaign(session.campaign_id)
-        if camp:
-            try:
-                self.ledger.transition_state(
-                    campaign_id=session.campaign_id,
-                    target_state=camp_target_state,
-                    reason=f"Operator {decision_val} in Telegram (@{username})",
-                    source="TelegramApprovalGate",
-                    metadata={
-                        "review_session_id": session_id,
-                        "reviewer_id": str(user_id),
-                        "reviewer_username": str(username),
-                        "decision": decision_val,
-                        "artifact_hash": session.artifact_hash,
-                    },
-                )
-            except Exception as e:
-                log.error("Failed to transition campaign %s to %s: %s", session.campaign_id, camp_target_state, e)
-
-        # 8. Update Telegram Decision Card (Freeze UI / Remove Buttons)
-        if message_id and chat:
-            updated_text = (
-                f"{badge_text}\n\n"
-                f"<b>Campaign:</b> <code>{html.escape(session.campaign_id)}</code>\n"
-                f"<b>Session:</b> <code>{html.escape(session_id)}</code>\n"
-                f"<b>Clips Evaluated:</b> {len(session.clip_ids)}\n"
-                f"<b>Recorded at:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
-            )
-            await _safe_edit_telegram_message(
-                bot_token=token,
-                chat_id=chat,
-                message_id=message_id,
-                text=updated_text,
-                has_caption=False,
-                reply_markup={"inline_keyboard": [[{"text": button_label, "callback_data": "tg:done"}]]},
-            )
-
-        log.info(
-            "Review session %s transitioned to %s (decision: %s) by %s",
-            session_id,
-            target_review_state,
-            decision_val,
-            actor,
-        )
-
-        # 9. Return Result (Zero publishing, zero Whop mutations)
-        return {
-            "status": "success",
-            "session_id": session_id,
-            "campaign_id": session.campaign_id,
-            "decision": decision_val,
-            "review_state": target_review_state,
-            "campaign_state": camp_target_state.value,
-        }

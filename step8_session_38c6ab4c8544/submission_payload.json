@@ -1,0 +1,54 @@
+{
+  "campaign_id": "step8_dryrun_38c6ab4c8544",
+  "guideline_hash": "52b4965892025233443e21bd76111b925dd49a7997911dbeb9fd19b911e954bc",
+  "review_session_id": "rev_38c6ab4c8544",
+  "destination": "whop",
+  "clips": [
+    {
+      "clip_id": "clip_38c6ab4c8544_01",
+      "drive_file_id": "1DriveFileId_38c6ab4c8544_01xyz",
+      "duration_s": 25.5,
+      "width": 1080,
+      "height": 1920,
+      "quality_score": 97.0
+    },
+    {
+      "clip_id": "clip_38c6ab4c8544_02",
+      "drive_file_id": "1DriveFileId_38c6ab4c8544_02xyz",
+      "duration_s": 26.0,
+      "width": 1080,
+      "height": 1920,
+      "quality_score": 97.0
+    },
+    {
+      "clip_id": "clip_38c6ab4c8544_03",
+      "drive_file_id": "1DriveFileId_38c6ab4c8544_03xyz",
+      "duration_s": 26.5,
+      "width": 1080,
+      "height": 1920,
+      "quality_score": 97.0
+    },
+    {
+      "clip_id": "clip_38c6ab4c8544_04",
+      "drive_file_id": "1DriveFileId_38c6ab4c8544_04xyz",
+      "duration_s": 27.0,
+      "width": 1080,
+      "height": 1920,
+      "quality_score": 97.0
+    },
+    {
+      "clip_id": "clip_38c6ab4c8544_05",
+      "drive_file_id": "1DriveFileId_38c6ab4c8544_05xyz",
+      "duration_s": 27.5,
+      "width": 1080,
+      "height": 1920,
+      "quality_score": 97.0
+    }
+  ],
+  "metadata": {
+    "autoclip_job_id": "job_38c6ab4c8544",
+    "artifact_hash": "93251660c2ba88e5767053c16614a4bc1a0d118cdf9c9ea879f888870558adb7",
+    "campaign_url": "https://whop.com/campaigns/step8_dryrun_38c6ab4c8544",
+    "total_valid_clips": 5
+  }
+}
