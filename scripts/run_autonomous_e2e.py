@@ -263,7 +263,8 @@ class AutonomousE2EOrchestrator:
         submission_result = None
 
         with whop_browser:
-            page = whop_browser.launch(session_state=session_state)
+            browser_rec_dir = str(self.session_dir / "browser")
+            page = whop_browser.launch(session_state=session_state, record_video_dir=browser_rec_dir)
 
             # 2. Account inspection & Quarantined campaigns detection
             self.record_event("DISCOVERY", "INSPECT_ACCOUNT", account_email, "STARTING")
