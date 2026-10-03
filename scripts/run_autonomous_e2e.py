@@ -150,13 +150,27 @@ class AutonomousE2EOrchestrator:
             "blockers": [],
         }
 
-        # 1. Whop Authentication
+        # 1. Whop Authentication (Self-healing with autonomous credential login)
         whop_cookies = os.getenv("WHOP_COOKIES", "").strip()
+        whop_email = os.getenv("WHOP_EMAIL", "").strip()
+        whop_password = os.getenv("WHOP_PASSWORD", "").strip()
+
         if whop_cookies:
             results["whop_authentication"] = True
             results["whop_mutation_capability"] = True
+        elif whop_email and whop_password:
+            log.info("WHOP_COOKIES absent, but WHOP_EMAIL/PASSWORD present. Executing autonomous auto-login...")
+            try:
+                from whop.auth import WhopAuthenticator
+                auth = WhopAuthenticator()
+                state = auth.login_with_credentials(whop_email, whop_password)
+                results["whop_authentication"] = True
+                results["whop_mutation_capability"] = True
+                self.record_event("AUTH", "AUTONOMOUS_LOGIN", "Whop Auth", "SUCCESS", {"cookie_count": state.cookie_count})
+            except Exception as auth_err:
+                results["blockers"].append(f"AUTONOMOUS_LOGIN_FAILED: {auth_err}")
         else:
-            results["blockers"].append("MISSING_PRODUCTION_DEPENDENCY: WHOP_COOKIES (Whop authentication session not set in local environment)")
+            results["blockers"].append("MISSING_PRODUCTION_DEPENDENCY: WHOP_COOKIES or WHOP_EMAIL/WHOP_PASSWORD (Configure in .env)")
 
         # 2. AutoClip Health
         try:

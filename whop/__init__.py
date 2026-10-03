@@ -171,6 +171,8 @@ __all__ = [
     "WhopAlreadyJoinedError",
     "WhopJoinTimeoutError",
     "WhopCandidateNotEligibleError",
+    "WhopAuthenticator",
+    "WhopAuthenticationError",
 ]
 
 from .config import AutoClipConfig
@@ -220,4 +222,9 @@ from .joiner import (
     WhopJoinTimeoutError,
     WhopCandidateNotEligibleError,
 )
+from .auth import (
+    WhopAuthenticator,
+    WhopAuthenticationError,
+)
+
 

@@ -50,6 +50,8 @@ def sanitize_text(text: str, secret_to_redact: Optional[str] = None) -> str:
     # Redact environment tokens
     for env_var in (
         "WHOP_COOKIES",
+        "WHOP_PASSWORD",
+        "WHOP_EMAIL",
         "AUTOCLIP_API_KEY",
         "OPERATOR_TOKEN",
         "AL_AMR_MASTER_KEY",
