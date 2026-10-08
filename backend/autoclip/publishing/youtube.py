@@ -98,11 +98,13 @@ class YouTubePublisher(BasePublisher):
         except Exception:
             pass
 
-        self.client_id = (client_id or vault_client_id or os.getenv("YOUTUBE_CLIENT_ID", "") or "").strip()
-        self.client_secret = (client_secret or vault_client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip()
-        
+        env_client_id = (os.getenv("YOUTUBE_CLIENT_ID", "") or "").strip()
+        env_client_secret = (os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip()
         env_refresh = (os.getenv("YOUTUBE_REFRESH_TOKEN", "") or "").strip().strip("'\"")
-        self.refresh_token = (refresh_token or vault_refresh or env_refresh or "").strip().strip("'\"")
+
+        self.client_id = (client_id or env_client_id or vault_client_id or "").strip()
+        self.client_secret = (client_secret or env_client_secret or vault_client_secret or "").strip()
+        self.refresh_token = (refresh_token or env_refresh or vault_refresh or "").strip().strip("'\"")
 
         # Auto-sync fresh token into vault so they never diverge
         if self.refresh_token and vault_refresh != self.refresh_token:
