@@ -9,7 +9,12 @@ from typing import Any
 from autoclip.campaign.models_intelligence import CampaignSpecification
 from autoclip.db.models import Clip, ClipCandidateRecord, ClipMetadataRecord, new_id, utcnow
 from autoclip.db import store
-from .extractor import extract_campaign_seo_requirements, extract_campaign_seo_spec
+from .extractor import (
+    extract_campaign_seo_requirements,
+    extract_campaign_seo_spec,
+    is_clean_public_hashtag,
+    is_clean_public_mention,
+)
 from .models import (
     CampaignSEORequirements,
     CampaignSEOSpec,
@@ -22,6 +27,68 @@ from .models import (
 from .quality_gate import MetadataQualityGate, validate_instagram_metadata, validate_youtube_metadata
 
 log = logging.getLogger(__name__)
+
+
+def to_title_case(text: str) -> str:
+    """Format string into professional Title Case without capitalizing after contractions (e.g. We'll, Don't)."""
+    if not text:
+        return ""
+    lower_words = {
+        "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at", "to",
+        "from", "by", "with", "in", "of", "off", "out", "over", "into", "as",
+    }
+    tokens = text.split()
+    if not tokens:
+        return ""
+
+    formatted = []
+    for idx, token in enumerate(tokens):
+        m = re.match(r"^([^A-Za-z0-9]*)([A-Za-z0-9'’]+)([^A-Za-z0-9]*)$", token)
+        if not m:
+            formatted.append(token)
+            continue
+        prefix, core, suffix = m.groups()
+        core_lower = core.lower()
+
+        if "'" in core or "’" in core:
+            parts = re.split(r"(['’])", core)
+            c_part = parts[0].capitalize() + "".join(p.lower() if p not in ("'", "’") else p for p in parts[1:])
+        elif idx > 0 and idx < len(tokens) - 1 and core_lower in lower_words:
+            c_part = core_lower
+        else:
+            c_part = core.capitalize()
+
+        formatted.append(f"{prefix}{c_part}{suffix}")
+    return " ".join(formatted)
+
+
+def strip_conversational_filler(text: str) -> str:
+    """Strip conversational filler, verbal tics, and trailing rambling from spoken transcripts."""
+    if not text:
+        return ""
+    cleaned = text.strip().strip('"\'`')
+
+    leading_fillers = [
+        r"^(?:so\s+like|so\s+yeah|you\s+know\s+what|you\s+know|basically|honestly|i\s+mean|well|look|listen|um+|uh+|okay\s+so|right\s+so|like|yeah\s+so|yeah)\b[,:\s]*",
+    ]
+    trailing_fillers = [
+        r"[,:\s]+(?:i\s+think|you\s+know|we'll\s+see|or\s+whatever|at\s+the\s+end\s+of\s+the\s+day|so\s+yeah|right\s+now|i\s+guess|to\s+be\s+honest|and\s+stuff|and\s+things|honestly)\.?$",
+    ]
+
+    for _ in range(5):
+        prev = cleaned
+        for pat in leading_fillers:
+            candidate = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+            if candidate and len(candidate.split()) >= 1:
+                cleaned = candidate
+        for pat in trailing_fillers:
+            candidate = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
+            if candidate and len(candidate.split()) >= 1:
+                cleaned = candidate
+        if cleaned == prev:
+            break
+
+    return cleaned.strip(".,;:?!- ")
 
 
 def _extract_coherent_sentences(text: str, min_chars: int = 40, max_chars: int = 220) -> str:
@@ -171,13 +238,18 @@ class SEOEngine:
             title = title[:97] + "..."
 
         # 2. Synthesize YouTube Description
-        # 2. Synthesize YouTube Description
         desc_parts: list[str] = []
         summary = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
         if summary:
             desc_parts.append(summary)
         else:
             desc_parts.append("Wait till the end to see how this unfolds 💀")
+
+        # Key Highlights / Takeaways (clean bullet formatting)
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", slice_text) if len(s.strip()) > 25]
+        if len(sentences) >= 2:
+            bullet_points = [f"• {s.rstrip('.')}." for s in sentences[1:3]]
+            desc_parts.append("📌 Key Highlights:\n" + "\n".join(bullet_points))
 
         # YouTube Links
         yt_links: list[str] = []
@@ -199,7 +271,8 @@ class SEOEngine:
         elif self.reqs.cta_required:
             yt_cta = "👉 Check out the official link above!"
         else:
-            yt_cta = "👉 Subscribe for daily viral highlights and official updates! #Shorts"
+            channel_name = self.reqs.brand_name or "Future Founders"
+            yt_cta = f"👉 Subscribe to {channel_name} for daily highlights! #Shorts"
         desc_parts.append(yt_cta)
 
         # YouTube Mentions (clean creator attribution, zero robotic 'Tagging @' prefix)
@@ -295,13 +368,13 @@ class SEOEngine:
         ig_rules = self.seo_spec.instagram_rules if self.seo_spec else None
 
         # 1. First-Line Hook: Must be <= 125 chars (the fold before '...more' on mobile)
-        clean_hook = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,;: ")
-        if clean_hook.islower():
-            clean_hook = clean_hook.title()
+        clean_hook = strip_conversational_filler(re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,;: "))
+        first_line_hook = to_title_case(clean_hook)
         from .sanitizer import sanitize_public_text
-        first_line_hook = sanitize_public_text(clean_hook, is_title=True)
+        first_line_hook = sanitize_public_text(first_line_hook, is_title=True)
         if not first_line_hook or len(first_line_hook) < 10:
-            first_line_hook = f"The Real Secret Behind {topic_cue}"
+            brand_label = f"{self.reqs.brand_name}: " if self.reqs.brand_name and "alamr" not in self.reqs.brand_name.lower() else ""
+            first_line_hook = f"{brand_label}The Real Secret Behind {topic_cue}"
         if len(first_line_hook) > 120:
             first_line_hook = first_line_hook[:120].rsplit(" ", 1)[0]
         first_line_hook = sanitize_public_text(first_line_hook, is_title=True)
@@ -506,16 +579,21 @@ class SEOEngine:
         return store.create_clip_metadata(record)
 
     def _synthesize_title(self, hook: str, topic: str, slice_text: str) -> str:
-        """Synthesizes a compelling, high-CTR viral title (<=100 chars, optimal 45-75 chars)."""
+        """Synthesizes a compelling, high-CTR viral title (<=95 chars, optimal 35-75 chars)."""
         candidate_title = ""
-        clean_hook = hook.strip().rstrip(".!?,;: ")
-        clean_topic = topic.strip().rstrip(".!?,;: ")
+        clean_hook = strip_conversational_filler(hook)
+        clean_topic = strip_conversational_filler(topic)
+        brand = (self.reqs.brand_name or "").strip()
+        if brand.lower() in ("alamr", "autoclip", "normalized campaign"):
+            brand = ""
 
+        # 1. Brief Title Patterns
         if self.reqs.title_patterns:
-            pat = self.reqs.title_patterns[0]
-            candidate_title = pat.replace("{hook}", clean_hook).replace("{topic}", clean_topic)
-            if "{" in candidate_title:
-                candidate_title = clean_hook or clean_topic
+            for pat in self.reqs.title_patterns:
+                filled = pat.replace("{hook}", clean_hook).replace("{topic}", clean_topic or brand or "This")
+                if "{" not in filled and len(filled.strip()) >= 10:
+                    candidate_title = filled.strip()
+                    break
 
         generic_markers = {
             "viral stream highlight", "you won't believe this", "insane moment caught on live",
@@ -523,32 +601,43 @@ class SEOEngine:
             "key insight", "stream highlight"
         }
 
-        # 1. Spoken Hook or Specific Topic from clip
+        # 2. Extract thesis / punchy sentence from transcript if hook is too short or rambling
         if not candidate_title:
             is_generic = (not clean_hook) or any(g == clean_hook.lower() or f"{g} #" in clean_hook.lower() for g in generic_markers)
-            if not is_generic and len(clean_hook) >= 8:
-                candidate_title = clean_hook
+
+            if not is_generic and len(clean_hook) >= 10:
+                if brand and brand.lower() not in clean_hook.lower() and len(f"{brand}: {clean_hook}") <= 65:
+                    candidate_title = f"{brand}: {clean_hook}"
+                else:
+                    candidate_title = clean_hook
             elif clean_topic and not any(g in clean_topic.lower() for g in ("highlight", "clip", "key insight")):
-                candidate_title = clean_topic
+                candidate_title = f"{clean_topic}" if not brand or brand.lower() in clean_topic.lower() else f"{brand} — {clean_topic}"
             elif slice_text and len(slice_text) > 15:
                 clean_s = re.sub(r"[^\w\s\?!.,'\"]", "", slice_text).strip()
-                sentences = [s.strip() for s in re.split(r"[.!?]", clean_s) if 10 <= len(s.strip()) <= 55]
-                if sentences and not any(w in sentences[0].lower() for w in ("welcome", "subscribe", "hello", "thank")):
-                    candidate_title = f'"{sentences[0].strip().capitalize()}"'
+                sentences = [strip_conversational_filler(s.strip()) for s in re.split(r"[.!?]", clean_s) if 12 <= len(s.strip()) <= 60]
+                valid_sentences = [s for s in sentences if not any(w in s.lower() for w in ("welcome", "subscribe", "hello", "thank", "click", "link"))]
+                if valid_sentences:
+                    best_s = valid_sentences[0]
+                    candidate_title = f"{brand}: {best_s}" if brand and brand.lower() not in best_s.lower() and len(f"{brand}: {best_s}") <= 65 else best_s
                 else:
                     words = slice_text.split()
                     if len(words) >= 4:
-                        candidate_title = " ".join(words[:6]).strip().capitalize()
+                        candidate_title = " ".join(words[:6]).strip()
 
-        # 2. Viral Niche Fallback if still generic
+        # 3. Viral Niche Fallback if still empty or generic
         if not candidate_title or any(g in candidate_title.lower() for g in ("highlight #", "key insight", "stream highlight")):
-            niche_context = f"{self.reqs.campaign_title} {clean_topic} {' '.join(self.reqs.required_hashtags)}".lower()
+            niche_context = f"{self.reqs.campaign_title} {clean_topic} {brand} {' '.join(self.reqs.required_hashtags)}".lower()
             if any(k in niche_context for k in ("game", "gaming", "stream", "clutch", "aim", "hardscope", "neon")):
-                candidate_title = "Bro really thought he was safe here 💀"
-            elif any(k in niche_context for k in ("podcast", "talk", "business", "founder", "money", "startup")):
-                candidate_title = "The harsh truth nobody wants to hear 😳"
+                candidate_title = "He Really Thought He Was Safe Here 💀"
+            elif any(k in niche_context for k in ("podcast", "talk", "business", "founder", "money", "startup", "invest")):
+                candidate_title = f"{brand + ': ' if brand else ''}The Harsh Truth Nobody Wants to Hear 😳"
+            elif any(k in niche_context for k in ("housing", "boxabl", "real estate", "tech", "build", "future")):
+                candidate_title = f"{brand + ' ' if brand else ''}Could Change Everything 🏠"
             else:
-                candidate_title = "Wait for the reaction at the end 😂"
+                candidate_title = "Wait For The Reaction At The End 😂"
+
+        # Apply Title Casing
+        candidate_title = to_title_case(candidate_title)
 
         from .sanitizer import sanitize_public_text
         candidate_title = sanitize_public_text(candidate_title, is_title=True)
@@ -557,15 +646,13 @@ class SEOEngine:
             if term.lower() in candidate_title.lower():
                 candidate_title = re.sub(rf"\b{re.escape(term)}\b", "", candidate_title, flags=re.IGNORECASE).strip()
 
-        # Ensure #Shorts is included for platform compliance
-        if "#shorts" not in candidate_title.lower():
-            if len(candidate_title) + 8 <= 95:
-                candidate_title = f"{candidate_title} #Shorts"
+        # Ensure #Shorts is included cleanly
+        candidate_title = re.sub(r"#shorts\b", "", candidate_title, flags=re.IGNORECASE).strip()
+        if len(candidate_title) > 85:
+            candidate_title = candidate_title[:82].rsplit(" ", 1)[0] + "..."
+        candidate_title = f"{candidate_title} #Shorts"
 
-        if len(candidate_title) > 95:
-            candidate_title = candidate_title[:90].rsplit(" ", 1)[0] + "... #Shorts"
-
-        return candidate_title or "Viral Highlight Caught on Stream 💀 #Shorts"
+        return candidate_title
 
     def _synthesize_description(self, hook: str, slice_text: str, topic: str) -> str:
         """Synthesizes an informative, campaign-compliant description formatted for

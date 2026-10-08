@@ -129,6 +129,7 @@ ignore = ["B008"]  # typer/fastapi use function calls in argument defaults by de
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "backend"]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [

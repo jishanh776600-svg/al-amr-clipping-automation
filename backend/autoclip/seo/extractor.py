@@ -37,7 +37,7 @@ GARBAGE_HASHTAG_SUBSTRINGS = (
     "budget", "cpm", "views", "maxper", "readthis", "footage", "drive", "google",
     "docx", "pdf", "payment", "payout", "deadline", "tier1", "tier-1", "050per",
     "rules", "guideline", "sop", "submission", "howtomake", "discord", "ticket",
-    "alamr", "autoclip",
+    "autoclip",
 )
 
 
@@ -59,7 +59,7 @@ def is_clean_public_mention(mention: str) -> bool:
     clean = mention.strip().lstrip("@").lower()
     if not clean or len(clean) < 2 or len(clean) > 30:
         return False
-    if any(bad in clean for bad in ("sop", "rule", "guideline", "reject", "discord", "ticket", "alamr")):
+    if any(bad in clean for bad in ("sop", "rule", "guideline", "reject", "discord", "ticket", "autoclip")):
         return False
     return True
 

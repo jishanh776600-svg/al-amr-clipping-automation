@@ -165,6 +165,7 @@ class CampaignSpecification:
 
     campaign_id: str = field(default_factory=generate_campaign_id)
     title: str = "Normalized Campaign"
+    brand_name: str | None = None
     description: str = ""
     objective: str = ""
     target_audience: str = ""

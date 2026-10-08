@@ -396,8 +396,12 @@ def test_api_metadata_endpoints(initialised_db):
     engine = SEOEngine.from_campaign_spec(None)
     meta = engine.generate_for_clip(clip, transcript_text="API testing transcript.")
 
+    from autoclip.api.auth import get_valid_api_keys
+    valid_keys = get_valid_api_keys()
+    headers = {"Authorization": f"Bearer {valid_keys[0]}"} if valid_keys else {}
+
     # 1. GET /api/jobs/{job_id}/metadata
-    res_list = client.get(f"/api/jobs/{job.id}/metadata")
+    res_list = client.get(f"/api/jobs/{job.id}/metadata", headers=headers)
     assert res_list.status_code == 200
     data_list = res_list.json()
     assert len(data_list) == 1
@@ -412,7 +416,7 @@ def test_api_metadata_endpoints(initialised_db):
         "final_mentions": ["@alamr_dev"],
         "final_cta": "Subscribe now!",
     }
-    res_patch = client.patch(f"/api/jobs/{job.id}/clips/{clip.id}/metadata", json=patch_payload)
+    res_patch = client.patch(f"/api/jobs/{job.id}/clips/{clip.id}/metadata", json=patch_payload, headers=headers)
     assert res_patch.status_code == 200
     patched_data = res_patch.json()
     assert patched_data["final_title"] == "Patched Final Title"
@@ -422,7 +426,7 @@ def test_api_metadata_endpoints(initialised_db):
     assert patched_data["is_publish_ready"] is True
 
     # 3. PATCH reset_to_generated
-    res_reset = client.patch(f"/api/jobs/{job.id}/clips/{clip.id}/metadata", json={"action": "reset_to_generated"})
+    res_reset = client.patch(f"/api/jobs/{job.id}/clips/{clip.id}/metadata", json={"action": "reset_to_generated"}, headers=headers)
     assert res_reset.status_code == 200
     reset_data = res_reset.json()
     assert reset_data["final_title"] == meta.generated_title
