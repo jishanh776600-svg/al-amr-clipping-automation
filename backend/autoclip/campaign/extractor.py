@@ -533,12 +533,14 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
                 if norm_tag not in hashtags:
                     hashtags.append(norm_tag)
 
+    from ..seo.extractor import is_clean_public_hashtag
+
     # Ensure brand tag is present if brand was discovered
     for b in branding_rules:
         clean_bt = re.sub(r"[^\w]", "", b)
-        if clean_bt and clean_bt.lower() not in ENGLISH_STOPWORDS:
+        if clean_bt and 2 <= len(clean_bt) <= 20 and clean_bt.lower() not in ENGLISH_STOPWORDS:
             b_tag = f"#{clean_bt}"
-            if b_tag not in hashtags:
+            if is_clean_public_hashtag(b_tag) and b_tag not in hashtags:
                 hashtags.append(b_tag)
 
     # Filter out garbage hashtags and banned words
@@ -546,7 +548,7 @@ def parse_guidelines_into_brief(raw_text: str, filename: str = "Guideline") -> C
     hashtags = [
         h for h in hashtags
         if not h.startswith("#@")
-        and len(h) > 2
+        and is_clean_public_hashtag(h)
         and h.lstrip("#").lower() not in ENGLISH_STOPWORDS
         and h.lstrip("#").lower() not in banned_set
         and h.lstrip("#").lower() not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips")

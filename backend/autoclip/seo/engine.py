@@ -138,8 +138,12 @@ class SEOEngine:
             if norm_m.lower() not in [t.lower() for t in resolved]:
                 resolved.append(norm_m)
 
+        from .extractor import is_clean_public_hashtag
+
         for t in raw_tags:
             norm_t = t if t.startswith("#") else f"#{t}"
+            if not is_clean_public_hashtag(norm_t):
+                continue
             # Skip if this tag belongs to a DIFFERENT show in show_mappings!
             if norm_t.lower() in other_show_tags and norm_t.lower() != (matched_show_tag or "").lower():
                 continue
@@ -230,7 +234,7 @@ class SEOEngine:
         # Ensure all required campaign hashtags are 100% included
         for req_h in self.reqs.required_hashtags:
             norm_rh = req_h if req_h.startswith("#") else f"#{req_h}"
-            if norm_rh.lower() not in [t.lower() for t in yt_tags]:
+            if is_clean_public_hashtag(norm_rh) and norm_rh.lower() not in [t.lower() for t in yt_tags]:
                 yt_tags.append(norm_rh)
 
         desc_parts.append(" ".join(yt_tags))
@@ -625,7 +629,9 @@ class SEOEngine:
 
     def _synthesize_hashtags(self, slice_text: str) -> list[str]:
         """Synthesizes deduplicated hashtags starting with campaign-required hashtags."""
-        tags: list[str] = [t for t in self.reqs.required_hashtags if "alamr" not in t.lower()]
+        from .extractor import is_clean_public_hashtag
+
+        tags: list[str] = [t for t in self.reqs.required_hashtags if "alamr" not in t.lower() and is_clean_public_hashtag(t)]
         clean_tags_lower = [t.lower().lstrip("#") for t in tags]
 
         words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
@@ -638,14 +644,18 @@ class SEOEngine:
 
         candidate_tags = ["#Shorts", "#Reels", "#Viral", "#Founders", "#Mindset", "#Success"]
         if self.reqs.brand_name and "alamr" not in self.reqs.brand_name.lower():
-            b_tag = "#" + re.sub(r"[^\w]", "", self.reqs.brand_name)
-            if b_tag.lower() not in [t.lower() for t in candidate_tags] and b_tag.lower().lstrip("#") not in clean_tags_lower:
-                candidate_tags.insert(0, b_tag)
+            clean_b = re.sub(r"[^\w]", "", self.reqs.brand_name)
+            if 2 <= len(clean_b) <= 20:
+                b_tag = f"#{clean_b}"
+                if is_clean_public_hashtag(b_tag):
+                    if b_tag.lower() not in [t.lower() for t in candidate_tags] and b_tag.lower().lstrip("#") not in clean_tags_lower:
+                        candidate_tags.insert(0, b_tag)
 
         for w in words:
             wl = w.lower()
-            if wl not in stopwords and wl not in prohibited_set and wl not in clean_tags_lower and "alamr" not in wl and "autoclip" not in wl:
-                candidate_tags.append(f"#{w.capitalize()}")
+            tag_w = f"#{w.capitalize()}"
+            if is_clean_public_hashtag(tag_w) and wl not in stopwords and wl not in prohibited_set and wl not in clean_tags_lower and "alamr" not in wl and "autoclip" not in wl:
+                candidate_tags.append(tag_w)
                 clean_tags_lower.append(wl)
                 if len(candidate_tags) >= 8:
                     break

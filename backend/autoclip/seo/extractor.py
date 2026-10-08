@@ -32,6 +32,38 @@ def _normalize_hashtag(hashtag: str) -> str:
     return h
 
 
+GARBAGE_HASHTAG_SUBSTRINGS = (
+    "wontgetpaid", "getpaid", "rejected", "rejection", "loweffort", "slop", "bait",
+    "budget", "cpm", "views", "maxper", "readthis", "footage", "drive", "google",
+    "docx", "pdf", "payment", "payout", "deadline", "tier1", "tier-1", "050per",
+    "rules", "guideline", "sop", "submission", "howtomake", "discord", "ticket",
+    "alamr", "autoclip",
+)
+
+
+def is_clean_public_hashtag(tag: str) -> bool:
+    clean = tag.strip().lstrip("#").lower()
+    if not clean or len(clean) < 2 or len(clean) > 24:
+        return False
+    if clean.isdigit():
+        return False
+    if any(bad in clean for bad in GARBAGE_HASHTAG_SUBSTRINGS):
+        return False
+    # Must contain at least one letter
+    if not re.search(r"[a-z]", clean):
+        return False
+    return True
+
+
+def is_clean_public_mention(mention: str) -> bool:
+    clean = mention.strip().lstrip("@").lower()
+    if not clean or len(clean) < 2 or len(clean) > 30:
+        return False
+    if any(bad in clean for bad in ("sop", "rule", "guideline", "reject", "discord", "ticket", "alamr")):
+        return False
+    return True
+
+
 def extract_campaign_seo_requirements(
     campaign_spec: Any | None,
 ) -> CampaignSEORequirements:
@@ -114,7 +146,7 @@ def extract_campaign_seo_requirements(
     clean_mentions = []
     for m in required_mentions:
         clean_m = m.lstrip("@").lower()
-        if clean_m not in prohibited_lower and clean_m not in ("of", "in", "your", "content", "anywhere", "required", "mandatory"):
+        if is_clean_public_mention(m) and clean_m not in prohibited_lower and clean_m not in ("of", "in", "your", "content", "anywhere", "required", "mandatory"):
             if m not in clean_mentions:
                 clean_mentions.append(m)
     required_mentions = clean_mentions
@@ -123,7 +155,7 @@ def extract_campaign_seo_requirements(
     clean_hashtags = []
     for h in required_hashtags:
         clean_h = h.lstrip("#").lower()
-        if not h.startswith("#@") and clean_h not in prohibited_lower and clean_h not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips"):
+        if not h.startswith("#@") and clean_h not in prohibited_lower and is_clean_public_hashtag(h) and clean_h not in ("required", "mandatory", "show", "hashtag", "hashtags", "tags", "tag", "and", "uses", "the", "every", "clip", "clips"):
             if h not in clean_hashtags:
                 clean_hashtags.append(h)
     required_hashtags = clean_hashtags
@@ -172,13 +204,13 @@ def extract_campaign_seo_requirements(
         raw_tags = re.findall(r"#[A-Za-z0-9_]+", raw_text_corpus)
         for rt in raw_tags:
             norm_rt = _normalize_hashtag(rt)
-            if norm_rt.lower().lstrip("#") not in prohibited_lower and norm_rt not in clean_hashtags:
+            if is_clean_public_hashtag(norm_rt) and norm_rt.lower().lstrip("#") not in prohibited_lower and norm_rt not in clean_hashtags:
                 clean_hashtags.append(norm_rt)
 
         raw_mentions = re.findall(r"@[A-Za-z0-9_]+", raw_text_corpus)
         for rm in raw_mentions:
             norm_rm = _normalize_mention(rm)
-            if norm_rm.lower().lstrip("@") not in prohibited_lower and norm_rm not in clean_mentions:
+            if is_clean_public_mention(norm_rm) and norm_rm.lower().lstrip("@") not in prohibited_lower and norm_rm not in clean_mentions:
                 clean_mentions.append(norm_rm)
 
         if not campaign_url:

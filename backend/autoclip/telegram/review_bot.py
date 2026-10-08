@@ -392,7 +392,12 @@ async def send_clip_review(
     yt_desc_snippet = yt_desc[:70] + ("..." if len(yt_desc) > 70 else "")
     safe_yt_desc = html.escape(yt_desc_snippet)
 
-    yt_tags_list = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts"])
+    from autoclip.seo.extractor import is_clean_public_hashtag
+
+    yt_raw_tags = yt_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#Shorts"])
+    yt_tags_list = [t for t in yt_raw_tags if is_clean_public_hashtag(t)]
+    if not yt_tags_list:
+        yt_tags_list = ["#Shorts"]
     safe_yt_tags = html.escape(" ".join(yt_tags_list[:4]))
 
     yt_mentions_list = yt_data.get("mentions") or []
@@ -407,7 +412,10 @@ async def send_clip_review(
     ig_caption_snippet = ig_caption[:70] + ("..." if len(ig_caption) > 70 else "")
     safe_ig_caption = html.escape(ig_caption_snippet)
 
-    ig_tags_list = ig_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#reels"])
+    ig_raw_tags = ig_data.get("hashtags") or (clip_meta.final_hashtags if clip_meta else ["#reels"])
+    ig_tags_list = [t for t in ig_raw_tags if is_clean_public_hashtag(t)]
+    if not ig_tags_list:
+        ig_tags_list = ["#reels"]
     safe_ig_tags = html.escape(" ".join(ig_tags_list[:4]))
 
     ig_mentions_list = ig_data.get("mentions") or []
@@ -1285,7 +1293,13 @@ async def _execute_auto_publish(
             ch_name = (yt_rec.response_metadata or {}).get("channel_title") or (yt_rec.response_metadata or {}).get("channelTitle") or "YouTube"
             platforms_status["YouTube Shorts"] = f"✅ Published ({ch_name})"
         elif yt_rec and yt_rec.error_code == "channel_mismatch":
-            platforms_status["YouTube Shorts"] = "❌ Wrong channel — publication blocked"
+            clean_err = yt_rec.error_message or ""
+            m = re.search(r"authenticated account is '([^']+)'", clean_err, re.IGNORECASE)
+            auth_name = m.group(1) if m else ""
+            if auth_name:
+                platforms_status["YouTube Shorts"] = f"❌ Wrong channel ({auth_name}) — publication blocked"
+            else:
+                platforms_status["YouTube Shorts"] = "❌ Wrong channel — publication blocked"
         elif yt_rec and yt_rec.error_code == "visibility_incorrect":
             platforms_status["YouTube Shorts"] = "❌ Visibility is unlisted — publication not accepted"
         elif yt_rec and (yt_rec.error_code == "processing_incomplete" or yt_rec.status in ("PROCESSING", "UPLOAD_ACCEPTED")):
