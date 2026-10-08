@@ -26,7 +26,7 @@ SUPPORTED_MIME_TYPES = {
     "application/octet-stream",
 }
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
 ENGLISH_STOPWORDS: set[str] = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",

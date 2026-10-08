@@ -782,6 +782,60 @@ export function Settings() {
           />
         </div>
 
+        {/* Aesthetic Frame Layout & Channel Branding */}
+        <div className="mt-6 rounded-lg border border-ink-800 bg-ink-950/60 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+              Aesthetic Frame Layout & Branding
+            </span>
+            <span className="text-[10px] rounded bg-sodium-500/10 text-sodium-400 px-2 py-0.5 border border-sodium-500/20 font-medium">
+              TikTok & Shorts Style
+            </span>
+          </div>
+          <p className="text-xs text-ink-400 mb-4">
+            Centers clips as a modern floating card with anti-aliased rounded edges, motion-blurred background (no dead black bars), persistent channel header, and subscribe CTA.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Vertical frame style"
+              value={settings.export.frame_layout || 'aesthetic_card'}
+              onChange={(value) => patch({ export: { ...settings.export, frame_layout: value as any } })}
+              options={['aesthetic_card', 'crop_fill', 'fit_pad']}
+              labels={{
+                aesthetic_card: '✨ Aesthetic Card (Rounded Corners + Blurred Background)',
+                crop_fill: 'Full Screen Fill (Edge Crop)',
+                fit_pad: 'Center Fit (Letterbox Black Bars)',
+              }}
+            />
+            <Select
+              label="Card Corner Radius"
+              value={String(settings.export.card_corner_radius ?? 44)}
+              onChange={(value) => patch({ export: { ...settings.export, card_corner_radius: Number(value) } })}
+              options={['44', '24', '16', '0']}
+              labels={{
+                '44': 'Smooth Rounded (44px - Recommended)',
+                '24': 'Subtle Rounded (24px)',
+                '16': 'Slight Curve (16px)',
+                '0': 'Sharp Square (0px)',
+              }}
+            />
+            <Field
+              label="Channel Header Branding"
+              placeholder="e.g. ⚡ FUTURE FOUNDERS"
+              value={settings.export.channel_header_text ?? '⚡ FUTURE FOUNDERS'}
+              onCommit={(value) => patch({ export: { ...settings.export, channel_header_text: value } })}
+              hint="Persistent channel title shown at the top of vertical clips."
+            />
+            <Field
+              label="Bottom Footer Call-to-Action"
+              placeholder="e.g. SUBSCRIBE FOR DAILY DROPS"
+              value={settings.export.cta_footer_text ?? 'SUBSCRIBE FOR DAILY DROPS'}
+              onCommit={(value) => patch({ export: { ...settings.export, cta_footer_text: value } })}
+              hint="Call to action shown near the bottom of vertical clips."
+            />
+          </div>
+        </div>
+
         <label className="mt-5 flex items-start gap-3 text-sm text-ink-200">
           <input
             type="checkbox"

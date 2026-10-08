@@ -498,7 +498,7 @@ async def send_clip_review(
         effective_media_path = await asyncio.to_thread(materialize_valid_clip_media, clip_id)
 
     def _generate_tg_preview(source_p: Path) -> Path | None:
-        """Create a fast, lightweight MP4 (<=25MB) using ffmpeg for Telegram delivery."""
+        """Create a fast, lightweight MP4 (<=19MB) using ffmpeg for Telegram delivery and getFile download compatibility."""
         try:
             import subprocess
             with tempfile.NamedTemporaryFile(suffix="_tg_prev.mp4", delete=False) as prev_tf:
@@ -506,12 +506,13 @@ async def send_clip_review(
             cmd = [
                 "ffmpeg", "-y", "-i", str(source_p),
                 "-vf", "scale='min(720,iw)':-2",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                "-fs", "19500000",
                 "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
                 "-movflags", "+faststart",
                 str(prev_path),
             ]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
             if res.returncode == 0 and prev_path.is_file() and prev_path.stat().st_size > 1000:
                 log.info("Compressed Telegram preview video created: %s (%.1f MB)", prev_path, prev_path.stat().st_size / (1024 * 1024))
                 return prev_path
@@ -520,13 +521,13 @@ async def send_clip_review(
         return None
 
     try:
-        # Attempt 1: Send real video preview (compress if > 48MB so 100% of clips get inline video)
+        # Attempt 1: Send real video preview (compress if > 19MB so Telegram getFile can download it back)
         if effective_media_path and effective_media_path.exists():
             size_mb = effective_media_path.stat().st_size / (1024 * 1024)
             video_to_upload = effective_media_path
 
-            if size_mb > 48:
-                log.info("Clip %s size (%.1f MB) exceeds Telegram 48MB direct limit. Generating fast preview...", clip_id, size_mb)
+            if size_mb > 19:
+                log.info("Clip %s size (%.1f MB) exceeds Telegram 19MB bot getFile download limit. Generating fast preview...", clip_id, size_mb)
                 compressed = await asyncio.to_thread(_generate_tg_preview, effective_media_path)
                 if compressed:
                     preview_file_to_clean = compressed

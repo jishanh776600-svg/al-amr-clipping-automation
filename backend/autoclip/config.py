@@ -193,6 +193,14 @@ class ExportSettings(BaseModel):
     crf: int = 18
     #: Also write a .srt sidecar next to each exported clip.
     write_srt: bool = False
+    #: Modern TikTok/Reels aesthetic floating card with rounded corners and blurred background.
+    frame_layout: Literal["aesthetic_card", "fit_pad", "crop_fill"] = "aesthetic_card"
+    #: Persistent channel branding text at the top header of aesthetic cards.
+    channel_header_text: str = "⚡ FUTURE FOUNDERS"
+    #: Persistent call-to-action text at the bottom footer of aesthetic cards.
+    cta_footer_text: str = "SUBSCRIBE FOR DAILY DROPS"
+    #: Corner radius (in pixels) for the floating center card.
+    card_corner_radius: int = 44
 
 
 class Settings(BaseModel):

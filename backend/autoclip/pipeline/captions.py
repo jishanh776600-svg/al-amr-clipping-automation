@@ -1107,10 +1107,11 @@ def create_hook_headline_event(
     end_s: float = 3.0,
     offset: float = 0.0,
     style: CaptionStyle | None = None,
+    placement: str = "top",
 ) -> pysubs2.SSAEvent:
-    """Creates a top-positioned high-impact 2-3 line hook headline card in ASS.
+    """Creates a high-impact 2-3 line hook headline card in ASS.
 
-    Uses \\an8 (top-center) and stacked lines (\\N) with semantic highlighting.
+    Uses \\an8 (top-center) or \\an2 (below card) and stacked lines (\\N) with semantic highlighting.
     """
     lines = [line.strip() for line in headline.replace("\\N", "\n").splitlines() if line.strip()]
     if not lines:
@@ -1129,7 +1130,10 @@ def create_hook_headline_event(
                 colored_tokens.append(tok.upper())
         formatted_lines.append(" ".join(colored_tokens))
 
-    stacked_text = r"{\an8\fs75\b1}" + r"\N".join(formatted_lines)
+    if placement == "below":
+        stacked_text = r"{\an2\fs72\b1}" + r"\N".join(formatted_lines)
+    else:
+        stacked_text = r"{\an8\fs75\b1}" + r"\N".join(formatted_lines)
     return pysubs2.SSAEvent(
         start=pysubs2.make_time(s=max(0.0, start_s - offset)),
         end=pysubs2.make_time(s=max(0.0, end_s - offset)),
@@ -1178,6 +1182,8 @@ def build_ass(
     climax_window: tuple[float, float] | None = None,
     cta_window: tuple[float, float] | None = None,
     hook_headline: str | None = None,
+    channel_header: str | None = None,
+    cta_footer: str | None = None,
 ) -> pysubs2.SSAFile:
     """Build an ASS subtitle file for a clip with dynamic styling and safety margins."""
     subs = pysubs2.SSAFile()
@@ -1187,20 +1193,69 @@ def build_ass(
     subs.info["WrapStyle"] = "0"
 
     scale = height / REFERENCE_HEIGHT
-    margin_v = calculate_caption_safe_margin(
-        crop_path=crop_path,
-        height=height,
-        style=style,
-        composition_record=composition_record,
-    )
+    is_aesthetic = bool(channel_header and channel_header.strip())
+    if is_aesthetic:
+        margin_v = round(height * 0.20)  # ~384px from bottom = Y ~1180-1535 (perfect gap below card)
+    else:
+        margin_v = calculate_caption_safe_margin(
+            crop_path=crop_path,
+            height=height,
+            style=style,
+            composition_record=composition_record,
+        )
 
     subs.styles[STYLE_NAME] = _build_ass_style(
         style, height=height, scale=scale, margin_v=margin_v, width=width
     )
 
+    # Optional Aesthetic Persistent Channel Header Branding
+    if channel_header and channel_header.strip():
+        header_style = pysubs2.SSAStyle()
+        header_style.fontname = "Arial"
+        header_style.fontsize = round(height * 0.025)
+        header_style.primarycolor = hex_to_ass("#FFFFFF")
+        header_style.outlinecolor = hex_to_ass("#000000")
+        header_style.outline = 3.0 * scale
+        header_style.shadow = 2.0 * scale
+        header_style.bold = True
+        header_style.alignment = pysubs2.Alignment.TOP_CENTER
+        header_style.marginv = int(height * 0.20)  # ~384px from top
+        subs.styles["BrandHeader"] = header_style
+        subs.events.append(
+            pysubs2.SSAEvent(
+                start=0,
+                end=pysubs2.make_time(m=10),
+                style="BrandHeader",
+                text=f"{{\\b1}}{channel_header.strip()}",
+            )
+        )
+
+    # Optional Aesthetic Persistent Footer CTA
+    if cta_footer and cta_footer.strip():
+        footer_style = pysubs2.SSAStyle()
+        footer_style.fontname = "Arial"
+        footer_style.fontsize = round(height * 0.019)
+        footer_style.primarycolor = hex_to_ass("#FFFFFF")
+        footer_style.outlinecolor = hex_to_ass("#000000")
+        footer_style.outline = 2.0 * scale
+        footer_style.shadow = 2.0 * scale
+        footer_style.bold = True
+        footer_style.alignment = pysubs2.Alignment.BOTTOM_CENTER
+        footer_style.marginv = int(height * 0.12)  # ~230px from bottom
+        subs.styles["BrandFooter"] = footer_style
+        subs.events.append(
+            pysubs2.SSAEvent(
+                start=0,
+                end=pysubs2.make_time(m=10),
+                style="BrandFooter",
+                text=f"{cta_footer.strip()}",
+            )
+        )
+
     # Optional Hook Headline Card (0-3s, stacked lines with semantic colors)
     if hook_headline:
         headline_end = min(3.0, (words[-1].end - time_offset_s) if words else 3.0)
+        hook_placement = "below" if is_aesthetic else "top"
         subs.events.append(
             create_hook_headline_event(
                 hook_headline,
@@ -1208,6 +1263,7 @@ def build_ass(
                 end_s=max(1.0, headline_end),
                 offset=0.0,
                 style=style,
+                placement=hook_placement,
             )
         )
 
@@ -1269,6 +1325,8 @@ def write_ass(
     climax_window: tuple[float, float] | None = None,
     cta_window: tuple[float, float] | None = None,
     hook_headline: str | None = None,
+    channel_header: str | None = None,
+    cta_footer: str | None = None,
 ) -> Path:
     """Render captions to an .ass file and return its path."""
     subs = build_ass(
@@ -1283,6 +1341,8 @@ def write_ass(
         climax_window=climax_window,
         cta_window=cta_window,
         hook_headline=hook_headline,
+        channel_header=channel_header,
+        cta_footer=cta_footer,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     subs.save(str(path), encoding="utf-8")

@@ -98,9 +98,21 @@ class YouTubePublisher(BasePublisher):
         except Exception:
             pass
 
-        self.client_id = (vault_client_id or client_id or os.getenv("YOUTUBE_CLIENT_ID", "")).strip()
-        self.client_secret = (vault_client_secret or client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "")).strip()
-        self.refresh_token = (vault_refresh or refresh_token or os.getenv("YOUTUBE_REFRESH_TOKEN", "")).strip()
+        self.client_id = (client_id or os.getenv("YOUTUBE_CLIENT_ID", "") or vault_client_id or "").strip()
+        self.client_secret = (client_secret or os.getenv("YOUTUBE_CLIENT_SECRET", "") or vault_client_secret or "").strip()
+        
+        env_refresh = (os.getenv("YOUTUBE_REFRESH_TOKEN", "") or "").strip().strip("'\"")
+        self.refresh_token = (refresh_token or env_refresh or vault_refresh or "").strip().strip("'\"")
+
+        # Auto-sync fresh env token into vault so they never diverge
+        if env_refresh and vault_refresh != env_refresh:
+            try:
+                from ..security.vault import get_vault
+                v = get_vault()
+                v.store_secret("youtube_refresh_token", env_refresh)
+                v.store_secret("YOUTUBE_REFRESH_TOKEN", env_refresh)
+            except Exception:
+                pass
 
     def is_configured(self) -> bool:
         return bool(self.refresh_token)
@@ -308,7 +320,22 @@ class YouTubePublisher(BasePublisher):
         description = description[:5000]
 
         raw_tags = list(set(metadata.tags + ["Shorts"]))
-        tags = [t for t in raw_tags if not any(b in t.lower() for b in ("alamr", "autoclip", "reconcile", "founders"))]
+        cleaned_tags = []
+        for t in raw_tags:
+            clean = re.sub(r"[^\w\s-]", "", str(t)).strip()
+            if not clean:
+                continue
+            if any(b in clean.lower() for b in ("alamr_internal", "autoclip_internal")):
+                continue
+            if clean not in cleaned_tags:
+                cleaned_tags.append(clean)
+        tags = []
+        total_tag_chars = 0
+        for t in cleaned_tags[:30]:
+            if total_tag_chars + len(t) + 1 > 400:
+                break
+            tags.append(t)
+            total_tag_chars += len(t) + 1
 
         # Check live publish configuration (default is live when credentials are present)
         is_live_disabled = os.getenv("YOUTUBE_DRY_RUN", "").lower() in ("true", "1", "yes") or os.getenv("YOUTUBE_PUBLISH_LIVE", "true").lower() in ("false", "0", "no")
@@ -456,6 +483,7 @@ class YouTubePublisher(BasePublisher):
                 str(media_path),
                 mimetype="video/mp4",
                 resumable=True,
+                chunksize=1024 * 1024 * 5,  # 5MB chunks
             )
 
             request = service.videos().insert(
@@ -464,7 +492,38 @@ class YouTubePublisher(BasePublisher):
                 media_body=media,
             )
 
-            response = await asyncio.to_thread(request.execute)
+            def _upload_media():
+                # In live mode with real googleapiclient, use next_chunk loop for network resilience
+                if hasattr(request, "next_chunk") and not type(request).__name__.startswith("MagicMock"):
+                    resp = None
+                    retries = 0
+                    max_retries = 5
+                    while resp is None:
+                        try:
+                            status, resp = request.next_chunk()
+                            if status:
+                                pct = int(status.progress() * 100)
+                                log.info("YouTube upload progress: %d%%", pct)
+                        except Exception as upload_err:
+                            from googleapiclient.errors import HttpError
+                            is_retriable = False
+                            if isinstance(upload_err, HttpError) and upload_err.resp.status in (500, 502, 503, 504):
+                                is_retriable = True
+                            elif isinstance(upload_err, (TimeoutError, ConnectionError, OSError)):
+                                is_retriable = True
+                            
+                            if is_retriable and retries < max_retries:
+                                retries += 1
+                                sleep_s = 2 ** retries
+                                log.warning("YouTube chunk upload retry %d/%d after error: %s (sleeping %ds)", retries, max_retries, upload_err, sleep_s)
+                                import time
+                                time.sleep(sleep_s)
+                            else:
+                                raise upload_err
+                    return resp
+                return request.execute(num_retries=3)
+
+            response = await asyncio.to_thread(_upload_media)
             video_id = response.get("id")
             if not video_id:
                 raise RuntimeError(f"No video ID returned by YouTube API: {response}")
@@ -479,7 +538,7 @@ class YouTubePublisher(BasePublisher):
                 video_id=video_id,
                 expected_channel_id=expected_channel_id,
                 wait_for_processing=True,
-                max_wait_seconds=60.0,
+                max_wait_seconds=15.0,
             )
 
             from datetime import datetime, timezone

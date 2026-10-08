@@ -837,6 +837,10 @@ export interface Settings {
     prefer_hardware_encoder: boolean
     crf: number
     write_srt: boolean
+    frame_layout?: 'aesthetic_card' | 'fit_pad' | 'crop_fill'
+    channel_header_text?: string
+    cta_footer_text?: string
+    card_corner_radius?: number
   }
   insecure_secret_storage: boolean
   keys_present: Record<string, boolean>

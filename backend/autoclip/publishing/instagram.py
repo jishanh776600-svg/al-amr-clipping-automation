@@ -100,15 +100,20 @@ class InstagramPublisher(BasePublisher):
         export_id: str | None = None,
         drive_link: str | None = None,
         auth_token: str | None = None,
+        video_url: str | None = None,
     ) -> str | None:
         """Resolves a direct binary video URL appropriate for Meta Graph API.
 
         Meta requires a direct media stream URL (not an HTML preview page).
         Priority:
-        1. Direct public media endpoint: /api/media/{clip_id}
-        2. Render Control Plane streaming endpoint: /api/exports/{id}/stream
-        3. Google Drive direct download URL derived from file ID if available.
+        1. Direct public video URL provided in call or metadata.
+        2. Direct public media endpoint: /api/media/{clip_id}
+        3. Render Control Plane streaming endpoint: /api/exports/{id}/stream
+        4. Google Drive direct download URL derived from file ID if available.
         """
+        if video_url and (video_url.startswith("http://") or video_url.startswith("https://")):
+            return video_url
+
         if self.control_plane_url and clip_id:
             return f"{self.control_plane_url}/api/media/{clip_id}"
 
@@ -149,11 +154,13 @@ class InstagramPublisher(BasePublisher):
         clip_id = metadata.extra.get("clip_id")
         export_id = metadata.extra.get("export_id")
         auth_token = metadata.extra.get("callback_token") or os.getenv("OPERATOR_TOKEN")
+        direct_video_url = metadata.extra.get("video_url") or metadata.extra.get("public_url")
         public_url = self.resolve_public_media_url(
             clip_id=clip_id,
             export_id=export_id,
             drive_link=drive_link,
             auth_token=auth_token,
+            video_url=direct_video_url,
         )
 
         # Dry run or validation
@@ -217,17 +224,6 @@ class InstagramPublisher(BasePublisher):
                 retryable=False,
             )
 
-        if not public_url:
-            return PublishingResult(
-                platform=self.platform_name,
-                destination_id=destination_id,
-                success=False,
-                status="failed",
-                error="Instagram Reels requires a publicly accessible video URL. Ensure CONTROL_PLANE_URL is configured.",
-                error_code="invalid_media",
-                retryable=False,
-            )
-
         from ..seo.sanitizer import sanitize_public_text
         clean_desc = sanitize_public_text(metadata.description or "", is_title=False)
         clean_title = sanitize_public_text(metadata.title or "", is_title=True)
@@ -255,73 +251,138 @@ class InstagramPublisher(BasePublisher):
 
         caption = base_caption[:2200].strip()
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Step 1: Create media container
-            create_url = f"{GRAPH_API_BASE}/{self.account_id}/media"
-            create_params = {
-                "media_type": "REELS",
-                "video_url": public_url,
-                "caption": caption,
-                "share_to_feed": "true",
-                "access_token": self.access_token,
-            }
-            create_resp = await client.post(create_url, data=create_params)
-            if create_resp.status_code != 200:
-                meta_err_msg = ""
-                meta_err_type = ""
-                meta_err_code = None
-                meta_err_subcode = None
-                meta_trace_id = ""
-                try:
-                    meta_json = create_resp.json()
-                    meta_err_obj = meta_json.get("error", {})
-                    meta_err_msg = meta_err_obj.get("message") or ""
-                    meta_err_type = meta_err_obj.get("type") or ""
-                    meta_err_code = meta_err_obj.get("code")
-                    meta_err_subcode = meta_err_obj.get("error_subcode")
-                    meta_trace_id = meta_err_obj.get("fbtrace_id") or ""
-                except Exception:
-                    pass
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            container_id = None
+            if not public_url:
+                # Resumable Binary Upload for local MP4 files
+                log.info("Instagram Publisher: Uploading local video %s via Meta Resumable Upload...", media_path.name)
+                init_url = f"{GRAPH_API_BASE}/{self.account_id}/media"
+                init_params = {
+                    "media_type": "REELS",
+                    "upload_type": "resumable",
+                    "caption": caption,
+                    "share_to_feed": "true",
+                    "access_token": self.access_token,
+                }
+                init_resp = await client.post(init_url, data=init_params)
+                if init_resp.status_code != 200:
+                    err = f"Failed to initialize Instagram Resumable Upload ({init_resp.status_code}): {init_resp.text}"
+                    code, retryable = classify_meta_error(init_resp.status_code, init_resp.text)
+                    return PublishingResult(
+                        platform=self.platform_name,
+                        destination_id=destination_id,
+                        success=False,
+                        status="failed",
+                        error=err,
+                        error_code=code,
+                        retryable=retryable,
+                    )
 
-                err_summary = meta_err_msg or create_resp.text or f"HTTP {create_resp.status_code}"
-                err = f"Failed to create Instagram Reel container ({create_resp.status_code}): {err_summary}"
-                log.error(
-                    "Instagram container creation failed: status=%s type=%s code=%s subcode=%s trace=%s msg=%s",
-                    create_resp.status_code,
-                    meta_err_type,
-                    meta_err_code,
-                    meta_err_subcode,
-                    meta_trace_id,
-                    meta_err_msg,
-                )
-                code, retryable = classify_meta_error(create_resp.status_code, create_resp.text)
-                return PublishingResult(
-                    platform=self.platform_name,
-                    destination_id=destination_id,
-                    success=False,
-                    status="failed",
-                    error=err,
-                    error_code=code,
-                    retryable=retryable,
-                    details={
-                        "http_status": create_resp.status_code,
-                        "error_type": meta_err_type,
-                        "error_code": meta_err_code,
-                        "error_subcode": meta_err_subcode,
-                        "fbtrace_id": meta_trace_id,
-                        "message": meta_err_msg,
-                        "public_url": public_url,
-                    },
-                )
+                init_data = init_resp.json()
+                container_id = init_data.get("id")
+                upload_url = init_data.get("uri")
+                if not container_id or not upload_url:
+                    return PublishingResult(
+                        platform=self.platform_name,
+                        destination_id=destination_id,
+                        success=False,
+                        status="failed",
+                        error=f"Instagram Resumable Upload missing container id or upload URI: {init_resp.text}",
+                        error_code="platform_error",
+                        retryable=True,
+                    )
 
-            container_id = create_resp.json().get("id")
+                with open(media_path, "rb") as f_media:
+                    video_bytes = f_media.read()
+
+                headers = {
+                    "Authorization": f"OAuth {self.access_token}",
+                    "Offset": "0",
+                    "X-Entity-Length": str(len(video_bytes)),
+                    "Content-Length": str(len(video_bytes)),
+                    "Content-Type": "application/octet-stream",
+                }
+                upload_resp = await client.post(upload_url, headers=headers, content=video_bytes)
+                if upload_resp.status_code not in (200, 201):
+                    err = f"Failed to transfer video bytes to Instagram ({upload_resp.status_code}): {upload_resp.text}"
+                    code, retryable = classify_meta_error(upload_resp.status_code, upload_resp.text)
+                    return PublishingResult(
+                        platform=self.platform_name,
+                        destination_id=destination_id,
+                        success=False,
+                        status="failed",
+                        error=err,
+                        error_code=code,
+                        retryable=retryable,
+                    )
+            else:
+                # Step 1: Create media container via public URL
+                create_url = f"{GRAPH_API_BASE}/{self.account_id}/media"
+                create_params = {
+                    "media_type": "REELS",
+                    "video_url": public_url,
+                    "caption": caption,
+                    "share_to_feed": "true",
+                    "access_token": self.access_token,
+                }
+                create_resp = await client.post(create_url, data=create_params)
+                if create_resp.status_code != 200:
+                    meta_err_msg = ""
+                    meta_err_type = ""
+                    meta_err_code = None
+                    meta_err_subcode = None
+                    meta_trace_id = ""
+                    try:
+                        meta_json = create_resp.json()
+                        meta_err_obj = meta_json.get("error", {})
+                        meta_err_msg = meta_err_obj.get("message") or ""
+                        meta_err_type = meta_err_obj.get("type") or ""
+                        meta_err_code = meta_err_obj.get("code")
+                        meta_err_subcode = meta_err_obj.get("error_subcode")
+                        meta_trace_id = meta_err_obj.get("fbtrace_id") or ""
+                    except Exception:
+                        pass
+
+                    err_summary = meta_err_msg or create_resp.text or f"HTTP {create_resp.status_code}"
+                    err = f"Failed to create Instagram Reel container ({create_resp.status_code}): {err_summary}"
+                    log.error(
+                        "Instagram container creation failed: status=%s type=%s code=%s subcode=%s trace=%s msg=%s",
+                        create_resp.status_code,
+                        meta_err_type,
+                        meta_err_code,
+                        meta_err_subcode,
+                        meta_trace_id,
+                        meta_err_msg,
+                    )
+                    code, retryable = classify_meta_error(create_resp.status_code, create_resp.text)
+                    return PublishingResult(
+                        platform=self.platform_name,
+                        destination_id=destination_id,
+                        success=False,
+                        status="failed",
+                        error=err,
+                        error_code=code,
+                        retryable=retryable,
+                        details={
+                            "http_status": create_resp.status_code,
+                            "error_type": meta_err_type,
+                            "error_code": meta_err_code,
+                            "error_subcode": meta_err_subcode,
+                            "fbtrace_id": meta_trace_id,
+                            "message": meta_err_msg,
+                            "public_url": public_url,
+                        },
+                    )
+
+                container_id = create_resp.json().get("id")
+
             if not container_id:
                 return PublishingResult(
                     platform=self.platform_name,
                     destination_id=destination_id,
                     success=False,
                     status="failed",
-                    error=f"No container ID in response: {create_resp.text}",
+                    error="No container ID received from Instagram API",
                     error_code="platform_error",
                     retryable=True,
                 )

@@ -235,58 +235,64 @@ class WhopCampaignJoiner:
                     "you already have access to this free product" in body_txt.lower()
                     or "visit your membership" in body_txt.lower()
                     or "payment complete" in body_txt.lower()
+                    or "/app/campaigns/" in page.url.lower()
+                    or "/experiences/" in page.url.lower()
                 ):
-                    log.info("Membership confirmed via current page access confirmation text.")
+                    log.info("Membership confirmed via current page access (URL: %s).", sanitize_text(page.url))
                     return True
+            except Exception:
+                pass
+
+            # Dismiss any welcome overlays
+            try:
+                got_it = page.locator("button:has-text('Got it'), button:has-text('Dismiss'), button:has-text('Close')")
+                for i in range(got_it.count()):
+                    if got_it.nth(i).is_visible():
+                        got_it.nth(i).click()
+                        page.wait_for_timeout(1000)
+                        break
             except Exception:
                 pass
 
             for sel in MEMBERSHIP_CONFIRMED_SELECTORS:
                 loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    log.info("Membership confirmed via selector: %s", sel)
-                    return True
+                if loc.count() > 0:
+                    for i in range(loc.count()):
+                        if loc.nth(i).is_visible():
+                            log.info("Membership confirmed via selector: %s (index %d)", sel, i)
+                            return True
 
-            # 2. Check checkout endpoint which authoritatively confirms access
-            try:
-                chk_url = f"https://contentrewards.com/discover/{campaign_id}/join"
-                page.goto(chk_url, timeout=20000, wait_until="domcontentloaded")
-                try:
-                    page.wait_for_selector("text='You already have access', text='Signed in', text='Clip and Get Paid', button:has-text('Join')", timeout=12000)
-                except Exception:
-                    page.wait_for_timeout(6000)
-                body_txt = page.locator("body").inner_text()
-                if (
-                    "you already have access to this free product" in body_txt.lower()
-                    or "visit your membership" in body_txt.lower()
-                    or "payment complete" in body_txt.lower()
-                ):
-                    log.info("Membership confirmed via Whop checkout status: account already owns product.")
-                    return True
-            except Exception as chk_e:
-                log.debug("Checkout access check notice: %s", chk_e)
-
-            # 3. Check base campaign URL
-            page.goto(campaign_url, timeout=20000, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)
-
-            for sel in MEMBERSHIP_CONFIRMED_SELECTORS:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    log.info("Membership confirmed on reload via selector: %s", sel)
-                    return True
-
+            # If already on the campaign page, check if join button is absent and submission controls exist
             has_join_btn = False
             for j_sel in JOIN_BUTTON_SELECTORS:
-                if page.locator(j_sel).count() > 0 and page.locator(j_sel).first.is_visible():
-                    has_join_btn = True
+                j_loc = page.locator(j_sel)
+                if j_loc.count() > 0:
+                    for i in range(j_loc.count()):
+                        if j_loc.nth(i).is_visible():
+                            has_join_btn = True
+                            break
+                if has_join_btn:
                     break
 
             if not has_join_btn:
                 sub_loc = page.locator("input[type='url'], button:has-text('Submit'), a:has-text('Guidelines')")
-                if sub_loc.count() > 0:
-                    log.info("Membership verified: Join button absent and submission controls present.")
-                    return True
+                for i in range(sub_loc.count()):
+                    if sub_loc.nth(i).is_visible():
+                        log.info("Membership verified: Join button absent and submission controls present.")
+                        return True
+
+            # Check campaign URL if not currently loaded
+            if campaign_url and campaign_url not in page.url:
+                page.goto(campaign_url, timeout=20000, wait_until="domcontentloaded")
+                page.wait_for_timeout(2000)
+
+                for sel in MEMBERSHIP_CONFIRMED_SELECTORS:
+                    loc = page.locator(sel)
+                    if loc.count() > 0:
+                        for i in range(loc.count()):
+                            if loc.nth(i).is_visible():
+                                log.info("Membership confirmed on reload via selector: %s", sel)
+                                return True
 
         except Exception as e:
             log.warning("Membership verification encountered an error: %s", sanitize_text(str(e)))
@@ -337,6 +343,17 @@ class WhopCampaignJoiner:
             log.info("Navigating to campaign page: %s", sanitize_text(campaign.campaign_url))
             page.goto(campaign.campaign_url, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
+
+        # Dismiss any welcome overlays
+        try:
+            got_it = page.locator("button:has-text('Got it'), button:has-text('Dismiss'), button:has-text('Close')")
+            for i in range(got_it.count()):
+                if got_it.nth(i).is_visible():
+                    got_it.nth(i).click()
+                    page.wait_for_timeout(1000)
+                    break
+        except Exception:
+            pass
 
         if self.verify_campaign_membership(page, cid, campaign.campaign_url):
             log.info("Account is already a confirmed member of '%s'; no join click needed.", cid)

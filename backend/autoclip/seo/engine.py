@@ -167,33 +167,13 @@ class SEOEngine:
             title = title[:97] + "..."
 
         # 2. Synthesize YouTube Description
+        # 2. Synthesize YouTube Description
         desc_parts: list[str] = []
         summary = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
-        if not summary:
-            clean_h = re.sub(r"\.{2,}", "", hook).strip().rstrip(".!?,")
-            summary = clean_h if clean_h else f"An essential breakdown on {topic_cue}."
-            if not summary.endswith("."):
-                summary += "."
-        desc_parts.append(summary)
-
-        # YouTube campaign phrases
-        req_phrases = []
-        if self.seo_spec:
-            req_phrases = [
-                p for p in (self.seo_spec.youtube_rules.required_phrases or self.seo_spec.global_rules.required_terms)
-                if len(p) > 3 and not any(w in p.lower() for w in ("rejection", "payout", "submit", "tier-1", "late", "must"))
-            ]
-        if req_phrases:
-            desc_parts.append(f"Key Focus: {', '.join(req_phrases)}")
-
-        # YouTube CTA (channel subscribe + engagement)
-        if yt_rules and yt_rules.cta_rules:
-            yt_cta = yt_rules.cta_rules[0]
-        elif self.reqs.brand_name:
-            yt_cta = f"👉 Subscribe to {self.reqs.brand_name} for more exclusive drops and official updates."
+        if summary:
+            desc_parts.append(summary)
         else:
-            yt_cta = "👉 Subscribe for more highlights and official updates."
-        desc_parts.append(yt_cta)
+            desc_parts.append("Wait till the end to see how this unfolds 💀")
 
         # YouTube Links
         yt_links: list[str] = []
@@ -205,9 +185,20 @@ class SEOEngine:
             yt_links = [self.reqs.campaign_url.strip()]
 
         for link in yt_links:
-            desc_parts.append(f"🔗 Official link: {link}")
+            desc_parts.append(f"🔗 Link: {link}")
 
-        # YouTube Mentions
+        # YouTube CTA
+        if yt_rules and yt_rules.cta_rules:
+            yt_cta = yt_rules.cta_rules[0]
+        elif self.reqs.cta_instructions:
+            yt_cta = f"👉 {self.reqs.cta_instructions[0]}"
+        elif self.reqs.cta_required:
+            yt_cta = "👉 Check out the official link above!"
+        else:
+            yt_cta = "👉 Subscribe for daily viral highlights and official updates! #Shorts"
+        desc_parts.append(yt_cta)
+
+        # YouTube Mentions (clean creator attribution, zero robotic 'Tagging @' prefix)
         yt_mentions: list[str] = []
         if yt_rules and yt_rules.mention_rules:
             yt_mentions = list(yt_rules.mention_rules)
@@ -225,7 +216,7 @@ class SEOEngine:
         yt_mentions = clean_yt_mentions
 
         if yt_mentions:
-            desc_parts.append(f"Tagging {' '.join(yt_mentions)}")
+            desc_parts.append(f"Creator: {' '.join(yt_mentions)}")
 
         # Tags & #Shorts
         custom_yt_tags = []
@@ -236,13 +227,11 @@ class SEOEngine:
 
         yt_tags = self._resolve_clip_hashtags("youtube", clip, slice_text, custom_yt_tags)
 
-        words = re.findall(r"\b[A-Za-z]{4,15}\b", slice_text)
-        stopwords = {"this", "that", "with", "from", "have", "they", "will", "what", "when", "there", "about", "your", "more", "into", "their"}
-        for w in words:
-            if w.lower() not in stopwords and len(yt_tags) < 6:
-                tag = f"#{w.capitalize()}"
-                if tag.lower() not in [t.lower() for t in yt_tags]:
-                    yt_tags.append(tag)
+        # Ensure all required campaign hashtags are 100% included
+        for req_h in self.reqs.required_hashtags:
+            norm_rh = req_h if req_h.startswith("#") else f"#{req_h}"
+            if norm_rh.lower() not in [t.lower() for t in yt_tags]:
+                yt_tags.append(norm_rh)
 
         desc_parts.append(" ".join(yt_tags))
         desc = "\n\n".join(desc_parts)
@@ -266,7 +255,7 @@ class SEOEngine:
             if len(yt_meta.title) > 100:
                 yt_meta.title = yt_meta.title[:97] + "..."
             if not yt_meta.title:
-                yt_meta.title = "Key Insight & Breakdown"
+                yt_meta.title = "Viral Moment Caught Live 💀 #Shorts"
             # Remove prohibited terms
             prohibited = set(self.reqs.prohibited_terms)
             if self.seo_spec:
@@ -281,10 +270,10 @@ class SEOEngine:
             for rp in (self.seo_spec.youtube_rules.required_phrases if self.seo_spec else []):
                 if rp.lower() not in yt_meta.title.lower() and rp.lower() not in yt_meta.description.lower():
                     yt_meta.description += f"\n\nTopic: {rp}"
-            # Ensure required mentions
+            # Ensure required mentions with clean attribution
             for req_m in yt_meta.mentions:
                 if req_m.lower() not in yt_meta.description.lower():
-                    yt_meta.description += f"\n\nTagging {req_m}"
+                    yt_meta.description += f"\n\nCreator: {req_m}"
 
         return yt_meta
 
@@ -313,14 +302,12 @@ class SEOEngine:
             first_line_hook = first_line_hook[:120].rsplit(" ", 1)[0]
         first_line_hook = sanitize_public_text(first_line_hook, is_title=True)
 
-        # 2. Instagram Caption Structure with clear line breaks
+        # 2. Instagram Caption Structure with clear, aesthetic line breaks
         caption_lines: list[str] = [first_line_hook, ""]
 
         ig_body = _extract_coherent_sentences(slice_text, min_chars=30, max_chars=220)
-        if not ig_body:
-            ig_body = f"Key insight on {topic_cue}: break down what actually works."
-        caption_lines.append(ig_body)
-        caption_lines.append("")
+        if ig_body:
+            caption_lines.extend([ig_body, ""])
 
         # Instagram required mentions
         ig_mentions: list[str] = []
@@ -339,19 +326,19 @@ class SEOEngine:
             if norm_m.lower() not in [x.lower() for x in ig_mentions]:
                 ig_mentions.append(norm_m)
 
-        target_handle = ig_mentions[0] if ig_mentions else (f"@{self.reqs.brand_name.lower().replace(' ', '')}" if self.reqs.brand_name else "")
+        # Instagram CTA
         if ig_rules and ig_rules.cta_rules:
             ig_cta = ig_rules.cta_rules[0]
-        elif target_handle:
-            ig_cta = f"👉 Follow {target_handle} for daily show highlights and exclusive drops."
+            caption_lines.extend([ig_cta, ""])
+        elif self.reqs.cta_instructions:
+            ig_cta = f"👉 {self.reqs.cta_instructions[0]}"
+            caption_lines.extend([ig_cta, ""])
         else:
-            ig_cta = "👉 Follow for daily highlights and exclusive drops."
-        caption_lines.append(ig_cta)
+            ig_cta = "Rate this play from 1-10 in the comments! 👇"
+            caption_lines.extend([ig_cta, ""])
 
         if ig_mentions:
-            caption_lines.append(f"Tagging {' '.join(ig_mentions)}")
-
-        caption_lines.append("")
+            caption_lines.extend([f"cc: {' '.join(ig_mentions)}", ""])
 
         # Instagram Hashtags
         custom_ig_tags = []
@@ -362,13 +349,24 @@ class SEOEngine:
 
         ig_tags = self._resolve_clip_hashtags("instagram", clip, slice_text, custom_ig_tags)
 
-        caption_lines.append(" ".join(ig_tags[:6]))
+        # Ensure all required campaign hashtags are 100% included
+        for req_h in self.reqs.required_hashtags:
+            norm_rh = req_h if req_h.startswith("#") else f"#{req_h}"
+            if norm_rh.lower() not in [t.lower() for t in ig_tags]:
+                ig_tags.append(norm_rh)
+
+        for default_ig in ["#reels", "#explore"]:
+            if default_ig not in [t.lower() for t in ig_tags]:
+                ig_tags.append(default_ig)
+
+        caption_lines.append(".")
+        caption_lines.append(" ".join(ig_tags[:8]))
         full_caption = sanitize_public_text("\n".join(caption_lines), is_title=False)
 
         ig_meta = InstagramMetadata(
             caption=full_caption,
             first_line_hook=first_line_hook,
-            hashtags=ig_tags[:6],
+            hashtags=ig_tags[:8],
             mentions=ig_mentions,
             links=[],  # Raw clickable links not supported in IG caption
             cta=ig_cta,
@@ -393,7 +391,7 @@ class SEOEngine:
             # Ensure required mentions are present in caption
             for req_m in ig_meta.mentions:
                 if req_m.lower() not in ig_meta.caption.lower():
-                    ig_meta.caption += f"\n\nFollow {req_m}"
+                    ig_meta.caption += f"\n\ncc: {req_m}"
 
         return ig_meta
 
@@ -504,8 +502,7 @@ class SEOEngine:
         return store.create_clip_metadata(record)
 
     def _synthesize_title(self, hook: str, topic: str, slice_text: str) -> str:
-        """Synthesizes a compelling, high-CTR viral title (<=100 chars, optimal 45-75 chars)
-        following ShortGPT / Hormozi short-form hook patterns and obeying campaign constraints."""
+        """Synthesizes a compelling, high-CTR viral title (<=100 chars, optimal 45-75 chars)."""
         candidate_title = ""
         clean_hook = hook.strip().rstrip(".!?,;: ")
         clean_topic = topic.strip().rstrip(".!?,;: ")
@@ -516,53 +513,38 @@ class SEOEngine:
             if "{" in candidate_title:
                 candidate_title = clean_hook or clean_topic
 
+        generic_markers = {
+            "viral stream highlight", "you won't believe this", "insane moment caught on live",
+            "watch until the end", "best clipping moments", "viral moment", "highlight",
+            "key insight", "stream highlight"
+        }
+
+        # 1. Spoken Hook or Specific Topic from clip
         if not candidate_title:
-            # 1. Clean out conversational verbal filler from the spoken hook
-            conversational_prefixes = [
-                r"^(so|well|like|honestly|i mean|i think that|you know what i mean|what you have to understand is|at the end of the day|when it comes to|the thing is)\b[\s,]*",
-                r"^(today we are going to look at|in this video we are going to discuss|let me tell you about|here is what happened when)\b[\s,]*",
-            ]
-            scrubbed_hook = clean_hook
-            for cp in conversational_prefixes:
-                scrubbed_hook = re.sub(cp, "", scrubbed_hook, flags=re.IGNORECASE).strip()
-
-            # 2. Check if the hook already has strong viral triggers or questions
-            has_strong_trigger = any(
-                tw in scrubbed_hook.lower()
-                for tw in ("why", "how to", "mistake", "never", "secret", "truth", "rule", "stop", "fail", "avoid", "vs", "exposed", "warning")
-            ) or ("?" in clean_hook or "!" in clean_hook)
-
-            if scrubbed_hook and len(scrubbed_hook) >= 12 and has_strong_trigger:
-                candidate_title = scrubbed_hook.title() if scrubbed_hook.islower() else scrubbed_hook
-            elif scrubbed_hook and len(scrubbed_hook) >= 12:
-                # Use ShortGPT Curiosity / Truth hook formula with the extracted hook essence
-                if len(scrubbed_hook) <= 50 and not scrubbed_hook.lower().startswith(("the", "why", "how")):
-                    candidate_title = f"The Truth About {scrubbed_hook}"
+            is_generic = (not clean_hook) or any(g == clean_hook.lower() or f"{g} #" in clean_hook.lower() for g in generic_markers)
+            if not is_generic and len(clean_hook) >= 8:
+                candidate_title = clean_hook
+            elif clean_topic and not any(g in clean_topic.lower() for g in ("highlight", "clip", "key insight")):
+                candidate_title = clean_topic
+            elif slice_text and len(slice_text) > 15:
+                clean_s = re.sub(r"[^\w\s\?!.,'\"]", "", slice_text).strip()
+                sentences = [s.strip() for s in re.split(r"[.!?]", clean_s) if 10 <= len(s.strip()) <= 55]
+                if sentences and not any(w in sentences[0].lower() for w in ("welcome", "subscribe", "hello", "thank")):
+                    candidate_title = f'"{sentences[0].strip().capitalize()}"'
                 else:
-                    candidate_title = scrubbed_hook.title() if scrubbed_hook.islower() else scrubbed_hook
+                    words = slice_text.split()
+                    if len(words) >= 4:
+                        candidate_title = " ".join(words[:6]).strip().capitalize()
+
+        # 2. Viral Niche Fallback if still generic
+        if not candidate_title or any(g in candidate_title.lower() for g in ("highlight #", "key insight", "stream highlight")):
+            niche_context = f"{self.reqs.campaign_title} {clean_topic} {' '.join(self.reqs.required_hashtags)}".lower()
+            if any(k in niche_context for k in ("game", "gaming", "stream", "clutch", "aim", "hardscope", "neon")):
+                candidate_title = "Bro really thought he was safe here 💀"
+            elif any(k in niche_context for k in ("podcast", "talk", "business", "founder", "money", "startup")):
+                candidate_title = "The harsh truth nobody wants to hear 😳"
             else:
-                # Use topic with high-CTR ShortGPT formula
-                resolved_topic = clean_topic or "This Essential Rule"
-                if any(tw in resolved_topic.lower() for tw in ("highlight", "clip", "key insight")):
-                    key_words = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", slice_text[:120])
-                    if key_words:
-                        resolved_topic = key_words[0]
-                    else:
-                        resolved_topic = clean_topic
-
-                candidate_title = f"The Biggest {resolved_topic} Mistake"
-
-        # Incorporate brand if specified and fits
-        if self.reqs.brand_name and self.reqs.brand_name.lower() not in candidate_title.lower():
-            if len(candidate_title) + len(self.reqs.brand_name) + 3 <= self.reqs.max_title_length:
-                candidate_title = f"{candidate_title} | {self.reqs.brand_name}"
-
-        # If mandatory phrase is required, ensure it's in the title if it fits and is a real content phrase
-        for phrase in self.reqs.required_phrases:
-            if phrase.lower() not in candidate_title.lower():
-                if len(candidate_title) + len(phrase) + 3 <= self.reqs.max_title_length and (len(phrase) > 8 or " " in phrase):
-                    candidate_title = f"{candidate_title} - {phrase}"
-                    break
+                candidate_title = "Wait for the reaction at the end 😂"
 
         from .sanitizer import sanitize_public_text
         candidate_title = sanitize_public_text(candidate_title, is_title=True)
@@ -571,11 +553,15 @@ class SEOEngine:
             if term.lower() in candidate_title.lower():
                 candidate_title = re.sub(rf"\b{re.escape(term)}\b", "", candidate_title, flags=re.IGNORECASE).strip()
 
-        if len(candidate_title) > self.reqs.max_title_length:
-            candidate_title = candidate_title[:self.reqs.max_title_length].rsplit(" ", 1)[0]
+        # Ensure #Shorts is included for platform compliance
+        if "#shorts" not in candidate_title.lower():
+            if len(candidate_title) + 8 <= 95:
+                candidate_title = f"{candidate_title} #Shorts"
 
-        candidate_title = sanitize_public_text(candidate_title, is_title=True)
-        return candidate_title or "Key Insight & Breakdown"
+        if len(candidate_title) > 95:
+            candidate_title = candidate_title[:90].rsplit(" ", 1)[0] + "... #Shorts"
+
+        return candidate_title or "Viral Highlight Caught on Stream 💀 #Shorts"
 
     def _synthesize_description(self, hook: str, slice_text: str, topic: str) -> str:
         """Synthesizes an informative, campaign-compliant description formatted for

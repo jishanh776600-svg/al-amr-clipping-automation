@@ -78,6 +78,10 @@ class JobSettingsIn(BaseModel):
     visual_filter: str | None = None
     bgm_asset_id: str | None = None
     ratio: Literal["9:16", "1:1", "16:9"] | None = None
+    frame_layout: Literal["aesthetic_card", "fit_pad", "crop_fill"] | None = None
+    channel_header_text: str | None = None
+    cta_footer_text: str | None = None
+    card_corner_radius: int | None = None
 
 
 class CampaignGuidelineOut(BaseModel):

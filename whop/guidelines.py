@@ -113,10 +113,29 @@ def fetch_guideline_document(
             except Exception as e:
                 return None, "docx_error", f"Failed extracting DOCX text: {e}"
         else:
+            # Video/audio container signature check (MP4, MKV, AVI, etc.)
+            if (
+                len(data) > 1_000_000
+                or b"ftyp" in data[:32]
+                or b"moov" in data[:64]
+                or data.startswith(b"\x1a\x45\xdf\xa3")
+                or data.startswith(b"RIFF")
+            ):
+                return None, "media_binary", "Downloaded bytes are a media/video container, not a text document."
+
             try:
-                text = data.decode("utf-8")
-                if len(text.strip()) > 20:
-                    return text, "text", None
+                sample_data = data[:500_000]
+                decoded = sample_data.decode("utf-8", errors="replace")
+                if "<html" in decoded.lower() or "<body" in decoded.lower():
+                    import html
+                    clean = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", decoded, flags=re.DOTALL | re.IGNORECASE)
+                    clean = re.sub(r"<[^>]+>", " ", clean)
+                    clean = html.unescape(clean)
+                    clean = re.sub(r"\s+", " ", clean).strip()
+                    if len(clean) > 30:
+                        return clean, "html_page", None
+                elif len(decoded.strip()) > 20:
+                    return decoded.strip(), "text", None
             except Exception:
                 pass
             return None, "unknown_binary", "Downloaded bytes are neither PDF nor DOCX nor UTF-8 text"
@@ -560,8 +579,9 @@ def parse_campaign_guidelines(
                     confidence="explicit",
                 )
 
-    # 11. Mandatory Hashtags Extraction (0% Hallucination)
+    # 11. Mandatory Hashtags Extraction (0% Hallucination + NLP Phrase Extraction)
     extracted_hashtags: List[str] = []
+    # 11a. Explicit hash symbols
     raw_tags = re.findall(r"(?:^|[\s,;:(])#([A-Za-z0-9_]{2,40})", full_guideline_content)
     for tag in raw_tags:
         # Exclude hex color codes (e.g. #ffffff)
@@ -579,8 +599,39 @@ def parse_campaign_guidelines(
                 confidence="explicit",
             )
 
-    # 12. Required Account Mentions (0% Hallucination)
+    # 11b. Natural language tag lists (e.g. "Hashtags: howieazy, viral, clipping" or "Mandatory tags: ...")
+    tag_phrase_matches = re.finditer(
+        r"\b(?:mandatory\s+(?:hash)?tags?|required\s+(?:hash)?tags?|official\s+(?:hash)?tags?|hashtags?|include\s+(?:hash)?tags?|use\s+(?:hash)?tags?|tags\s*:)[:\s-]+([^\n\r.]+)",
+        full_guideline_content,
+        re.I,
+    )
+    for tpm in tag_phrase_matches:
+        line_chunk = tpm.group(1).strip()
+        tokens = re.split(r"[,;\s|]+", line_chunk)
+        for tok in tokens:
+            if "@" in tok:
+                continue
+            tok_clean = tok.strip("# ").strip(",;.:!?")
+            if (
+                len(tok_clean) >= 3
+                and re.match(r"^[A-Za-z0-9_]+$", tok_clean)
+                and tok_clean.lower() not in ("and", "the", "with", "for", "all", "your", "posts", "clips", "tiktok", "instagram", "youtube", "shorts", "description", "follow", "post", "video")
+            ):
+                norm_tag = f"#{tok_clean}"
+                if norm_tag not in extracted_hashtags:
+                    extracted_hashtags.append(norm_tag)
+                    add_rule(
+                        category=RuleCategory.PUBLISHING,
+                        text=f"Mandatory Hashtag: {norm_tag}",
+                        normalized_value=norm_tag,
+                        mandatory=True,
+                        platform="all",
+                        confidence="inferred",
+                    )
+
+    # 12. Required Account Mentions (0% Hallucination + NLP Extraction)
     extracted_mentions: List[str] = []
+    # 12a. Explicit @ mentions
     raw_mentions = re.findall(r"(?:^|[\s,;:(])@([A-Za-z0-9_.-]{2,40})", full_guideline_content)
     for mention in raw_mentions:
         clean_m = mention.rstrip(".")
@@ -595,6 +646,60 @@ def parse_campaign_guidelines(
                 platform="all",
                 confidence="explicit",
             )
+
+    # 12b. Natural language mention directives (e.g. "Tag Howieazy and Pervasive Clipping in all posts")
+    mention_directives = re.finditer(
+        r"\b(?:tag|mention|credit|follow)\s+(?:us\s+on\s+\w+\s+at\s+|on\s+\w+\s+at\s+|at\s+)?@?([A-Za-z0-9_.-]{3,35})\b",
+        full_guideline_content,
+        re.I,
+    )
+    for md in mention_directives:
+        handle_cand = md.group(1).strip(" .-_")
+        if (
+            len(handle_cand) >= 3
+            and handle_cand.lower() not in (
+                "tiktok", "instagram", "youtube", "reels", "shorts", "video", "videos",
+                "account", "creator", "channel", "the", "our", "page", "post", "posts",
+                "clips", "clipping", "and", "with", "for", "link", "all", "your",
+            )
+        ):
+            norm_m = f"@{handle_cand}"
+            if norm_m not in extracted_mentions:
+                extracted_mentions.append(norm_m)
+                add_rule(
+                    category=RuleCategory.PUBLISHING,
+                    text=f"Required Account Mention: {norm_m}",
+                    normalized_value=norm_m,
+                    mandatory=True,
+                    platform="all",
+                    confidence="inferred",
+                )
+
+    # 12c. Contextual Creator Handle Inference from Campaign Title
+    # If no mentions were extracted yet, inspect title tokens (e.g. "Howieazy Twitch Clipping" -> "@Howieazy")
+    if not extracted_mentions and title:
+        title_tokens = [tok.strip(" -–—:_#()") for tok in title.split() if tok.strip(" -–—:_#()")]
+        for tok in title_tokens:
+            if (
+                len(tok) >= 4
+                and tok.lower() not in (
+                    "twitch", "clipping", "viral", "ugc", "tiktok", "trend", "podcast",
+                    "google", "saas", "cleaner", "campaign", "video", "shorts", "rewards",
+                    "superstore", "buildfight", "fortnite", "challenge", "content", "bounty",
+                )
+            ):
+                inferred_handle = f"@{tok}"
+                if inferred_handle not in extracted_mentions:
+                    extracted_mentions.append(inferred_handle)
+                    add_rule(
+                        category=RuleCategory.PUBLISHING,
+                        text=f"Inferred Creator Mention: {inferred_handle}",
+                        normalized_value=inferred_handle,
+                        mandatory=True,
+                        platform="all",
+                        confidence="inferred",
+                    )
+                break
 
     # 13. Call-To-Action (CTA) Extraction
     cta_wording = ""

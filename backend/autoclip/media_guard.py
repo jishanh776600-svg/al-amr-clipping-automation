@@ -197,16 +197,36 @@ def materialize_valid_clip_media(
 
     # Step 4: Check Google Drive
     if not drive_file_id:
+        # Check all possible telemetry fields for file ID or Drive link
+        candidates = []
+        if approval and approval.telemetry:
+            candidates.extend([
+                approval.telemetry.get("drive_file_id"),
+                approval.telemetry.get("drive_link"),
+                approval.telemetry.get("drive_web_view_link"),
+            ])
+        if final_render and final_render.telemetry:
+            candidates.extend([
+                final_render.telemetry.get("drive_file_id"),
+                final_render.telemetry.get("drive_link"),
+                final_render.telemetry.get("drive_web_view_link"),
+            ])
         for exp in exports:
-            if exp.drive_file_id:
-                drive_file_id = exp.drive_file_id
+            candidates.extend([exp.drive_file_id, getattr(exp, "url", None)])
+
+        for cand in candidates:
+            if not cand or not isinstance(cand, str):
+                continue
+            cand = cand.strip()
+            # If it's a direct 25-45 char ID
+            if re.match(r"^[a-zA-Z0-9_-]{25,45}$", cand):
+                drive_file_id = cand
                 break
-        if not drive_file_id and final_render and final_render.telemetry:
-            drive_file_id = final_render.telemetry.get("drive_file_id")
-        if not drive_file_id:
-            approval = store.get_clip_approval(clip_id)
-            if approval and approval.telemetry:
-                drive_file_id = approval.telemetry.get("drive_file_id")
+            # If it's a URL
+            m = re.search(r"/file/d/([a-zA-Z0-9_-]+)", cand) or re.search(r"[?&]id=([a-zA-Z0-9_-]+)", cand)
+            if m:
+                drive_file_id = m.group(1)
+                break
 
     if drive_file_id:
         try:
@@ -238,14 +258,30 @@ def materialize_valid_clip_media(
             with httpx.Client(timeout=90.0, follow_redirects=True) as dl_client:
                 for d_url in direct_urls:
                     resp = dl_client.get(d_url)
-                    if resp.status_code == 200 and is_valid_mp4(resp.content):
-                        tmp_drive.write_bytes(resp.content)
-                        shutil.copy2(tmp_drive, target_file)
-                        if target_file != canonical_cached:
-                            shutil.copy2(tmp_drive, canonical_cached)
-                        log.info("Successfully materialized clip %s from direct Google Drive URL", clip_id)
-                        tmp_drive.unlink(missing_ok=True)
-                        return target_file
+                    if resp.status_code == 200:
+                        if is_valid_mp4(resp.content):
+                            tmp_drive.write_bytes(resp.content)
+                            shutil.copy2(tmp_drive, target_file)
+                            if target_file != canonical_cached:
+                                shutil.copy2(tmp_drive, canonical_cached)
+                            log.info("Successfully materialized clip %s from direct Google Drive URL", clip_id)
+                            tmp_drive.unlink(missing_ok=True)
+                            return target_file
+                        # If Drive returns virus scan warning HTML page, extract confirm code
+                        elif b"confirm=" in resp.content or b"download_warning" in resp.content:
+                            m_confirm = re.search(r"confirm=([0-9a-zA-Z_-]+)", resp.text)
+                            if m_confirm:
+                                confirm_code = m_confirm.group(1)
+                                confirm_url = f"https://drive.usercontent.google.com/download?id={drive_file_id}&export=download&confirm={confirm_code}"
+                                resp_conf = dl_client.get(confirm_url)
+                                if resp_conf.status_code == 200 and is_valid_mp4(resp_conf.content):
+                                    tmp_drive.write_bytes(resp_conf.content)
+                                    shutil.copy2(tmp_drive, target_file)
+                                    if target_file != canonical_cached:
+                                        shutil.copy2(tmp_drive, canonical_cached)
+                                    log.info("Successfully materialized clip %s from Google Drive via confirm token", clip_id)
+                                    tmp_drive.unlink(missing_ok=True)
+                                    return target_file
 
             tmp_drive.unlink(missing_ok=True)
         except Exception as drive_err:

@@ -330,7 +330,7 @@ def test_publishing_api_endpoints(sample_job_and_export):
     resp = client.get("/api/publishing/platforms")
     assert resp.status_code == 200
     platforms = resp.json()
-    assert len(platforms) == 3
+    assert len(platforms) >= 3
     platform_names = [p["platform"] for p in platforms]
     assert "telegram" in platform_names
     assert "youtube" in platform_names

@@ -527,6 +527,91 @@ class TelegramApprovalGate:
         return session, seo_package
 
     # ==========================================================================
+    # 3c. Post-Submission Autonomous Telegram Card & Proof Dispatch
+    # ==========================================================================
+
+    async def send_post_submission_card(
+        self,
+        campaign_name: str,
+        campaign_url: str,
+        clip_title: str,
+        clip_hook: str,
+        clip_duration_s: float,
+        published_platform: str,
+        published_url: str,
+        seo_caption: str,
+        hashtags: Optional[List[str]] = None,
+        mentions: Optional[List[str]] = None,
+        whop_submission_status: str = "SUBMITTED",
+        whop_submission_id: str = "",
+        whop_screenshot_path: Optional[str] = None,
+        drive_url: Optional[str] = None,
+        bot_token: Optional[str] = None,
+        chat_id: Optional[str] = None,
+    ) -> bool:
+        """Dispatches a rich final card + screenshot proof to Telegram after successful Whop submission."""
+        cfg_token, cfg_chat, _ = get_telegram_config()
+        token = (bot_token or cfg_token or "").strip()
+        chat = str(chat_id or cfg_chat or "").strip()
+        if not token or not chat:
+            log.warning("Telegram token or chat_id missing, cannot send post-submission card.")
+            return False
+
+        tags_str = " ".join([h if h.startswith("#") else f"#{h}" for h in (hashtags or [])])
+        mentions_str = " ".join([m if m.startswith("@") else f"@{m}" for m in (mentions or [])])
+
+        text = (
+            f"🚀 <b>AUTONOMOUS CLIPPING PIPELINE COMPLETE</b>\n\n"
+            f"🏆 <b>Campaign:</b> <b>{html.escape(campaign_name)}</b>\n"
+            f"🔗 <b>Whop URL:</b> <a href=\"{campaign_url}\">Open Whop Campaign</a>\n\n"
+            f"🎬 <b>Clip Title:</b> {html.escape(clip_title)}\n"
+            f"🪝 <b>Hook:</b> <i>\"{html.escape(clip_hook)}\"</i>\n"
+            f"⏱ <b>Duration:</b> {clip_duration_s:.1f}s (9:16 Vertical Reel)\n\n"
+            f"📱 <b>Published Platform:</b> {published_platform.upper()}\n"
+            f"🌐 <b>Live Public Post:</b> <a href=\"{published_url}\">{html.escape(published_url)}</a>\n\n"
+            f"📝 <b>SEO Caption:</b>\n{html.escape(seo_caption[:250])}...\n\n"
+            f"🏷 <b>Tags:</b> {html.escape(tags_str)}\n"
+            f"👤 <b>Mentions:</b> {html.escape(mentions_str)}\n\n"
+            f"⚡ <b>Whop Submission:</b> <b>{html.escape(whop_submission_status)}</b>\n"
+            f"🔑 <b>Submission Reference:</b> <code>{html.escape(whop_submission_id)}</code>\n"
+        )
+        if drive_url:
+            text += f"💾 <b>Cloud Backup:</b> <a href=\"{drive_url}\">Google Drive Asset</a>\n"
+
+        # Send the main text card
+        try:
+            await _safe_send_telegram_message(
+                bot_token=token,
+                chat_id=chat,
+                text=text,
+            )
+            log.info("Post-submission Telegram card successfully delivered to %s", chat)
+        except Exception as e:
+            log.error("Failed to send post-submission card to Telegram: %s", e)
+
+        # If screenshot proof exists, send it via sendPhoto
+        if whop_screenshot_path and Path(whop_screenshot_path).is_file():
+            photo_url = f"{TELEGRAM_API_BASE}/bot{token}/sendPhoto"
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    with open(whop_screenshot_path, "rb") as pf:
+                        files = {"photo": (Path(whop_screenshot_path).name, pf, "image/png")}
+                        data = {
+                            "chat_id": chat,
+                            "caption": f"📸 <b>Whop Real UI Submission Proof</b>\nCampaign: {html.escape(campaign_name)}\nRef: <code>{whop_submission_id}</code>",
+                            "parse_mode": "HTML",
+                        }
+                        resp = await client.post(photo_url, data=data, files=files)
+                        if resp.status_code == 200:
+                            log.info("Whop submission proof photo delivered to Telegram.")
+                        else:
+                            log.warning("Telegram sendPhoto failed with status %d: %s", resp.status_code, resp.text)
+            except Exception as pe:
+                log.warning("Could not upload Whop screenshot to Telegram: %s", pe)
+
+        return True
+
+    # ==========================================================================
     # 4. Callback Security & Atomic State Transitions
     # ==========================================================================
 

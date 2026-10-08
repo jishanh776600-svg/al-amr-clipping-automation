@@ -178,22 +178,54 @@ def evaluate_eligibility(
     elif not valid_platforms:
         reasons.append("REJECTED_PLATFORM")
 
-    # 3. Source Reference Check
+    # 3. Source Reference Check: Must have a valid Google Drive or direct media source
+    has_drive_or_direct = bool(source_urls and any(
+        ("drive.google.com" in str(u).lower())
+        or any(str(u).lower().split("?")[0].endswith(ext) for ext in (".mp4", ".mov", ".mkv", ".webm"))
+        or ("amazonaws.com" in str(u).lower() and not str(u).lower().endswith(".pdf"))
+        for u in source_urls
+    ))
     if not source_urls:
         reasons.append("REJECTED_SOURCE")
-    elif require_drive_or_direct:
-        has_fast_source = any(
-            ("drive.google.com" in str(u).lower())
-            or any(str(u).lower().split("?")[0].endswith(ext) for ext in (".mp4", ".mov", ".mkv", ".webm"))
-            or ("amazonaws.com" in str(u).lower() and not str(u).lower().endswith(".pdf"))
-            for u in source_urls
-        )
-        if not has_fast_source:
-            reasons.append("REJECTED_NON_DRIVE_SOURCE")
+    elif not has_drive_or_direct:
+        reasons.append("REJECTED_NON_DRIVE_SOURCE")
+        reasons.append("REJECTED_NO_GOOGLE_DRIVE_SOURCE")
 
     # 4. Completeness Check
     if not title or len(title.strip()) < 3:
         reasons.append("INCOMPLETE_CAMPAIGN_DATA")
+
+    # 5. Dedicated Channel / Account Rejection:
+    # Reject campaigns requiring a dedicated/new account or channel
+    DEDICATED_ACCOUNT_KEYWORDS = [
+        "dedicated account", "dedicated channel", "new account only",
+        "separate account", "new channel only", "must create a new",
+        "fresh handle", "dedicated page", "dedicated handle",
+        "no personal account", "only dedicated", "new accounts only",
+        "fresh account only", "create a dedicated", "must be a dedicated",
+    ]
+    raw_lower = raw_text.lower()
+    title_lower = title.lower()
+    if any(k in raw_lower or k in title_lower for k in DEDICATED_ACCOUNT_KEYWORDS):
+        reasons.append("REJECTED_REQUIRES_DEDICATED_ACCOUNT")
+
+    # 6. Strict Clipping vs UGC Gate:
+    # Reject UGC campaigns (User Generated Content, filming yourself, SaaS app reviews, etc.)
+    UGC_KEYWORDS = [
+        "ugc", "product review", "saas demo", "testimonial",
+        "promote our", "video of yourself", "talking head", "record a video of",
+        "explain our", "create ugc", "create a video explaining"
+    ]
+    if any(k in title_lower or k in raw_lower for k in UGC_KEYWORDS):
+        reasons.append("REJECTED_UGC_CAMPAIGN")
+
+    # Strictly require clipping indicators (streamer, twitch, kick, podcast, vod, gaming, clipping, clips)
+    CLIPPING_KEYWORDS = [
+        "clip", "clipping", "clips", "twitch", "streamer", "stream",
+        "vod", "podcast", "gaming", "highlights", "interview", "talk show"
+    ]
+    if not any(k in title_lower or k in raw_lower for k in CLIPPING_KEYWORDS):
+        reasons.append("REJECTED_NON_CLIPPING_CAMPAIGN")
 
     # Decision
     if not reasons:

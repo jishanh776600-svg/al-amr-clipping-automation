@@ -35,21 +35,34 @@ def _normalize_hashtag(hashtag: str) -> str:
 def extract_campaign_seo_requirements(
     campaign_spec: Any | None,
 ) -> CampaignSEORequirements:
-    """Authoritatively extracts SEO requirements without duplicating campaign intelligence."""
+    """Authoritatively extracts SEO requirements from text, dict, or CampaignSpecification with 100% accuracy."""
     if campaign_spec is None:
         return CampaignSEORequirements()
 
     from autoclip.campaign.models_intelligence import CampaignSpecification
 
+    raw_text_corpus = ""
     raw_brand = ""
-    if isinstance(campaign_spec, dict):
-        raw_brand = campaign_spec.get("brand_name", "") or campaign_spec.get("title", "")
+
+    if isinstance(campaign_spec, str):
+        raw_text_corpus = campaign_spec
+        from autoclip.campaign.extractor import parse_guidelines_into_brief
+        brief_obj = parse_guidelines_into_brief(campaign_spec)
+        campaign_spec = CampaignSpecification.from_campaign_brief(brief_obj)
+        raw_brand = brief_obj.name
+
+    elif isinstance(campaign_spec, dict):
+        raw_text_corpus = f"{campaign_spec.get('raw_brief', '')} {campaign_spec.get('description', '')} {campaign_spec.get('guidelines', '')}"
+        raw_brand = campaign_spec.get("brand_name", "") or campaign_spec.get("title", "") or campaign_spec.get("name", "")
         if "desired_topics" in campaign_spec and "campaign_id" in campaign_spec:
             campaign_spec = CampaignSpecification.from_dict(campaign_spec)
         else:
             campaign_spec = CampaignSpecification.from_campaign_brief(campaign_spec)
     elif hasattr(campaign_spec, "required_topics") and not hasattr(campaign_spec, "desired_topics"):
+        raw_text_corpus = getattr(campaign_spec, "description", "") or getattr(campaign_spec, "topic_context", "")
         campaign_spec = CampaignSpecification.from_campaign_brief(campaign_spec)
+    else:
+        raw_text_corpus = getattr(campaign_spec, "description", "") or getattr(campaign_spec, "objective", "")
 
     # 1. Required phrases / keywords (excluding SOP operational terms)
     sop_exclude = {
@@ -154,7 +167,27 @@ def extract_campaign_seo_requirements(
             url_match = re.search(r"https?://[^\s<>\"']+", dg)
             if url_match:
                 campaign_url = url_match.group(0).strip()
-                break
+    # Safety scan over raw brief text for 100% extraction accuracy
+    if raw_text_corpus:
+        raw_tags = re.findall(r"#[A-Za-z0-9_]+", raw_text_corpus)
+        for rt in raw_tags:
+            norm_rt = _normalize_hashtag(rt)
+            if norm_rt.lower().lstrip("#") not in prohibited_lower and norm_rt not in clean_hashtags:
+                clean_hashtags.append(norm_rt)
+
+        raw_mentions = re.findall(r"@[A-Za-z0-9_]+", raw_text_corpus)
+        for rm in raw_mentions:
+            norm_rm = _normalize_mention(rm)
+            if norm_rm.lower().lstrip("@") not in prohibited_lower and norm_rm not in clean_mentions:
+                clean_mentions.append(norm_rm)
+
+        if not campaign_url:
+            raw_url_match = re.search(r"https?://[^\s<>\"']+", raw_text_corpus)
+            if raw_url_match:
+                campaign_url = raw_url_match.group(0).strip()
+
+    required_hashtags = clean_hashtags
+    required_mentions = clean_mentions
 
     # 7. Brand name from title or branding rules
     brand_name = raw_brand or getattr(campaign_spec, "brand_name", "") or ""

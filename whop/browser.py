@@ -74,8 +74,12 @@ class WhopBrowser:
             context_kwargs["record_video_dir"] = record_video_dir
             context_kwargs["record_video_size"] = {"width": 1280, "height": 720}
 
-        # If a full Playwright storage state is provided, use it directly in context creation
-        if session_state and session_state.raw_storage_dict:
+        # If full durable storage state exists on disk, use it; otherwise use session_state dict
+        from pathlib import Path
+        full_storage_p = Path("data/whop_full_storage.json")
+        if full_storage_p.exists() and full_storage_p.stat().st_size > 100:
+            context_kwargs["storage_state"] = str(full_storage_p)
+        elif session_state and session_state.raw_storage_dict:
             context_kwargs["storage_state"] = session_state.raw_storage_dict
 
         self._context = self._browser.new_context(**context_kwargs)

@@ -82,18 +82,43 @@ class WhopSEOBridge:
         
         Performs iterative self-repair until zero defects remain.
         """
-        base_topic = hook_or_title.strip() or brief.title.strip()
-        base_topic = sanitize_public_text(base_topic)
-        base_topic = re.sub(r"[\.,;:!\-]+$", "", base_topic).strip()
-
         campaign_clean_title = sanitize_public_text(brief.title.strip())
-        if len(base_topic) > 55:
-            yt_title = base_topic[:55].rsplit(" ", 1)[0]
-        else:
-            yt_title = base_topic
+        creator_tag = self.reqs.required_mentions[0] if self.reqs.required_mentions else ""
+        primary_hashtag = self.reqs.required_hashtags[0] if self.reqs.required_hashtags else ""
 
-        if yt_title.lower() != campaign_clean_title.lower() and len(f"{yt_title} | {campaign_clean_title}") <= 70:
-            yt_title = f"{yt_title} | {campaign_clean_title}"
+        # Dynamic viral hook generation if input hook is missing or generic
+        is_generic_hook = (
+            not hook_or_title
+            or "viral moment" in hook_or_title.lower()
+            or "highlight #" in hook_or_title.lower()
+            or hook_or_title.strip() == campaign_clean_title
+        )
+        if is_generic_hook:
+            hook_templates = [
+                "Insane Moment on Stream! 🔥",
+                "You Won't Believe What Happened Here 😱",
+                "This Might Be The Craziest Play Yet!",
+                "Wait For The Very End... 👀",
+                "Best Moments You Missed Live! ⚡",
+            ]
+            chosen_hook = hook_templates[(clip_index - 1) % len(hook_templates)]
+            if creator_tag and len(f"{chosen_hook} | {creator_tag} #Shorts") <= 70:
+                yt_title = f"{chosen_hook} | {creator_tag} #Shorts"
+            elif len(f"{chosen_hook} | {campaign_clean_title} #Shorts") <= 70:
+                yt_title = f"{chosen_hook} | {campaign_clean_title} #Shorts"
+            else:
+                yt_title = f"{chosen_hook} #Shorts"
+            base_topic = chosen_hook
+        else:
+            base_topic = hook_or_title.strip()
+            base_topic = sanitize_public_text(base_topic)
+            base_topic = re.sub(r"[\.,;:!\-]+$", "", base_topic).strip()
+            if len(base_topic) > 55:
+                yt_title = base_topic[:55].rsplit(" ", 1)[0]
+            else:
+                yt_title = base_topic
+            if "#shorts" not in yt_title.lower() and len(f"{yt_title} #Shorts") <= 70:
+                yt_title = f"{yt_title} #Shorts"
 
         mandatory_tags = [h.strip() for h in self.reqs.required_hashtags if h.strip()]
         mandatory_mentions = [m.strip() for m in self.reqs.required_mentions if m.strip()]
@@ -107,16 +132,16 @@ class WhopSEOBridge:
             cta_text = "Check link in bio for more details!"
 
         desc_lines = [
-            f"{base_topic}.",
+            f"{base_topic}",
             "",
-            transcript_snippet.strip() if transcript_snippet else f"Watch this highlight from {campaign_clean_title}.",
+            transcript_snippet.strip() if transcript_snippet else f"Watch this viral highlight from {campaign_clean_title}.",
             "",
         ]
         if cta_text:
             desc_lines.extend([cta_text, ""])
 
         if mandatory_mentions:
-            desc_lines.extend(["Follow: " + " ".join(mandatory_mentions), ""])
+            desc_lines.extend([f"Creator: {' '.join(mandatory_mentions)}", ""])
 
         yt_tags_block = ["#Shorts"] + [t for t in mandatory_tags if t.lower() != "#shorts"]
         desc_lines.append(" ".join(yt_tags_block))
@@ -126,13 +151,13 @@ class WhopSEOBridge:
         ig_lines = [
             f"{base_topic}",
             "",
-            f"From: {campaign_clean_title}",
-            "",
         ]
+        if transcript_snippet:
+            ig_lines.extend([transcript_snippet.strip(), ""])
         if cta_text:
             ig_lines.extend([cta_text, ""])
         if mandatory_mentions:
-            ig_lines.extend([" ".join(mandatory_mentions), ""])
+            ig_lines.extend([f"cc: {' '.join(mandatory_mentions)}", ""])
         
         ig_tags = list(mandatory_tags)
         for general_tag in ["#reels", "#explore", "#viral"]:

@@ -266,7 +266,7 @@ class TestPlatformAdaptersMocked:
     @pytest.mark.asyncio
     async def test_youtube_publisher_mocked_success(self, tmp_path):
         vid_file = tmp_path / "vid.mp4"
-        vid_file.write_bytes(b"\x00" * 1024)
+        vid_file.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"\x00" * 60_000)
 
         pub = YouTubePublisher(client_id="cid", client_secret="csec", refresh_token="rtok")
         meta = PublishingMetadata(title="Test Short")
@@ -348,7 +348,7 @@ class TestPlatformAdaptersMocked:
     @pytest.mark.asyncio
     async def test_youtube_post_upload_verification_rejects_unlisted(self, tmp_path):
         vid_file = tmp_path / "vid.mp4"
-        vid_file.write_bytes(b"\x00" * 1024)
+        vid_file.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"\x00" * 60_000)
 
         pub = YouTubePublisher(client_id="cid", client_secret="csec", refresh_token="rtok")
         meta = PublishingMetadata(title="Test Short")
@@ -398,7 +398,7 @@ class TestPlatformAdaptersMocked:
     @pytest.mark.asyncio
     async def test_instagram_publisher_mocked_success(self, tmp_path):
         vid_file = tmp_path / "vid.mp4"
-        vid_file.write_bytes(b"\x00" * 1024)
+        vid_file.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"\x00" * 60_000)
 
         pub = InstagramPublisher(access_token="ig-tok", account_id="ig-acc", control_plane_url="http://localhost:8000")
         meta = PublishingMetadata(title="Test Reel", extra={"export_id": "exp-1"})

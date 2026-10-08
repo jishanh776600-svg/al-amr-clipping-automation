@@ -104,6 +104,68 @@ export function Ingest() {
     api.putSettings({ export: { bgm_asset_id: newBgmId } as any }).catch(() => undefined)
   }
 
+  // Aesthetic Frame Layout & Channel Branding
+  const [frameLayout, setFrameLayout] = useState<'aesthetic_card' | 'crop_fill' | 'fit_pad'>(() => {
+    try {
+      return (localStorage.getItem('alamr_frame_layout') as any) || 'aesthetic_card'
+    } catch {
+      return 'aesthetic_card'
+    }
+  })
+  const [channelHeader, setChannelHeader] = useState<string>(() => {
+    try {
+      return localStorage.getItem('alamr_channel_header') || '⚡ FUTURE FOUNDERS'
+    } catch {
+      return '⚡ FUTURE FOUNDERS'
+    }
+  })
+  const [ctaFooter, setCtaFooter] = useState<string>(() => {
+    try {
+      return localStorage.getItem('alamr_cta_footer') || 'SUBSCRIBE FOR DAILY DROPS'
+    } catch {
+      return 'SUBSCRIBE FOR DAILY DROPS'
+    }
+  })
+  const [cornerRadius, setCornerRadius] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('alamr_corner_radius') || 44)
+    } catch {
+      return 44
+    }
+  })
+
+  const updateFrameLayout = (newLayout: 'aesthetic_card' | 'crop_fill' | 'fit_pad') => {
+    setFrameLayout(newLayout)
+    try {
+      localStorage.setItem('alamr_frame_layout', newLayout)
+    } catch {}
+    api.putSettings({ export: { frame_layout: newLayout } as any }).catch(() => undefined)
+  }
+
+  const updateChannelHeader = (newHeader: string) => {
+    setChannelHeader(newHeader)
+    try {
+      localStorage.setItem('alamr_channel_header', newHeader)
+    } catch {}
+    api.putSettings({ export: { channel_header_text: newHeader } as any }).catch(() => undefined)
+  }
+
+  const updateCtaFooter = (newFooter: string) => {
+    setCtaFooter(newFooter)
+    try {
+      localStorage.setItem('alamr_cta_footer', newFooter)
+    } catch {}
+    api.putSettings({ export: { cta_footer_text: newFooter } as any }).catch(() => undefined)
+  }
+
+  const updateCornerRadius = (newRadius: number) => {
+    setCornerRadius(newRadius)
+    try {
+      localStorage.setItem('alamr_corner_radius', String(newRadius))
+    } catch {}
+    api.putSettings({ export: { card_corner_radius: newRadius } as any }).catch(() => undefined)
+  }
+
   const handleSelectEditingPreset = (preset: 'all_in_one_viral' | 'custom') => {
     setEditingPreset(preset)
     try {
@@ -154,6 +216,22 @@ export function Ingest() {
         if (s.export.bgm_asset_id !== undefined) {
           const cached = localStorage.getItem('alamr_selected_bgm_id')
           if (cached === null) setSelectedBgmId(s.export.bgm_asset_id)
+        }
+        if (s.export.frame_layout) {
+          const cached = localStorage.getItem('alamr_frame_layout')
+          if (!cached) setFrameLayout(s.export.frame_layout as any)
+        }
+        if (s.export.channel_header_text) {
+          const cached = localStorage.getItem('alamr_channel_header')
+          if (!cached) setChannelHeader(s.export.channel_header_text)
+        }
+        if (s.export.cta_footer_text) {
+          const cached = localStorage.getItem('alamr_cta_footer')
+          if (!cached) setCtaFooter(s.export.cta_footer_text)
+        }
+        if (s.export.card_corner_radius !== undefined) {
+          const cached = localStorage.getItem('alamr_corner_radius')
+          if (!cached) setCornerRadius(s.export.card_corner_radius)
         }
       }
     }).catch(() => undefined)
@@ -424,12 +502,20 @@ export function Ingest() {
           visual_filter: visualFilter,
           bgm_asset_id: effectiveBgmId || (editingPreset === 'all_in_one_viral' ? 'death_of_blue_bird' : null),
           editing_preset: editingPreset,
+          frame_layout: frameLayout,
+          channel_header_text: channelHeader,
+          cta_footer_text: ctaFooter,
+          card_corner_radius: cornerRadius,
           overrides: {
             ...jobOverrides,
             editing_preset: editingPreset,
             caption_style: captionStyle,
             visual_filter: visualFilter,
             bgm_asset_id: effectiveBgmId || (editingPreset === 'all_in_one_viral' ? 'death_of_blue_bird' : null),
+            frame_layout: frameLayout,
+            channel_header_text: channelHeader,
+            cta_footer_text: ctaFooter,
+            card_corner_radius: cornerRadius,
           },
         }
         const job = await api.createAutonomousJobJson(payload)
@@ -460,6 +546,15 @@ export function Ingest() {
 
       form.append('editing_preset', editingPreset)
       jobOverrides.editing_preset = editingPreset
+
+      form.append('frame_layout', frameLayout)
+      form.append('channel_header_text', channelHeader)
+      form.append('cta_footer_text', ctaFooter)
+      form.append('card_corner_radius', String(cornerRadius))
+      jobOverrides.frame_layout = frameLayout
+      jobOverrides.channel_header_text = channelHeader
+      jobOverrides.cta_footer_text = ctaFooter
+      jobOverrides.card_corner_radius = cornerRadius
 
       form.append('overrides', JSON.stringify(jobOverrides))
 
@@ -1498,6 +1593,165 @@ export function Ingest() {
         {bgmAssets.filter((a) => a.enabled).length === 0 && (
           <div className="mt-3 p-3 rounded border border-dashed border-ink-800 bg-ink-950/30 text-center text-xs text-ink-500">
             No BGM tracks in vault yet. Click &ldquo;Manage BGM Vault&rdquo; above to upload MP3, WAV, or M4A music files.
+          </div>
+        )}
+      </div>
+
+      {/* AESTHETIC FRAME LAYOUT & CHANNEL BRANDING */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                AESTHETIC FRAME LAYOUT & BRANDING
+              </span>
+              <span className="text-[10px] rounded bg-emerald-500/10 text-emerald-400 px-2 py-0.5 border border-emerald-500/20 font-medium">
+                TikTok & Reels Aesthetic
+              </span>
+            </div>
+            <p className="text-xs text-ink-400 mt-1">
+              Transforms clips into modern floating cards with anti-aliased rounded edges, motion-blurred background (zero black empty space), persistent channel header, and subscribe CTA.
+            </p>
+          </div>
+        </div>
+
+        {/* Layout Style Cards */}
+        <div className="grid gap-3 sm:grid-cols-3 mt-3">
+          {/* Option 1: Aesthetic Floating Card */}
+          <div
+            onClick={() => updateFrameLayout('aesthetic_card')}
+            className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+              frameLayout === 'aesthetic_card'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-ink-100">✨ Floating Aesthetic Card</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                  Recommended
+                </span>
+              </div>
+              <p className="text-[11px] text-ink-400 mt-1.5 leading-relaxed">
+                Centered rounded card + ambient blurred motion background. No empty black space.
+              </p>
+            </div>
+            <div className="mt-3 text-[10px] font-mono text-ink-500 flex items-center gap-1">
+              <span className={frameLayout === 'aesthetic_card' ? 'text-sodium-400' : 'text-ink-500'}>
+                {frameLayout === 'aesthetic_card' ? '● Active' : '○ Select'}
+              </span>
+            </div>
+          </div>
+
+          {/* Option 2: Center Fit (Letterbox) */}
+          <div
+            onClick={() => updateFrameLayout('fit_pad')}
+            className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+              frameLayout === 'fit_pad'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-ink-100">⬛ Center Fit (Letterbox)</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-ink-400">
+                  Classic
+                </span>
+              </div>
+              <p className="text-[11px] text-ink-400 mt-1.5 leading-relaxed">
+                Fits horizontal video centered with classic solid black bars top and bottom.
+              </p>
+            </div>
+            <div className="mt-3 text-[10px] font-mono text-ink-500 flex items-center gap-1">
+              <span className={frameLayout === 'fit_pad' ? 'text-sodium-400' : 'text-ink-500'}>
+                {frameLayout === 'fit_pad' ? '● Active' : '○ Select'}
+              </span>
+            </div>
+          </div>
+
+          {/* Option 3: Full Screen Fill (Crop) */}
+          <div
+            onClick={() => updateFrameLayout('crop_fill')}
+            className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+              frameLayout === 'crop_fill'
+                ? 'border-sodium-500 bg-sodium-500/10 shadow-sm shadow-sodium-500/10'
+                : 'border-ink-800 bg-ink-950/50 hover:border-ink-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-ink-100">✂️ Full Bleed (Crop)</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-ink-800 text-ink-400">
+                  Full 9:16
+                </span>
+              </div>
+              <p className="text-[11px] text-ink-400 mt-1.5 leading-relaxed">
+                Zooms and crops center video to completely fill the 1080x1920 canvas.
+              </p>
+            </div>
+            <div className="mt-3 text-[10px] font-mono text-ink-500 flex items-center gap-1">
+              <span className={frameLayout === 'crop_fill' ? 'text-sodium-400' : 'text-ink-500'}>
+                {frameLayout === 'crop_fill' ? '● Active' : '○ Select'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Aesthetic Branding & Corner Settings (Visible when aesthetic_card is active) */}
+        {frameLayout === 'aesthetic_card' && (
+          <div className="mt-4 pt-4 border-t border-ink-800 grid gap-4 sm:grid-cols-3">
+            <div>
+              <label className="block text-xs font-medium text-ink-300 mb-1">
+                Channel Branding Header
+              </label>
+              <input
+                type="text"
+                value={channelHeader}
+                onChange={(e) => updateChannelHeader(e.target.value)}
+                placeholder="⚡ FUTURE FOUNDERS"
+                className="w-full bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-3 py-2 focus:border-sodium-500"
+              />
+              <span className="mt-1 block text-[10px] text-ink-500">
+                Persistent header at top of vertical video.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-ink-300 mb-1">
+                Bottom Call-to-Action
+              </label>
+              <input
+                type="text"
+                value={ctaFooter}
+                onChange={(e) => updateCtaFooter(e.target.value)}
+                placeholder="SUBSCRIBE FOR DAILY DROPS"
+                className="w-full bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-3 py-2 focus:border-sodium-500"
+              />
+              <span className="mt-1 block text-[10px] text-ink-500">
+                Persistent footer at bottom above safe zone.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-ink-300 mb-1">
+                Card Corner Radius
+              </label>
+              <select
+                value={String(cornerRadius)}
+                onChange={(e) => updateCornerRadius(Number(e.target.value))}
+                className="w-full bg-ink-950 border border-ink-700 text-ink-100 text-xs rounded px-3 py-2 focus:border-sodium-500 cursor-pointer"
+              >
+                <option value="44">Smooth Rounded (44px - TikTok Aesthetic)</option>
+                <option value="24">Subtle Rounded (24px)</option>
+                <option value="16">Slight Curve (16px)</option>
+                <option value="0">Sharp Square (0px)</option>
+              </select>
+              <span className="mt-1 block text-[10px] text-ink-500">
+                Anti-aliased corner curve for floating card.
+              </span>
+            </div>
           </div>
         )}
       </div>
