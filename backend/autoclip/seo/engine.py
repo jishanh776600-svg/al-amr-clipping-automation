@@ -25,6 +25,7 @@ from .models import (
     YouTubeMetadata,
 )
 from .quality_gate import MetadataQualityGate, validate_instagram_metadata, validate_youtube_metadata
+from .ai_generator import generate_ai_metadata
 
 log = logging.getLogger(__name__)
 
@@ -594,6 +595,24 @@ class SEOEngine:
                 if "{" not in filled and len(filled.strip()) >= 10:
                     candidate_title = filled.strip()
                     break
+
+        # 2. AI SEO Generator (Gemini Flash API -> Local DeepSeek-R1 fallback)
+        if not candidate_title and slice_text:
+            try:
+                ai_meta = generate_ai_metadata(
+                    transcript=slice_text,
+                    brand_name=brand,
+                    campaign_title=self.reqs.campaign_title,
+                    required_phrases=self.reqs.required_phrases,
+                    prohibited_terms=self.reqs.prohibited_terms,
+                )
+                if ai_meta and ai_meta.get("title"):
+                    raw_ai_title = ai_meta["title"].strip()
+                    # Verify length and cleanliness
+                    if 15 <= len(raw_ai_title) <= 85:
+                        candidate_title = raw_ai_title
+            except Exception as exc:
+                log.warning("AI title generation encountered error: %s", exc)
 
         generic_markers = {
             "viral stream highlight", "you won't believe this", "insane moment caught on live",
