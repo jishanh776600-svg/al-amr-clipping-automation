@@ -754,3 +754,73 @@ async def validate_youtube_credentials(
             "channel_match": False,
         }
 
+
+async def request_youtube_device_code(client_id: str) -> dict[str, Any]:
+    """Request Google OAuth Device Authorization Code for TV/Zero-Redirect sign-in flow."""
+    import httpx
+
+    device_url = "https://oauth2.googleapis.com/device/code"
+    payload = {
+        "client_id": client_id.strip(),
+        "scope": " ".join(YOUTUBE_UPLOAD_SCOPES),
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(device_url, data=payload)
+    if resp.status_code != 200:
+        return {
+            "success": False,
+            "error": f"Device authorization request failed ({resp.status_code}): {resp.text}",
+        }
+    data = resp.json()
+    return {
+        "success": True,
+        "device_code": data.get("device_code"),
+        "user_code": data.get("user_code"),
+        "verification_url": data.get("verification_url", "https://www.google.com/device"),
+        "expires_in": data.get("expires_in", 1800),
+        "interval": data.get("interval", 5),
+    }
+
+
+async def poll_youtube_device_token(
+    client_id: str,
+    client_secret: str,
+    device_code: str,
+) -> dict[str, Any]:
+    """Poll Google OAuth token endpoint to retrieve refresh_token once user enters user_code."""
+    import httpx
+
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "client_id": client_id.strip(),
+        "client_secret": client_secret.strip(),
+        "device_code": device_code.strip(),
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(token_url, data=payload)
+
+    data = resp.json()
+    error = data.get("error")
+
+    if error:
+        # Pending user action or rate throttling
+        if error in ("authorization_pending", "slow_down"):
+            return {"success": False, "status": "pending", "error": error}
+        return {"success": False, "status": "failed", "error": data.get("error_description", error)}
+
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        return {"success": False, "status": "failed", "error": "No refresh_token returned."}
+
+    # Verify channel details
+    val = await validate_youtube_credentials(refresh_token=refresh_token)
+    return {
+        "success": True,
+        "status": "authorized",
+        "refresh_token": refresh_token,
+        "channel_title": val.get("channel_title") or "YouTube Channel",
+        "channel_id": val.get("channel_id"),
+    }
+
+

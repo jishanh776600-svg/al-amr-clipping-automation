@@ -1637,6 +1637,33 @@ export const api = {
       headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
     }),
 
+  creatorYouTubeDeviceCode: (passcode?: string) =>
+    request<{
+      success: boolean
+      device_code: string
+      user_code: string
+      verification_url: string
+      expires_in: number
+      interval: number
+    }>('/api/creator/connect/youtube/device-code', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorYouTubeDevicePoll: (deviceCode: string, passcode?: string) =>
+    request<{
+      success: boolean
+      status: 'authorized' | 'pending' | 'failed'
+      channel_title?: string
+      channel_id?: string
+      message?: string
+      error?: string
+    }>('/api/creator/connect/youtube/device-poll', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+      body: JSON.stringify({ device_code: deviceCode }),
+    }),
+
   creatorConnectInstagram: (accessToken: string, accountId: string, passcode?: string) =>
     request<{ success: boolean; account_name: string; message: string }>(
       '/api/creator/connect/instagram',

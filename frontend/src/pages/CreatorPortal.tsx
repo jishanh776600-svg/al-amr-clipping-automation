@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api, type CreatorProfile } from '../api'
 
 export function CreatorPortal() {
@@ -7,6 +7,13 @@ export function CreatorPortal() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  // YouTube Device Code (TV / Zero-redirect flow)
+  const [showYtDeviceModal, setShowYtDeviceModal] = useState(false)
+  const [ytUserCode, setYtUserCode] = useState('')
+  const [ytVerificationUrl, setYtVerificationUrl] = useState('https://www.google.com/device')
+  const [ytCopied, setYtCopied] = useState(false)
+  const ytPollTimerRef = useRef<any>(null)
 
   // Modals / forms
   const [showTelegramModal, setShowTelegramModal] = useState(false)
@@ -39,6 +46,35 @@ export function CreatorPortal() {
     }
   }
 
+  const stopPollingYouTube = () => {
+    if (ytPollTimerRef.current) {
+      clearInterval(ytPollTimerRef.current)
+      ytPollTimerRef.current = null
+    }
+  }
+
+  const startPollingYouTube = (deviceCode: string) => {
+    stopPollingYouTube()
+    ytPollTimerRef.current = setInterval(async () => {
+      try {
+        const currentPasscode = localStorage.getItem('alamr_creator_passcode') || passcode
+        const res = await api.creatorYouTubeDevicePoll(deviceCode, currentPasscode)
+        if (res?.status === 'authorized') {
+          stopPollingYouTube()
+          setShowYtDeviceModal(false)
+          setSuccessMsg(res.message || `Connected channel: ${res.channel_title}!`)
+          loadProfile(currentPasscode)
+        } else if (res?.status === 'failed') {
+          stopPollingYouTube()
+          setError(res.error || 'YouTube authorization failed or expired.')
+          setShowYtDeviceModal(false)
+        }
+      } catch {
+        // Continue polling until expiration
+      }
+    }, 5000)
+  }
+
   useEffect(() => {
     if (passcode) {
       loadProfile(passcode)
@@ -49,6 +85,10 @@ export function CreatorPortal() {
     const code = params.get('code')
     if (code) {
       handleOAuthCallback(code)
+    }
+
+    return () => {
+      stopPollingYouTube()
     }
   }, [])
 
@@ -82,13 +122,20 @@ export function CreatorPortal() {
   const handleConnectYouTube = async () => {
     try {
       setError(null)
-      const redirectUri = window.location.origin + window.location.pathname
-      const res = await api.creatorYouTubeAuthUrl(redirectUri, passcode)
-      if (res?.auth_url) {
-        window.location.href = res.auth_url
+      setLoading(true)
+      const res = await api.creatorYouTubeDeviceCode(passcode)
+      if (res?.user_code && res?.device_code) {
+        setYtUserCode(res.user_code)
+        setYtVerificationUrl(res.verification_url || 'https://www.google.com/device')
+        setShowYtDeviceModal(true)
+        startPollingYouTube(res.device_code)
+      } else {
+        setError('Could not generate YouTube device code.')
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to initialize YouTube OAuth.')
+      setError(err?.message || 'Failed to start YouTube authentication.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -597,6 +644,77 @@ export function CreatorPortal() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* YouTube Google Device / TV Code Modal */}
+      {showYtDeviceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 p-4 backdrop-blur-md">
+          <div className="w-full max-w-lg rounded-2xl border border-red-500/30 bg-ink-900 p-7 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-600/20 text-xl text-red-500">
+                ▶
+              </span>
+              <div>
+                <h3 className="text-lg font-bold text-ink-100">Connect YouTube Channel</h3>
+                <p className="text-xs text-ink-400">Zero-Config Device Verification (Google TV Flow)</p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 1: Open Google Device Page</div>
+                <div className="mt-2 flex items-center justify-between">
+                  <a
+                    href={ytVerificationUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow transition hover:bg-red-500"
+                  >
+                    Open {ytVerificationUrl} ↗
+                  </a>
+                  <span className="text-xs text-ink-400">Opens in new tab</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 2: Enter This Code</div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <div className="rounded-lg border border-red-500/40 bg-red-950/30 px-4 py-2 font-mono text-2xl font-black tracking-widest text-red-400">
+                    {ytUserCode}
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(ytUserCode)
+                      setYtCopied(true)
+                      setTimeout(() => setYtCopied(false), 2000)
+                    }}
+                    className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-xs font-semibold text-ink-200 hover:bg-ink-700"
+                  >
+                    {ytCopied ? '✓ Copied!' : '📋 Copy Code'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 rounded-xl border border-cyan-500/20 bg-cyan-950/20 px-4 py-3 text-xs text-cyan-300">
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                <span>Waiting for Google confirmation... This screen will automatically update once you click "Allow" on Google.</span>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  stopPollingYouTube()
+                  setShowYtDeviceModal(false)
+                }}
+                className="rounded-lg px-4 py-2 text-xs text-ink-400 hover:text-ink-200"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

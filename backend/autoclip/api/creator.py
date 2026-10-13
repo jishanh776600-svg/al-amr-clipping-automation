@@ -20,6 +20,8 @@ from ..publishing.youtube import (
     YouTubePublisher,
     exchange_youtube_code,
     generate_youtube_auth_url,
+    poll_youtube_device_token,
+    request_youtube_device_code,
     validate_youtube_credentials,
 )
 
@@ -62,6 +64,10 @@ class CreatorYouTubeAuthResponse(BaseModel):
 class CreatorYouTubeCallbackIn(BaseModel):
     code: str
     redirect_uri: str
+
+
+class DevicePollIn(BaseModel):
+    device_code: str = Field(..., min_length=5)
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +195,69 @@ async def disconnect_creator_youtube(
     creator.youtube_refresh_token = None
     await asyncio.to_thread(store.update_creator_account, creator)
     return {"success": True, "message": "YouTube channel disconnected."}
+
+
+@router.post("/connect/youtube/device-code")
+async def start_creator_youtube_device_code(
+    creator: models.CreatorAccount = Depends(get_current_creator),
+) -> dict[str, Any]:
+    """Request Google Device Authorization code (google.com/device) with no redirect URIs needed."""
+    pub = YouTubePublisher()
+    if not pub.client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Server Google Client ID is not configured. Admin must set it once in Settings.",
+        )
+    res = await request_youtube_device_code(client_id=pub.client_id)
+    if not res.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=res.get("error", "Failed to get Google device authorization code."),
+        )
+    return res
+
+
+@router.post("/connect/youtube/device-poll")
+async def check_creator_youtube_device_poll(
+    payload: DevicePollIn,
+    creator: models.CreatorAccount = Depends(get_current_creator),
+) -> dict[str, Any]:
+    """Poll Google OAuth endpoint to see if user has entered their device code."""
+    pub = YouTubePublisher()
+    if not pub.client_id or not pub.client_secret:
+        raise HTTPException(
+            status_code=400,
+            detail="Server Google OAuth credentials are not configured.",
+        )
+    res = await poll_youtube_device_token(
+        client_id=pub.client_id,
+        client_secret=pub.client_secret,
+        device_code=payload.device_code,
+    )
+    if res.get("status") == "authorized":
+        creator.youtube_channel_title = res.get("channel_title")
+        creator.youtube_channel_id = res.get("channel_id")
+        creator.youtube_refresh_token = res.get("refresh_token")
+        await asyncio.to_thread(store.update_creator_account, creator)
+        return {
+            "success": True,
+            "status": "authorized",
+            "channel_title": creator.youtube_channel_title,
+            "channel_id": creator.youtube_channel_id,
+            "message": f"Successfully connected YouTube channel: {creator.youtube_channel_title}",
+        }
+    elif res.get("status") == "pending":
+        return {
+            "success": True,
+            "status": "pending",
+            "message": "Waiting for user to enter code...",
+        }
+    else:
+        return {
+            "success": False,
+            "status": "failed",
+            "error": res.get("error", "Authorization failed or expired."),
+        }
 
 
 # --- Instagram Connect ---
