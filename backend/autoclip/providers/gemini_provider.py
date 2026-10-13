@@ -9,12 +9,12 @@ from .base import DetectionConfig, LLMProvider, ProviderError, ProviderStatus
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 SUGGESTED_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-pro",
-    "gemini-1.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
 ]
 
 
