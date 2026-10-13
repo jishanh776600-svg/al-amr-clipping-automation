@@ -38,6 +38,7 @@ PUBLIC_PREFIXES = (
     "/media",
     "/api/exports",
     "/exports",
+    "/api/creator/login",
 )
 
 

@@ -1648,3 +1648,82 @@ class AppCredentialRecord:
         )
 
 
+@dataclass
+class CreatorAccount:
+    """Multi-tenant Creator Account model with dedicated publishing and Telegram bindings."""
+
+    id: str
+    passcode: str
+    display_name: str
+    role: str = "creator"
+    is_active: bool = True
+    youtube_channel_title: str | None = None
+    youtube_channel_id: str | None = None
+    youtube_refresh_token: str | None = None
+    instagram_account_name: str | None = None
+    instagram_account_id: str | None = None
+    instagram_access_token: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    daily_quota: int = 20
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_dict(self, include_secrets: bool = False) -> dict[str, Any]:
+        d = {
+            "id": self.id,
+            "passcode": self.passcode if include_secrets else (self.passcode[:4] + "****" if len(self.passcode) > 4 else "****"),
+            "display_name": self.display_name,
+            "role": self.role,
+            "is_active": self.is_active,
+            "youtube": {
+                "connected": bool(self.youtube_refresh_token),
+                "channel_title": self.youtube_channel_title,
+                "channel_id": self.youtube_channel_id,
+            },
+            "instagram": {
+                "connected": bool(self.instagram_access_token),
+                "account_name": self.instagram_account_name,
+                "account_id": self.instagram_account_id,
+            },
+            "telegram": {
+                "connected": bool(self.telegram_bot_token and self.telegram_chat_id),
+                "chat_id": self.telegram_chat_id,
+                "bot_token_masked": (self.telegram_bot_token[:6] + "..." + self.telegram_bot_token[-4:]) if self.telegram_bot_token else None,
+            },
+            "daily_quota": self.daily_quota,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+        if include_secrets:
+            d["youtube_refresh_token"] = self.youtube_refresh_token
+            d["instagram_access_token"] = self.instagram_access_token
+            d["telegram_bot_token"] = self.telegram_bot_token
+        return d
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "CreatorAccount":
+        keys = row.keys()
+        return cls(
+            id=row["id"],
+            passcode=row["passcode"],
+            display_name=row["display_name"],
+            role=row["role"] if "role" in keys else "creator",
+            is_active=bool(row["is_active"]) if "is_active" in keys else True,
+            youtube_channel_title=row["youtube_channel_title"] if "youtube_channel_title" in keys else None,
+            youtube_channel_id=row["youtube_channel_id"] if "youtube_channel_id" in keys else None,
+            youtube_refresh_token=row["youtube_refresh_token"] if "youtube_refresh_token" in keys else None,
+            instagram_account_name=row["instagram_account_name"] if "instagram_account_name" in keys else None,
+            instagram_account_id=row["instagram_account_id"] if "instagram_account_id" in keys else None,
+            instagram_access_token=row["instagram_access_token"] if "instagram_access_token" in keys else None,
+            telegram_bot_token=row["telegram_bot_token"] if "telegram_bot_token" in keys else None,
+            telegram_chat_id=row["telegram_chat_id"] if "telegram_chat_id" in keys else None,
+            daily_quota=int(row["daily_quota"] or 20) if "daily_quota" in keys else 20,
+            metadata=json.loads(row["metadata"] or "{}") if "metadata" in keys else {},
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+

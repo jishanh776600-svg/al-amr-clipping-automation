@@ -13,6 +13,7 @@ import { ClipGallery } from './pages/ClipGallery'
 import { CampaignBuilder } from './pages/CampaignBuilder'
 import { Publishing } from './pages/Publishing'
 import { Settings } from './pages/Settings'
+import { CreatorPortal } from './pages/CreatorPortal'
 
 const router = createBrowserRouter([
   {
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <MissionControl /> },
+      { path: 'creator', element: <CreatorPortal /> },
       { path: 'new', element: <Ingest /> },
       { path: 'jobs', element: <JobsList /> },
       { path: 'jobs/:jobId', element: <JobProgress /> },

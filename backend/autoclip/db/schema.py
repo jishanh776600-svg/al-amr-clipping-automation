@@ -826,6 +826,41 @@ def _migration_v24(conn: sqlite3.Connection) -> None:
     conn.executescript(_V24)
 
 
+_V25 = """
+CREATE TABLE IF NOT EXISTS creator_accounts (
+    id                     TEXT PRIMARY KEY,
+    passcode               TEXT NOT NULL UNIQUE,
+    display_name           TEXT NOT NULL,
+    role                   TEXT NOT NULL DEFAULT 'creator' CHECK (role IN ('admin', 'creator', 'viewer')),
+    is_active              INTEGER NOT NULL DEFAULT 1,
+    youtube_channel_title  TEXT,
+    youtube_channel_id     TEXT,
+    youtube_refresh_token  TEXT,
+    instagram_account_name TEXT,
+    instagram_account_id   TEXT,
+    instagram_access_token TEXT,
+    telegram_bot_token     TEXT,
+    telegram_chat_id       TEXT,
+    daily_quota            INTEGER NOT NULL DEFAULT 20,
+    metadata               TEXT NOT NULL DEFAULT '{}',
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_creator_passcode ON creator_accounts(passcode);
+
+-- Backfill default admin account with existing operator keys
+INSERT OR IGNORE INTO creator_accounts (
+    id, passcode, display_name, role, is_active, created_at, updated_at
+) VALUES (
+    'admin_root', 'al amr jish2#ji', 'Master Admin', 'admin', 1, datetime('now'), datetime('now')
+);
+"""
+
+
+def _migration_v25(conn: sqlite3.Connection) -> None:
+    conn.executescript(_V25)
+
+
 #: Ordered migrations. Index + 1 is the resulting ``user_version``.
 #: Append only — never edit a migration that has shipped.
 MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
@@ -853,6 +888,7 @@ MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = [
     _migration_v22,
     _migration_v23,
     _migration_v24,
+    _migration_v25,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -88,6 +88,11 @@ export function App() {
             <TopLink to="/" end>
               Overview
             </TopLink>
+            <TopLink to="/creator">
+              <span className="flex items-center gap-1 text-sodium-400 font-semibold">
+                <span>✨</span> Creator Studio
+              </span>
+            </TopLink>
             <TopLink to="/new">
               New Ingest
             </TopLink>

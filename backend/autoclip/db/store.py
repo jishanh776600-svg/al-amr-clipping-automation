@@ -2970,4 +2970,135 @@ def list_credentials() -> list[AppCredentialRecord]:
         return []
 
 
+# --------------------------------------------------------------------------
+# Multi-Tenant Creator Accounts (V25)
+# --------------------------------------------------------------------------
+
+
+def get_creator_account_by_passcode(passcode: str) -> models.CreatorAccount | None:
+    """Retrieve creator account by their secret access passcode."""
+    if not passcode:
+        return None
+    query = "SELECT * FROM creator_accounts WHERE passcode = ? AND is_active = 1 LIMIT 1"
+    try:
+        with connection() as conn:
+            row = conn.execute(query, (passcode.strip(),)).fetchone()
+    except sqlite3.OperationalError:
+        from . import init
+        init()
+        with connection() as conn:
+            row = conn.execute(query, (passcode.strip(),)).fetchone()
+    if row is None:
+        return None
+    return models.CreatorAccount.from_row(row)
+
+
+def get_creator_account(account_id: str) -> models.CreatorAccount | None:
+    """Retrieve creator account by primary ID."""
+    if not account_id:
+        return None
+    query = "SELECT * FROM creator_accounts WHERE id = ? LIMIT 1"
+    try:
+        with connection() as conn:
+            row = conn.execute(query, (account_id,)).fetchone()
+    except sqlite3.OperationalError:
+        from . import init
+        init()
+        with connection() as conn:
+            row = conn.execute(query, (account_id,)).fetchone()
+    if row is None:
+        return None
+    return models.CreatorAccount.from_row(row)
+
+
+def create_creator_account(account: models.CreatorAccount) -> models.CreatorAccount:
+    """Create a new creator account with passcode and initial configuration."""
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO creator_accounts (
+                id, passcode, display_name, role, is_active,
+                youtube_channel_title, youtube_channel_id, youtube_refresh_token,
+                instagram_account_name, instagram_account_id, instagram_access_token,
+                telegram_bot_token, telegram_chat_id, daily_quota, metadata,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account.id,
+                account.passcode,
+                account.display_name,
+                account.role,
+                int(account.is_active),
+                account.youtube_channel_title,
+                account.youtube_channel_id,
+                account.youtube_refresh_token,
+                account.instagram_account_name,
+                account.instagram_account_id,
+                account.instagram_access_token,
+                account.telegram_bot_token,
+                account.telegram_chat_id,
+                account.daily_quota,
+                json.dumps(account.metadata),
+                account.created_at,
+                account.updated_at,
+            ),
+        )
+    return account
+
+
+def update_creator_account(account: models.CreatorAccount) -> models.CreatorAccount:
+    """Update connected platforms, tokens, or credentials for a creator account."""
+    now_ts = utcnow()
+    account.updated_at = now_ts
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE creator_accounts SET
+                display_name = ?,
+                is_active = ?,
+                youtube_channel_title = ?,
+                youtube_channel_id = ?,
+                youtube_refresh_token = ?,
+                instagram_account_name = ?,
+                instagram_account_id = ?,
+                instagram_access_token = ?,
+                telegram_bot_token = ?,
+                telegram_chat_id = ?,
+                daily_quota = ?,
+                metadata = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                account.display_name,
+                int(account.is_active),
+                account.youtube_channel_title,
+                account.youtube_channel_id,
+                account.youtube_refresh_token,
+                account.instagram_account_name,
+                account.instagram_account_id,
+                account.instagram_access_token,
+                account.telegram_bot_token,
+                account.telegram_chat_id,
+                account.daily_quota,
+                json.dumps(account.metadata),
+                now_ts,
+                account.id,
+            ),
+        )
+    return account
+
+
+def list_creator_accounts() -> list[models.CreatorAccount]:
+    """List all creator accounts (admin view)."""
+    try:
+        with connection() as conn:
+            rows = conn.execute("SELECT * FROM creator_accounts ORDER BY created_at DESC").fetchall()
+        return [models.CreatorAccount.from_row(r) for r in rows]
+    except sqlite3.OperationalError:
+        return []
+
+
+
 

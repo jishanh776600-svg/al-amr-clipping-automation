@@ -1600,7 +1600,114 @@ export const api = {
     request<QueueItem | null>(`/api/publishing/queue/process-next?worker_id=${workerId}&dry_run=${dryRun}`, {
       method: 'POST',
     }),
+
+  // Multi-tenant Creator & Channel Connection APIs
+  creatorLogin: (passcode: string) =>
+    request<{ success: boolean; token: string; creator: CreatorProfile }>('/api/creator/login', {
+      method: 'POST',
+      body: JSON.stringify({ passcode }),
+    }),
+
+  creatorProfile: (passcode?: string) =>
+    request<CreatorProfile>('/api/creator/profile', {
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorYouTubeAuthUrl: (redirectUri: string, passcode?: string) =>
+    request<{ auth_url: string; redirect_uri: string }>(
+      `/api/creator/connect/youtube/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
+      {
+        headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+      }
+    ),
+
+  creatorYouTubeCallback: (code: string, redirectUri: string, passcode?: string) =>
+    request<{ success: boolean; channel_title: string; message: string }>(
+      '/api/creator/connect/youtube/callback',
+      {
+        method: 'POST',
+        headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+        body: JSON.stringify({ code, redirect_uri: redirectUri }),
+      }
+    ),
+
+  creatorDisconnectYouTube: (passcode?: string) =>
+    request<{ success: boolean }>('/api/creator/connect/youtube/disconnect', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorConnectInstagram: (accessToken: string, accountId: string, passcode?: string) =>
+    request<{ success: boolean; account_name: string; message: string }>(
+      '/api/creator/connect/instagram',
+      {
+        method: 'POST',
+        headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+        body: JSON.stringify({ access_token: accessToken, account_id: accountId }),
+      }
+    ),
+
+  creatorDisconnectInstagram: (passcode?: string) =>
+    request<{ success: boolean }>('/api/creator/connect/instagram/disconnect', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorConnectTelegram: (botToken: string, chatId: string, passcode?: string) =>
+    request<{ success: boolean; bot_username: string; chat_id: string; message: string }>(
+      '/api/creator/connect/telegram',
+      {
+        method: 'POST',
+        headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+        body: JSON.stringify({ bot_token: botToken, chat_id: chatId }),
+      }
+    ),
+
+  creatorDisconnectTelegram: (passcode?: string) =>
+    request<{ success: boolean }>('/api/creator/connect/telegram/disconnect', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorAdminListUsers: (passcode?: string) =>
+    request<any[]>('/api/creator/admin/users', {
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorAdminCreateUser: (displayName: string, dailyQuota = 20, passcode?: string) =>
+    request<any>('/api/creator/admin/users', {
+      method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+      body: JSON.stringify({ display_name: displayName, daily_quota: dailyQuota }),
+    }),
 }
+
+export interface CreatorProfile {
+  id: string
+  passcode: string
+  display_name: string
+  role: 'admin' | 'creator' | 'viewer'
+  is_active: boolean
+  youtube: {
+    connected: boolean
+    channel_title: string | null
+    channel_id: string | null
+  }
+  instagram: {
+    connected: boolean
+    account_name: string | null
+    account_id: string | null
+  }
+  telegram: {
+    connected: boolean
+    chat_id: string | null
+    bot_token_masked: string | null
+  }
+  daily_quota: number
+  created_at: string
+  updated_at: string
+}
+
 
 
 /** Format seconds as m:ss, or h:mm:ss past an hour. */
