@@ -62,3 +62,45 @@ def test_seo_engine_uses_ai_generated_title():
         )
         assert "Why Most Startups Fail Instantly 💀" in title
         assert "#Shorts" in title
+
+
+def test_ai_generator_fallback_to_groq_when_gemini_fails():
+    """Verify Groq Cloud is called when Gemini fails."""
+    mock_groq_return = {
+        "title": "Build Fast Or Die Trying ⚡",
+        "description": "How speed determines startup survival in 2026.",
+    }
+
+    with patch("autoclip.seo.ai_generator._call_gemini", side_effect=Exception("Gemini quota error")), \
+         patch("autoclip.seo.ai_generator._call_groq", return_value=mock_groq_return), \
+         patch.dict("os.environ", {"GROQ_API_KEY": "gsk_test123"}):
+        res = generate_ai_metadata(
+            transcript="Speed is everything in early stage startups.",
+            brand_name="Future Founders",
+            gemini_api_key="fake-key",
+        )
+        assert res["title"] == "Build Fast Or Die Trying ⚡"
+        assert "speed determines startup survival" in res["description"].lower()
+
+
+def test_ai_generator_fallback_to_nvidia_deepseek():
+    """Verify NVIDIA NIM DeepSeek is called when Gemini and Groq fail."""
+    mock_nv_return = {
+        "title": "The DeepSeek AI Revolution 🧠",
+        "description": "Why reasoning models change automated video editing.",
+    }
+
+    with patch("autoclip.seo.ai_generator._call_gemini", side_effect=Exception("Gemini error")), \
+         patch("autoclip.seo.ai_generator._call_groq", side_effect=Exception("Groq error")), \
+         patch("autoclip.seo.ai_generator._call_nvidia", return_value=mock_nv_return), \
+         patch.dict("os.environ", {
+             "GROQ_API_KEY": "gsk_test",
+             "AI_COUNCIL_DEEPSEEK_KEY_1": "nvapi-test1",
+         }):
+        res = generate_ai_metadata(
+            transcript="DeepSeek R1 reasoning on the fly.",
+            brand_name="Future Founders",
+            gemini_api_key="fake-key",
+        )
+        assert res["title"] == "The DeepSeek AI Revolution 🧠"
+
