@@ -70,6 +70,12 @@ class DevicePollIn(BaseModel):
     device_code: str = Field(..., min_length=5)
 
 
+class CreatorYouTubeDirectIn(BaseModel):
+    refresh_token: str = Field(..., min_length=10)
+    channel_title: str | None = None
+    channel_id: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Auth Dependency for Creator Accounts
 # ---------------------------------------------------------------------------
@@ -260,6 +266,30 @@ async def check_creator_youtube_device_poll(
         }
 
 
+@router.post("/connect/youtube/direct")
+async def connect_creator_youtube_direct(
+    payload: CreatorYouTubeDirectIn,
+    creator: models.CreatorAccount = Depends(get_current_creator),
+) -> dict[str, Any]:
+    """Directly link YouTube channel using Refresh Token or OAuth credentials."""
+    val = await validate_youtube_credentials(refresh_token=payload.refresh_token.strip())
+    channel_title = val.get("channel_title") or payload.channel_title or "YouTube Channel"
+    channel_id = val.get("channel_id") or payload.channel_id
+
+    creator.youtube_channel_title = channel_title
+    creator.youtube_channel_id = channel_id
+    creator.youtube_refresh_token = payload.refresh_token.strip()
+    await asyncio.to_thread(store.update_creator_account, creator)
+
+    return {
+        "success": True,
+        "platform": "youtube",
+        "channel_title": creator.youtube_channel_title,
+        "channel_id": creator.youtube_channel_id,
+        "message": f"Successfully connected YouTube channel: {creator.youtube_channel_title}",
+    }
+
+
 # --- Instagram Connect ---
 
 
@@ -350,6 +380,69 @@ async def disconnect_creator_telegram(
     creator.telegram_chat_id = None
     await asyncio.to_thread(store.update_creator_account, creator)
     return {"success": True, "message": "Telegram notifications disconnected."}
+
+
+# --- Creator Jobs & Renders ---
+
+
+@router.get("/jobs")
+async def get_creator_jobs(
+    limit: int = 15,
+    creator: models.CreatorAccount = Depends(get_current_creator),
+) -> list[dict[str, Any]]:
+    """List recent jobs and generated clips for this creator."""
+    all_jobs = await asyncio.to_thread(store.list_jobs, 100)
+
+    creator_jobs = []
+    for j in all_jobs:
+        cid = (j.settings or {}).get("creator_id")
+        if creator.role == "admin" or cid == creator.id:
+            creator_jobs.append(j)
+        if len(creator_jobs) >= limit:
+            break
+
+    results = []
+    for j in creator_jobs:
+        source = await asyncio.to_thread(store.get_source, j.source_id)
+        clips = await asyncio.to_thread(store.list_clips, j.id)
+        exports = await asyncio.to_thread(store.list_exports_for_job, j.id)
+
+        exports_by_clip: dict[str, list[dict[str, Any]]] = {}
+        for exp in exports:
+            exports_by_clip.setdefault(exp.clip_id, []).append({
+                "id": exp.id,
+                "path": exp.path,
+                "ratio": exp.ratio,
+                "style": exp.style,
+                "stream_url": f"/api/exports/{exp.id}/stream",
+                "created_at": exp.created_at.isoformat() if exp.created_at else None,
+            })
+
+        clips_data = []
+        for c in clips:
+            c_dict = {
+                "id": c.id,
+                "title": c.title,
+                "score": c.score,
+                "duration_s": round(c.end_s - c.start_s, 1),
+                "status": c.status,
+                "exports": exports_by_clip.get(c.id, []),
+            }
+            clips_data.append(c_dict)
+
+        results.append({
+            "id": j.id,
+            "status": j.status,
+            "current_stage": j.current_stage,
+            "progress": round(j.progress, 2),
+            "error": j.error,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "source_title": source.title if source else "Video Ingest",
+            "source_url": source.url if source else None,
+            "clips": clips_data,
+        })
+
+    return results
 
 
 # --- Admin User Management ---

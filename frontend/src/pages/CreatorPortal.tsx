@@ -8,11 +8,14 @@ export function CreatorPortal() {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  // YouTube Device Code (TV / Zero-redirect flow)
+  // YouTube Device & Direct Token State
   const [showYtDeviceModal, setShowYtDeviceModal] = useState(false)
+  const [ytTab, setYtTab] = useState<'device' | 'direct'>('device')
   const [ytUserCode, setYtUserCode] = useState('')
   const [ytVerificationUrl, setYtVerificationUrl] = useState('https://www.google.com/device')
   const [ytCopied, setYtCopied] = useState(false)
+  const [directRefreshToken, setDirectRefreshToken] = useState('')
+  const [savingDirectToken, setSavingDirectToken] = useState(false)
   const ytPollTimerRef = useRef<any>(null)
 
   // Modals / forms
@@ -29,6 +32,21 @@ export function CreatorPortal() {
   const [briefText, setBriefText] = useState('')
   const [isSubmittingJob, setIsSubmittingJob] = useState(false)
 
+  // Real-time Pipeline & Clips
+  const [creatorJobsList, setCreatorJobsList] = useState<any[]>([])
+  const [previewExportUrl, setPreviewExportUrl] = useState<string | null>(null)
+  const [previewClipTitle, setPreviewClipTitle] = useState<string>('')
+
+  const loadJobs = async (code: string) => {
+    if (!code) return
+    try {
+      const list = await api.creatorJobs(code)
+      setCreatorJobsList(list)
+    } catch {
+      // Quiet fail on background jobs refresh
+    }
+  }
+
   // Fetch profile if passcode is stored
   const loadProfile = async (code: string) => {
     if (!code) return
@@ -38,6 +56,7 @@ export function CreatorPortal() {
       const p = await api.creatorProfile(code)
       setProfile(p)
       localStorage.setItem('alamr_creator_passcode', code)
+      loadJobs(code)
     } catch (err: any) {
       setError(err?.message || 'Invalid or expired passcode.')
       setProfile(null)
@@ -92,6 +111,16 @@ export function CreatorPortal() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!profile || !passcode) return
+
+    const interval = setInterval(() => {
+      loadJobs(passcode)
+    }, 4000)
+
+    return () => clearInterval(interval)
+  }, [profile?.id, passcode])
+
   const handleOAuthCallback = async (authCode: string) => {
     const currentPasscode = localStorage.getItem('alamr_creator_passcode') || passcode
     if (!currentPasscode) {
@@ -120,22 +149,42 @@ export function CreatorPortal() {
   }
 
   const handleConnectYouTube = async () => {
-    try {
-      setError(null)
-      setLoading(true)
-      const res = await api.creatorYouTubeDeviceCode(passcode)
-      if (res?.user_code && res?.device_code) {
-        setYtUserCode(res.user_code)
-        setYtVerificationUrl(res.verification_url || 'https://www.google.com/device')
-        setShowYtDeviceModal(true)
-        startPollingYouTube(res.device_code)
-      } else {
-        setError('Could not generate YouTube device code.')
+    setShowYtDeviceModal(true)
+    if (!ytUserCode) {
+      try {
+        setError(null)
+        setLoading(true)
+        const res = await api.creatorYouTubeDeviceCode(passcode)
+        if (res?.user_code && res?.device_code) {
+          setYtUserCode(res.user_code)
+          setYtVerificationUrl(res.verification_url || 'https://www.google.com/device')
+          startPollingYouTube(res.device_code)
+        } else {
+          setError('Could not generate YouTube device code.')
+        }
+      } catch (err: any) {
+        setError(err?.message || 'Failed to start YouTube authentication.')
+      } finally {
+        setLoading(false)
       }
+    }
+  }
+
+  const handleSaveDirectYouTube = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!directRefreshToken.trim()) return
+    setSavingDirectToken(true)
+    setError(null)
+    try {
+      const res = await api.creatorConnectYouTubeDirect(directRefreshToken.trim(), passcode)
+      setSuccessMsg(res.message || `Connected channel: ${res.channel_title}!`)
+      setShowYtDeviceModal(false)
+      setDirectRefreshToken('')
+      loadProfile(passcode)
     } catch (err: any) {
-      setError(err?.message || 'Failed to start YouTube authentication.')
+      setError(err?.message || 'Failed to connect YouTube with refresh token.')
     } finally {
-      setLoading(false)
+      setSavingDirectToken(false)
     }
   }
 
@@ -217,6 +266,7 @@ export function CreatorPortal() {
       const overrides: any = {
         editing_preset: 'all_in_one_viral',
         creator_id: profile?.id,
+        dispatch_mode: 'local',
       }
       form.append('overrides', JSON.stringify(overrides))
 
@@ -224,6 +274,7 @@ export function CreatorPortal() {
       setSuccessMsg(`Autonomous Clipping Job #${job.id.slice(0, 8)} started! AI will analyze highlights, render 9:16 vertical edits, and notify you via Telegram.`)
       setVideoUrl('')
       setBriefText('')
+      loadJobs(passcode)
     } catch (err: any) {
       setError(err?.message || 'Failed to launch clipping job.')
     } finally {
@@ -542,6 +593,214 @@ export function CreatorPortal() {
         </form>
       </div>
 
+      {/* Live Video Pipeline & Generated Clips Section */}
+      <div className="mt-12">
+        <div className="flex items-center justify-between border-b border-ink-800 pb-4">
+          <div>
+            <h2 className="text-lg font-bold text-ink-100">Your Video Pipeline & Clips</h2>
+            <p className="mt-0.5 text-xs text-ink-400">
+              Real-time VPS processing status, 9:16 vertical renders, and automated social delivery.
+            </p>
+          </div>
+          <button
+            onClick={() => loadJobs(passcode)}
+            className="rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs text-ink-300 hover:bg-ink-800"
+          >
+            ↻ Refresh Status
+          </button>
+        </div>
+
+        {creatorJobsList.length === 0 ? (
+          <div className="mt-6 rounded-xl border border-ink-800 bg-ink-950 p-8 text-center text-xs text-ink-400">
+            No clipping jobs launched yet. Paste any YouTube link above to start!
+          </div>
+        ) : (
+          <div className="mt-6 space-y-6">
+            {creatorJobsList.map((job) => {
+              const isRunning = !['done', 'failed', 'cancelled'].includes(job.status)
+              const progressPct = Math.min(100, Math.max(0, Math.round((job.progress || 0) * 100)))
+
+              return (
+                <div key={job.id} className="rounded-2xl border border-ink-800 bg-ink-950 p-6 shadow-xl">
+                  {/* Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-900 pb-4">
+                    <div>
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-semibold text-ink-100 text-sm">
+                          {job.source_title || 'Autonomous Video Job'}
+                        </span>
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
+                            job.status === 'done'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : job.status === 'failed'
+                              ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              : 'bg-sodium-500/15 text-sodium-300 border border-sodium-500/30 animate-pulse'
+                          }`}
+                        >
+                          {job.status === 'done' ? '✓ Completed' : job.status === 'failed' ? 'Failed' : `${job.status} (${progressPct}%)`}
+                        </span>
+                      </div>
+                      {job.source_url && (
+                        <a
+                          href={job.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 block text-xs text-ink-500 hover:text-ink-300 truncate max-w-md"
+                        >
+                          {job.source_url}
+                        </a>
+                      )}
+                    </div>
+                    <div className="text-right text-[11px] text-ink-500 font-mono">
+                      Job #{job.id.slice(0, 8)}
+                    </div>
+                  </div>
+
+                  {/* Stage Progress Bar */}
+                  {isRunning && (
+                    <div className="mt-5 rounded-xl bg-ink-900/80 p-4 border border-ink-800">
+                      <div className="flex items-center justify-between text-xs font-medium text-ink-300">
+                        <span className="flex items-center gap-2">
+                          <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-sodium-400 border-t-transparent" />
+                          <span>Stage: <strong className="text-sodium-400 capitalize">{job.current_stage || 'Processing'}</strong></span>
+                        </span>
+                        <span className="font-bold text-sodium-400">{progressPct}%</span>
+                      </div>
+
+                      {/* Visual Progress Bar */}
+                      <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-ink-950">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-sodium-500 to-amber-400 transition-all duration-500"
+                          style={{ width: `${Math.max(5, progressPct)}%` }}
+                        />
+                      </div>
+
+                      {/* Pipeline Milestones */}
+                      <div className="mt-3 grid grid-cols-5 gap-1 text-[10px] text-center text-ink-400">
+                        <div className={progressPct >= 10 ? 'text-sodium-400 font-semibold' : ''}>1. Ingest</div>
+                        <div className={progressPct >= 30 ? 'text-sodium-400 font-semibold' : ''}>2. Whisper AI</div>
+                        <div className={progressPct >= 60 ? 'text-sodium-400 font-semibold' : ''}>3. Viral Hooks</div>
+                        <div className={progressPct >= 80 ? 'text-sodium-400 font-semibold' : ''}>4. 9:16 Reframe</div>
+                        <div className={progressPct >= 95 ? 'text-sodium-400 font-semibold' : ''}>5. Export & Send</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {job.error && (
+                    <div className="mt-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400 border border-red-500/20">
+                      ⚠️ {job.error}
+                    </div>
+                  )}
+
+                  {/* Rendered Clips Gallery for this job */}
+                  {job.clips && job.clips.length > 0 && (
+                    <div className="mt-6">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-400">
+                        Generated Vertical Shorts ({job.clips.length})
+                      </h4>
+                      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {job.clips.map((clip: any) => {
+                          const firstExport = clip.exports && clip.exports.length > 0 ? clip.exports[0] : null
+                          return (
+                            <div
+                              key={clip.id}
+                              className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900 p-4 transition hover:border-ink-700"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="rounded bg-sodium-500/10 px-2 py-0.5 font-bold text-sodium-400 border border-sodium-500/20">
+                                    Virality: {clip.score}/100
+                                  </span>
+                                  <span className="text-ink-400">{clip.duration_s}s</span>
+                                </div>
+                                <h5 className="mt-2.5 line-clamp-2 text-sm font-semibold text-ink-100">
+                                  {clip.title || 'Viral Highlight Clip'}
+                                </h5>
+                              </div>
+
+                              <div className="mt-4 flex gap-2 pt-3 border-t border-ink-800">
+                                {firstExport ? (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setPreviewClipTitle(clip.title || 'Clip Preview')
+                                        setPreviewExportUrl(firstExport.stream_url)
+                                      }}
+                                      className="flex-1 rounded-lg bg-sodium-500 py-2 text-center text-xs font-bold text-ink-950 transition hover:bg-sodium-400"
+                                    >
+                                      ▶ Preview
+                                    </button>
+                                    <a
+                                      href={firstExport.stream_url}
+                                      download={`${(clip.title || 'clip').replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`}
+                                      className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-center text-xs font-semibold text-ink-200 transition hover:bg-ink-700"
+                                      title="Download MP4"
+                                    >
+                                      ⬇ MP4
+                                    </a>
+                                  </>
+                                ) : (
+                                  <span className="w-full text-center text-[11px] text-ink-500 py-1">
+                                    Rendering vertical export...
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Video Preview Modal */}
+      {previewExportUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md"
+          onClick={() => setPreviewExportUrl(null)}
+        >
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-ink-700 bg-ink-900 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-ink-800 pb-3">
+              <h4 className="truncate text-sm font-bold text-ink-100 pr-2">
+                {previewClipTitle}
+              </h4>
+              <button
+                onClick={() => setPreviewExportUrl(null)}
+                className="text-ink-400 hover:text-white text-base leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-4 flex justify-center bg-black rounded-xl overflow-hidden shadow-inner">
+              <video
+                src={previewExportUrl}
+                controls
+                autoPlay
+                className="max-h-[70vh] w-auto rounded-xl object-contain"
+              />
+            </div>
+            <div className="mt-4 flex justify-end">
+              <a
+                href={previewExportUrl}
+                download="viral_clip.mp4"
+                className="rounded-lg bg-sodium-500 px-4 py-2 text-xs font-bold text-ink-950 hover:bg-sodium-400"
+              >
+                ⬇ Download Clip
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Telegram Modal */}
       {showTelegramModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
@@ -648,60 +907,128 @@ export function CreatorPortal() {
         </div>
       )}
 
-      {/* YouTube Google Device / TV Code Modal */}
+      {/* YouTube Channel Linking Modal (Google Device Code / Direct Refresh Token) */}
       {showYtDeviceModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 p-4 backdrop-blur-md">
           <div className="w-full max-w-lg rounded-2xl border border-red-500/30 bg-ink-900 p-7 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-600/20 text-xl text-red-500">
-                ▶
-              </span>
-              <div>
-                <h3 className="text-lg font-bold text-ink-100">Connect YouTube Channel</h3>
-                <p className="text-xs text-ink-400">Zero-Config Device Verification (Google TV Flow)</p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-4">
-              <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 1: Open Google Device Page</div>
-                <div className="mt-2 flex items-center justify-between">
-                  <a
-                    href={ytVerificationUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow transition hover:bg-red-500"
-                  >
-                    Open {ytVerificationUrl} ↗
-                  </a>
-                  <span className="text-xs text-ink-400">Opens in new tab</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-600/20 text-xl text-red-500">
+                  ▶
+                </span>
+                <div>
+                  <h3 className="text-lg font-bold text-ink-100">Connect YouTube Channel</h3>
+                  <p className="text-xs text-ink-400">Select your preferred authorization method</p>
                 </div>
               </div>
+              <button
+                onClick={() => {
+                  stopPollingYouTube()
+                  setShowYtDeviceModal(false)
+                }}
+                className="text-ink-400 hover:text-ink-100 text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
 
-              <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 2: Enter This Code</div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <div className="rounded-lg border border-red-500/40 bg-red-950/30 px-4 py-2 font-mono text-2xl font-black tracking-widest text-red-400">
-                    {ytUserCode}
+            {/* Modal Tabs */}
+            <div className="mt-5 flex rounded-xl border border-ink-800 bg-ink-950 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => setYtTab('device')}
+                className={`flex-1 rounded-lg py-2 font-semibold transition ${
+                  ytTab === 'device'
+                    ? 'bg-red-600 text-white shadow'
+                    : 'text-ink-400 hover:text-ink-200'
+                }`}
+              >
+                Google TV Code (Zero Config)
+              </button>
+              <button
+                type="button"
+                onClick={() => setYtTab('direct')}
+                className={`flex-1 rounded-lg py-2 font-semibold transition ${
+                  ytTab === 'direct'
+                    ? 'bg-red-600 text-white shadow'
+                    : 'text-ink-400 hover:text-ink-200'
+                }`}
+              >
+                Direct Refresh Token
+              </button>
+            </div>
+
+            {ytTab === 'device' ? (
+              <div className="mt-5 space-y-4">
+                <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 1: Open Google Device Page</div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <a
+                      href={ytVerificationUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow transition hover:bg-red-500"
+                    >
+                      Open {ytVerificationUrl} ↗
+                    </a>
+                    <span className="text-xs text-ink-400">Opens in new tab</span>
                   </div>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(ytUserCode)
-                      setYtCopied(true)
-                      setTimeout(() => setYtCopied(false), 2000)
-                    }}
-                    className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-xs font-semibold text-ink-200 hover:bg-ink-700"
-                  >
-                    {ytCopied ? '✓ Copied!' : '📋 Copy Code'}
-                  </button>
+                </div>
+
+                <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-ink-400">Step 2: Enter This Code</div>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <div className="rounded-lg border border-red-500/40 bg-red-950/30 px-4 py-2 font-mono text-2xl font-black tracking-widest text-red-400">
+                      {ytUserCode || '...'}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (ytUserCode) {
+                          navigator.clipboard.writeText(ytUserCode)
+                          setYtCopied(true)
+                          setTimeout(() => setYtCopied(false), 2000)
+                        }
+                      }}
+                      className="rounded-lg border border-ink-700 bg-ink-800 px-3 py-2 text-xs font-semibold text-ink-200 hover:bg-ink-700"
+                    >
+                      {ytCopied ? '✓ Copied!' : '📋 Copy Code'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 rounded-xl border border-cyan-500/20 bg-cyan-950/20 px-4 py-3 text-xs text-cyan-300">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                  <span>Waiting for Google confirmation... This screen will automatically update once you click "Allow" on Google.</span>
                 </div>
               </div>
+            ) : (
+              <form onSubmit={handleSaveDirectYouTube} className="mt-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-ink-300">
+                    YouTube OAuth Refresh Token
+                  </label>
+                  <p className="mt-0.5 text-[11px] text-ink-500">
+                    Paste your <code>refresh_token</code> from your Google Cloud Console OAuth 2.0 app.
+                  </p>
+                  <textarea
+                    rows={4}
+                    value={directRefreshToken}
+                    onChange={(e) => setDirectRefreshToken(e.target.value)}
+                    placeholder="1//04..."
+                    className="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 p-3 font-mono text-xs text-ink-100 focus:border-red-500 focus:outline-none"
+                    required
+                  />
+                </div>
 
-              <div className="flex items-center gap-3 rounded-xl border border-cyan-500/20 bg-cyan-950/20 px-4 py-3 text-xs text-cyan-300">
-                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-                <span>Waiting for Google confirmation... This screen will automatically update once you click "Allow" on Google.</span>
-              </div>
-            </div>
+                <button
+                  type="submit"
+                  disabled={savingDirectToken || !directRefreshToken.trim()}
+                  className="w-full rounded-lg bg-red-600 py-2.5 text-xs font-bold text-white shadow hover:bg-red-500 disabled:opacity-50"
+                >
+                  {savingDirectToken ? 'Linking Channel...' : 'Save & Link Channel ↗'}
+                </button>
+              </form>
+            )}
 
             <div className="mt-6 flex justify-end">
               <button
@@ -712,7 +1039,7 @@ export function CreatorPortal() {
                 }}
                 className="rounded-lg px-4 py-2 text-xs text-ink-400 hover:text-ink-200"
               >
-                Cancel
+                Close
               </button>
             </div>
           </div>

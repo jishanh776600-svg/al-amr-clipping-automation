@@ -88,6 +88,15 @@ def get_telegram_config(job_settings: dict[str, Any] | None = None) -> tuple[str
     allowed_ids = [uid.strip() for uid in allowed_str.split(",") if uid.strip()]
 
     if job_settings:
+        creator_id = job_settings.get("creator_id")
+        if creator_id:
+            try:
+                creator = store.get_creator_account(creator_id)
+                if creator and creator.telegram_bot_token and creator.telegram_chat_id:
+                    return creator.telegram_bot_token.strip(), creator.telegram_chat_id.strip(), [creator.telegram_chat_id.strip()]
+            except Exception as c_err:
+                log.debug("Could not resolve creator telegram config: %s", c_err)
+
         if not bot_token:
             bot_token = str(job_settings.get("telegram_bot_token") or (job_settings.get("telegram") or {}).get("bot_token") or "").strip()
         if not chat_id:

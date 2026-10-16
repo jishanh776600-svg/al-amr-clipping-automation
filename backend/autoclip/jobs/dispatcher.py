@@ -26,8 +26,14 @@ DEFAULT_REF = "main"
 
 
 def get_dispatch_mode() -> str:
-    """Return 'github', 'auto', or 'local'."""
-    return os.environ.get("AUTOCLIP_DISPATCH_MODE", "auto").strip().lower()
+    """Return 'github', 'auto', or 'local'. Defaults to 'local' for reliable in-process worker execution."""
+    val = os.environ.get("AUTOCLIP_DISPATCH_MODE", "").strip().lower()
+    if val in ("github", "local"):
+        return val
+    # If explicitly running on Render free tier without local worker:
+    if os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL"):
+        return "github"
+    return "local"
 
 
 def get_github_token() -> str | None:

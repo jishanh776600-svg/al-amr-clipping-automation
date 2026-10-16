@@ -1664,6 +1664,16 @@ export const api = {
       body: JSON.stringify({ device_code: deviceCode }),
     }),
 
+  creatorConnectYouTubeDirect: (refreshToken: string, passcode?: string) =>
+    request<{ success: boolean; channel_title: string; message: string }>(
+      '/api/creator/connect/youtube/direct',
+      {
+        method: 'POST',
+        headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }
+    ),
+
   creatorConnectInstagram: (accessToken: string, accountId: string, passcode?: string) =>
     request<{ success: boolean; account_name: string; message: string }>(
       '/api/creator/connect/instagram',
@@ -1693,6 +1703,11 @@ export const api = {
   creatorDisconnectTelegram: (passcode?: string) =>
     request<{ success: boolean }>('/api/creator/connect/telegram/disconnect', {
       method: 'POST',
+      headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
+    }),
+
+  creatorJobs: (passcode?: string) =>
+    request<any[]>('/api/creator/jobs', {
       headers: passcode ? { 'X-Creator-Passcode': passcode } : undefined,
     }),
 

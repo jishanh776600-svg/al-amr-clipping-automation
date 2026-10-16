@@ -730,7 +730,11 @@ async def create_autonomous_job(
     has_egress_proxy = bool(resolve_egress_proxy(base_settings.ingest.proxy))
     github_enabled = is_github_dispatch_enabled()
 
-    if is_cloud:
+    mode_pref = (
+        (overrides.get("dispatch_mode") if isinstance(overrides, dict) else None)
+        or get_dispatch_mode()
+    )
+    if is_cloud and mode_pref == "github":
         if not github_enabled:
             raise HTTPException(
                 status_code=400,
@@ -741,8 +745,10 @@ async def create_autonomous_job(
                 ),
             )
         dispatch_mode = "github"
+    elif mode_pref == "github" and github_enabled:
+        dispatch_mode = "github"
     else:
-        dispatch_mode = "github" if github_enabled else "local"
+        dispatch_mode = "local"
     job = Job(
         id=new_id(),
         source_id=source.id,
