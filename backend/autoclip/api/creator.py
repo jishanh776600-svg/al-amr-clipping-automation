@@ -409,13 +409,14 @@ async def get_creator_jobs(
 
         exports_by_clip: dict[str, list[dict[str, Any]]] = {}
         for exp in exports:
+            exp_created = exp.created_at.isoformat() if hasattr(exp.created_at, "isoformat") else (str(exp.created_at) if exp.created_at else None)
             exports_by_clip.setdefault(exp.clip_id, []).append({
                 "id": exp.id,
                 "path": exp.path,
                 "ratio": exp.ratio,
                 "style": exp.style,
                 "stream_url": f"/api/exports/{exp.id}/stream",
-                "created_at": exp.created_at.isoformat() if exp.created_at else None,
+                "created_at": exp_created,
             })
 
         clips_data = []
@@ -430,13 +431,14 @@ async def get_creator_jobs(
             }
             clips_data.append(c_dict)
 
+        job_created = j.created_at.isoformat() if hasattr(j.created_at, "isoformat") else (str(j.created_at) if j.created_at else None)
         results.append({
             "id": j.id,
             "status": j.status,
             "current_stage": j.current_stage,
             "progress": round(j.progress, 2),
             "error": j.error,
-            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "created_at": job_created,
             "source_title": source.title if source else "Video Ingest",
             "source_url": source.url if source else None,
             "clips": clips_data,
