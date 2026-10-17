@@ -26,7 +26,7 @@ const resolveMediaSrc = (src?: string) => {
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
         return src;
     }
-    const clean = src.startsWith('/') ? src.slice(1) : src;
+    const clean = src.replace(/^\/?(public\/)?/, '');
     return staticFile(clean);
 };
 
