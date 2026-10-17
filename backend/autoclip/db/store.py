@@ -1862,6 +1862,19 @@ def get_final_render(clip_id: str) -> FinalRenderRecord | None:
     return FinalRenderRecord.from_row(row) if row else None
 
 
+def update_final_render(record: FinalRenderRecord) -> FinalRenderRecord:
+    with connection() as conn:
+        conn.execute(
+            """
+            UPDATE final_renders
+            SET output_path = ?, quality_score = ?, quality_status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (record.output_path, record.quality_score, record.quality_status, utcnow(), record.id),
+        )
+    return record
+
+
 # --------------------------------------------------------------------------
 # Step 23: Clip SEO & Metadata
 # --------------------------------------------------------------------------
