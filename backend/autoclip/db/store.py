@@ -584,6 +584,14 @@ def update_export_drive_info(
         )
 
 
+def update_export_path(export_id: str, path: str, file_size_bytes: int) -> None:
+    with connection() as conn:
+        conn.execute(
+            "UPDATE exports SET path = ?, file_size_bytes = ? WHERE id = ?",
+            (path, file_size_bytes, export_id),
+        )
+
+
 def get_export(export_id: str) -> Export | None:
     with connection() as conn:
         row = conn.execute("SELECT * FROM exports WHERE id = ?", (export_id,)).fetchone()

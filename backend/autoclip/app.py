@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         while True:
             try:
                 await asyncio.sleep(30.0)
-                await asyncio.to_thread(pub_orchestrator.process_due_queue, batch_size=5)
+                await pub_orchestrator.process_due_queue(batch_size=5)
             except asyncio.CancelledError:
                 break
             except Exception as exc:

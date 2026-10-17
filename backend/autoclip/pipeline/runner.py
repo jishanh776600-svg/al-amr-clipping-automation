@@ -1398,6 +1398,19 @@ class PipelineRunner:
             len(clips),
             len(all_exports),
         )
+        # Trigger Master Overeditor Engine (Content Rewards Layout + 100% AI B-Roll + Watermark Badge)
+        try:
+            from .overeditor.orchestrator import MasterOvereditorOrchestrator
+            brief_text = self.job.settings.get("brief_text") or (self.job.settings.get("campaign") or {}).get("brief")
+            overeditor = MasterOvereditorOrchestrator()
+            overeditor.process_job_clips(
+                job_id=self.job.id,
+                clips=clips,
+                transcript_text=transcript.text if transcript else None,
+                brief_text=str(brief_text) if brief_text else None,
+            )
+        except Exception as o_err:
+            log.warning("Overeditor stage failed or skipped: %s", o_err, exc_info=True)
 
         self._finish_stage(stage)
 

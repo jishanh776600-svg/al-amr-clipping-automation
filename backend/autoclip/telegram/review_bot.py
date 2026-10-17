@@ -30,6 +30,7 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 _publishing_in_progress: set[str] = set()
 _publishing_lock = asyncio.Lock()
 _background_tasks: set[asyncio.Task] = set()
+_pending_revisions: dict[str, dict[str, Any]] = {}
 
 
 def _escape_md(text: str) -> str:
@@ -890,6 +891,107 @@ def _reconcile_remote_clip(
     return clip, approval
 
 
+async def _handle_operator_text_message(
+    message: dict[str, Any],
+    bot_token: str,
+    allowed_ids: list[str],
+) -> dict[str, Any]:
+    """Handle text feedback from operator for clip change requests."""
+    from_user = message.get("from") or {}
+    user_id = from_user.get("id")
+    raw_username = from_user.get("username", "")
+    username = raw_username or str(user_id)
+    chat_id = str((message.get("chat") or {}).get("id") or "")
+    text = (message.get("text") or "").strip()
+    msg_id = message.get("message_id")
+
+    if not is_user_authorized(user_id, allowed_ids, raw_username):
+        log.warning("Unauthorized operator text message from %s (id=%s)", username, user_id)
+        return {"status": "unauthorized"}
+
+    if not text:
+        return {"status": "ignored"}
+
+    pending = _pending_revisions.get(chat_id)
+    if not pending:
+        reply_to = message.get("reply_to_message") or {}
+        reply_id = reply_to.get("message_id")
+        if reply_id:
+            all_approvals = store.list_clip_approvals(limit=100)
+            for ap in all_approvals:
+                if ap.telemetry and ap.telemetry.get("telegram_message_id") == reply_id:
+                    pending = {"clip_id": ap.clip_id, "job_id": ap.job_id, "message_id": reply_id}
+                    break
+
+    if not pending:
+        await _safe_send_telegram_message(
+            bot_token,
+            chat_id,
+            "👋 <b>AutoClip Bot Active</b>\n\nTo request changes on a short, tap <b>🔄 REQUEST CHANGES</b> under any video card and reply with your instructions.",
+            reply_to_message_id=msg_id,
+        )
+        return {"status": "no_pending_revision"}
+
+    _pending_revisions.pop(chat_id, None)
+    clip_id = pending["clip_id"]
+    job_id = pending["job_id"]
+
+    ack_text = (
+        f"⚙️ <b>Antigravity Re-Editing Clip #{clip_id[:8]}...</b>\n\n"
+        f"📝 <i>Applied Feedback:</i> \"{html.escape(text)}\"\n\n"
+        f"⏳ Re-compositing Content Rewards master short now (~30-45s)..."
+    )
+    await _safe_send_telegram_message(bot_token, chat_id, ack_text, reply_to_message_id=msg_id)
+
+    task = asyncio.create_task(
+        _execute_clip_revision(
+            job_id=job_id,
+            clip_id=clip_id,
+            feedback=text,
+            chat_id=chat_id,
+            bot_token=bot_token,
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return {"status": "revision_started", "clip_id": clip_id}
+
+
+async def _execute_clip_revision(
+    job_id: str,
+    clip_id: str,
+    feedback: str,
+    chat_id: str,
+    bot_token: str,
+):
+    """Run clip revision through Master Overeditor and deliver updated card to Telegram."""
+    try:
+        from ..pipeline.overeditor.orchestrator import MasterOvereditorOrchestrator
+        orchestrator = MasterOvereditorOrchestrator()
+        revised_path = await asyncio.to_thread(orchestrator.revise_clip, job_id, clip_id, feedback)
+        if revised_path and revised_path.is_file():
+            await send_clip_review(job_id=job_id, clip_id=clip_id, force=True)
+            await _safe_send_telegram_message(
+                bot_token,
+                chat_id,
+                f"✅ <b>Clip #{clip_id[:8]} Revised & Delivered!</b> Please review the updated cut above.",
+            )
+        else:
+            await _safe_send_telegram_message(
+                bot_token,
+                chat_id,
+                f"⚠️ <b>Revision Notice</b>: Could not complete revision for clip #{clip_id[:8]}. Please try again or check logs.",
+            )
+    except Exception as e:
+        log.error("Failed to execute clip revision: %s", e, exc_info=True)
+        await _safe_send_telegram_message(
+            bot_token,
+            chat_id,
+            f"❌ <b>Revision Error</b>: {html.escape(str(e)[:200])}",
+        )
+
+
 async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
     """Process incoming Telegram updates, validating authorization and executing actions."""
     bot_token, _, allowed_ids = get_telegram_config()
@@ -898,7 +1000,10 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
 
     callback_query = update.get("callback_query")
     if not callback_query:
-        return {"status": "ignored", "message": "No callback_query in update"}
+        msg_obj = update.get("message")
+        if msg_obj and msg_obj.get("text"):
+            return await _handle_operator_text_message(msg_obj, bot_token, allowed_ids)
+        return {"status": "ignored", "message": "No callback_query or text message in update"}
 
     cb_id = callback_query.get("id") or ""
     from_user = callback_query.get("from") or {}
@@ -1191,6 +1296,29 @@ async def handle_telegram_update(update: dict[str, Any]) -> dict[str, Any]:
             status_text="🔄 *CHANGES REQUESTED BY OPERATOR*",
             button_text="🔄 Changes Requested",
         )
+
+        # Register pending revision and prompt operator for feedback
+        _pending_revisions[str(chat_id)] = {
+            "clip_id": clip_id,
+            "job_id": job_id,
+            "message_id": message_id,
+        }
+
+        prompt_text = (
+            f"🔄 <b>Changes Requested for Clip #{clip_id[:8]}</b>\n\n"
+            f"✍️ <i>Please reply directly to this message with your revision instructions:</i>\n\n"
+            f"• <b>Headline:</b> e.g. <code>Change headline to: 50% PROFIT IN 1 DAY 📈</code>\n"
+            f"• <b>Attribution:</b> e.g. <code>@ALPHA_FUTURES</code>\n"
+            f"• <b>B-Roll:</b> e.g. <code>Add luxury car / chart visuals</code>\n\n"
+            f"🤖 <b>Antigravity</b> will automatically apply your feedback and deliver the revised cut for your approval."
+        )
+        await _safe_send_telegram_message(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            text=prompt_text,
+            reply_to_message_id=message_id,
+        )
+
         return {"status": "changes_requested", "clip_id": clip_id, "job_id": job_id}
 
     return {"status": "unknown_action", "action": action}
