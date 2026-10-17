@@ -584,11 +584,11 @@ def update_export_drive_info(
         )
 
 
-def update_export_path(export_id: str, path: str, file_size_bytes: int) -> None:
+def update_export_path(export_id: str, path: str, size_bytes: int) -> None:
     with connection() as conn:
         conn.execute(
-            "UPDATE exports SET path = ?, file_size_bytes = ? WHERE id = ?",
-            (path, file_size_bytes, export_id),
+            "UPDATE exports SET path = ?, size_bytes = ? WHERE id = ?",
+            (path, size_bytes, export_id),
         )
 
 

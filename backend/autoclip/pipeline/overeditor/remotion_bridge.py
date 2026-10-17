@@ -46,15 +46,54 @@ class RemotionBridge:
         broll_start_frame = int(broll_start_s * fps)
         broll_frames = int(broll_duration_s * fps)
 
+        # Prepare public assets directory inside remotion_engine
+        public_dir = self.project_dir / "public"
+        public_videos = public_dir / "videos"
+        public_sfx = public_dir / "sfx"
+        public_videos.mkdir(parents=True, exist_ok=True)
+        public_sfx.mkdir(parents=True, exist_ok=True)
+
+        clip_base_name = f"base_{base_video_path.stem}.mp4"
+        public_base_video = public_videos / clip_base_name
+        if not public_base_video.exists():
+            try:
+                public_base_video.symlink_to(base_video_path.resolve())
+            except Exception:
+                import shutil
+                shutil.copy2(base_video_path, public_base_video)
+
+        broll_rel = ""
+        if broll_path and broll_path.is_file():
+            broll_name = f"broll_{broll_path.stem}.mp4"
+            public_broll = public_videos / broll_name
+            if not public_broll.exists():
+                try:
+                    public_broll.symlink_to(broll_path.resolve())
+                except Exception:
+                    import shutil
+                    shutil.copy2(broll_path, public_broll)
+            broll_rel = f"videos/{broll_name}"
+
+        # Ensure sfx are copied/symlinked in public/sfx
+        for sfx_name in ["whoosh_cinematic.wav", "pop_punch.wav"]:
+            src_sfx = self.sfx_dir / sfx_name
+            dst_sfx = public_sfx / sfx_name
+            if src_sfx.is_file() and not dst_sfx.exists():
+                try:
+                    dst_sfx.symlink_to(src_sfx.resolve())
+                except Exception:
+                    import shutil
+                    shutil.copy2(src_sfx, dst_sfx)
+
         props: dict[str, Any] = {
-            "videoSrc": str(base_video_path.resolve()),
+            "videoSrc": f"videos/{clip_base_name}",
             "headlineText": headline_text.strip(),
             "handle": handle.strip() if handle else "@ALPHA_FUTURES",
-            "brollSrc": str(broll_path.resolve()) if (broll_path and broll_path.is_file()) else "",
+            "brollSrc": broll_rel,
             "brollStartFrame": broll_start_frame,
             "brollDurationFrames": broll_frames,
-            "whooshSfxSrc": str(self.sfx_dir / "whoosh_cinematic.wav") if (self.sfx_dir / "whoosh_cinematic.wav").is_file() else "",
-            "popSfxSrc": str(self.sfx_dir / "pop_punch.wav") if (self.sfx_dir / "pop_punch.wav").is_file() else "",
+            "whooshSfxSrc": "sfx/whoosh_cinematic.wav" if (public_sfx / "whoosh_cinematic.wav").is_file() else "",
+            "popSfxSrc": "sfx/pop_punch.wav" if (public_sfx / "pop_punch.wav").is_file() else "",
         }
 
         # Write props to temporary json file for safe CLI consumption
