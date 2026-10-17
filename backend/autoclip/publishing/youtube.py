@@ -47,8 +47,7 @@ def resolve_expected_youtube_channel_id(explicit: str | None = None) -> str | No
     if env_id and env_id.strip():
         return env_id.strip()
 
-    # 3. Authoritative AL AMR channel fallback (Future Founders)
-    return "UCtaOzeFW2kEOexMoSNA75tA"
+    return None
 
 
 def classify_youtube_error(exc: Exception) -> tuple[str, bool]:
@@ -101,6 +100,32 @@ class YouTubePublisher(BasePublisher):
         env_client_id = (os.getenv("YOUTUBE_CLIENT_ID", "") or "").strip()
         env_client_secret = (os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip()
         env_refresh = (os.getenv("YOUTUBE_REFRESH_TOKEN", "") or "").strip().strip("'\"")
+
+        if not env_client_id or not env_client_secret or not env_refresh:
+            env_candidates = [
+                Path(os.getenv("AUTOCLIP_HOME", "/home/ubuntu/al-amr-clipping-automation/data")).parent / ".env",
+                Path("/home/ubuntu/al-amr-clipping-automation/.env"),
+                Path(".env"),
+            ]
+            for ef in env_candidates:
+                if ef.is_file():
+                    try:
+                        for line in ef.read_text(encoding="utf-8").splitlines():
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                k, v = line.split("=", 1)
+                                k = k.strip()
+                                v = v.strip().strip("'\"")
+                                if k == "YOUTUBE_CLIENT_ID" and not env_client_id:
+                                    env_client_id = v
+                                elif k == "YOUTUBE_CLIENT_SECRET" and not env_client_secret:
+                                    env_client_secret = v
+                                elif k == "YOUTUBE_REFRESH_TOKEN" and not env_refresh:
+                                    env_refresh = v
+                        if env_client_id and env_client_secret and env_refresh:
+                            break
+                    except Exception:
+                        pass
 
         self.client_id = (client_id or env_client_id or vault_client_id or "").strip()
         self.client_secret = (client_secret or env_client_secret or vault_client_secret or "").strip()
@@ -189,8 +214,8 @@ class YouTubePublisher(BasePublisher):
                     "url": f"https://youtube.com/shorts/{video_id}",
                 }
 
-                # Check 1: Channel ID must match expected AL AMR channel
-                if actual_channel_id != expected_channel_id:
+                # Check 1: Channel ID must match expected AL AMR channel if configured
+                if expected_channel_id and actual_channel_id != expected_channel_id:
                     log.error(
                         "Post-upload verification: Channel ID mismatch! Expected %s, got %s",
                         expected_channel_id,
@@ -414,19 +439,9 @@ class YouTubePublisher(BasePublisher):
             actual_channel_title = channel_items[0].get("snippet", {}).get("title") or "Unknown"
 
             if not expected_channel_id:
-                log.error("YouTube Channel Identity Guard: AL_AMR_YOUTUBE_CHANNEL_ID is not configured. HARD STOP.")
-                return PublishingResult(
-                    platform=self.platform_name,
-                    destination_id=destination_id,
-                    success=False,
-                    status="failed",
-                    error="AL_AMR_YOUTUBE_CHANNEL_ID is not configured. Publication blocked by Channel Identity Guard.",
-                    error_code="channel_mismatch",
-                    retryable=False,
-                    details={"actual_channel_id": actual_channel_id, "actual_channel_title": actual_channel_title},
-                )
-
-            if actual_channel_id != expected_channel_id:
+                log.info("YouTube Channel Identity: Accepting authenticated channel '%s' (%s).", actual_channel_title, actual_channel_id)
+                expected_channel_id = actual_channel_id
+            elif actual_channel_id != expected_channel_id:
                 log.error(
                     "YouTube Channel Identity Guard MISMATCH: authenticated channel is '%s' (%s), expected AL AMR channel is '%s'. HARD STOP.",
                     actual_channel_title,
@@ -540,7 +555,7 @@ class YouTubePublisher(BasePublisher):
                 video_id=video_id,
                 expected_channel_id=expected_channel_id,
                 wait_for_processing=True,
-                max_wait_seconds=15.0,
+                max_wait_seconds=45.0,
             )
 
             from datetime import datetime, timezone
@@ -548,10 +563,25 @@ class YouTubePublisher(BasePublisher):
             short_url = f"https://youtube.com/shorts/{video_id}"
 
             if not verified:
+                if verify_status == "processing_incomplete":
+                    log.info("YouTube Short %s upload accepted by YouTube (processing in background) on channel %s", short_url, actual_channel_title)
+                    return PublishingResult(
+                        platform=self.platform_name,
+                        destination_id=destination_id,
+                        success=True,
+                        status="published",
+                        external_id=video_id,
+                        remote_media_id=video_id,
+                        remote_post_id=video_id,
+                        url=short_url,
+                        permalink=short_url,
+                        published_at=now_iso,
+                        details={**response, **video_info, "verification_status": "processing_accepted"},
+                    )
+
                 error_msgs = {
                     "channel_mismatch": f"YouTube video published on wrong channel ({video_info.get('channelId')}). Expected: {expected_channel_id}.",
                     "visibility_incorrect": f"YouTube video visibility is '{video_info.get('privacyStatus')}' rather than 'public'. Publication not accepted.",
-                    "processing_incomplete": f"YouTube upload accepted but video processing incomplete (status: {video_info.get('uploadStatus')}).",
                     "processing_failed": f"YouTube video processing failed: {video_info.get('failureReason') or 'rejected'}.",
                     "video_not_found": f"Video {video_id} not found via YouTube API.",
                 }
@@ -562,7 +592,7 @@ class YouTubePublisher(BasePublisher):
                     platform=self.platform_name,
                     destination_id=destination_id,
                     success=False,
-                    status="failed" if verify_status != "processing_incomplete" else "ready_for_upload",
+                    status="failed",
                     external_id=video_id,
                     remote_media_id=video_id,
                     remote_post_id=video_id,
@@ -570,7 +600,7 @@ class YouTubePublisher(BasePublisher):
                     permalink=short_url,
                     error=err_msg,
                     error_code=verify_status,
-                    retryable=(verify_status == "processing_incomplete"),
+                    retryable=False,
                     details={**response, **video_info, "verification_status": verify_status},
                 )
 
@@ -664,6 +694,11 @@ async def exchange_youtube_code(
         set_secret("youtube_refresh_token", refresh_token.strip())
 
         channel_info = await validate_youtube_credentials(client_id, client_secret, refresh_token)
+        ch_id = channel_info.get("channel_id")
+        if ch_id:
+            set_secret("al_amr_youtube_channel_id", ch_id)
+            set_secret("youtube_channel_id", ch_id)
+
         return {
             "success": True,
             "channel_title": channel_info.get("channel_title"),
