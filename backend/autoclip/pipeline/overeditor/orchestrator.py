@@ -167,14 +167,22 @@ class MasterOvereditorOrchestrator:
                         from autoclip.telegram.review_bot import send_clip_review
 
                 try:
-                    asyncio.create_task(
-                        send_clip_review(
-                            job_id=job_id,
-                            clip_id=clip.id,
-                            force=True,
-                            job_settings=job_settings,
-                        )
+                    coro = send_clip_review(
+                        job_id=job_id,
+                        clip_id=clip.id,
+                        force=True,
+                        job_settings=job_settings,
                     )
+                    from ...jobs.events import broker
+                    loop = getattr(broker, "_loop", None)
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(coro, loop)
+                    else:
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                            running_loop.create_task(coro)
+                        except RuntimeError:
+                            asyncio.run(coro)
                 except Exception as tg_err:
                     log.warning("Could not send Telegram review card for clip %s: %s", clip.id, tg_err)
 
