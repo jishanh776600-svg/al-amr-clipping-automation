@@ -1923,7 +1923,21 @@ def list_clip_metadata_for_job(job_id: str) -> list[ClipMetadataRecord]:
     return [ClipMetadataRecord.from_row(r) for r in rows]
 
 
-def update_clip_metadata(clip_id: str, **updates: Any) -> ClipMetadataRecord | None:
+def update_clip_metadata(clip_id: str | ClipMetadataRecord, **updates: Any) -> ClipMetadataRecord | None:
+    if hasattr(clip_id, "clip_id"):
+        record = clip_id
+        actual_clip_id = record.clip_id
+        if not updates:
+            updates = {
+                "final_title": record.final_title,
+                "final_description": record.final_description,
+                "final_hashtags": record.final_hashtags,
+                "final_mentions": record.final_mentions,
+                "telemetry": record.telemetry,
+                "approval_status": record.approval_status,
+            }
+        clip_id = actual_clip_id
+
     existing = get_clip_metadata(clip_id)
     if not existing:
         return None

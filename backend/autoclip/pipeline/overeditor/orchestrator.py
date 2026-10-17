@@ -114,7 +114,7 @@ class MasterOvereditorOrchestrator:
                         "hashtags": getattr(seo_pack, "ig_tags", getattr(seo_pack, "insta_hashtags", [])),
                         "mentions": [compliance.handle],
                     }
-                    store.update_clip_metadata(clip_meta)
+                    store.update_clip_metadata(clip.id, telemetry=clip_meta.telemetry)
 
                 # 3. Create Top Headline Banner PNG & Bottom Attribution Badge PNG
                 headline_png = work_dir / f"headline_{clip.id}.png"
