@@ -48,13 +48,17 @@ class MasterOvereditorOrchestrator:
 
     def process_job_clips(
         self,
-        job_id: str,
+        job_id: Any,
         clips: list[Clip],
         transcript_text: str | None = None,
         brief_text: str | None = None,
     ) -> list[Path]:
-        """Transform all 5 raw clips into Content Rewards winning master shorts."""
-        job = store.get_job(job_id)
+        """Transform all raw clips into Content Rewards winning master shorts."""
+        if hasattr(job_id, "id"):
+            job = job_id
+            job_id = str(job.id)
+        else:
+            job = store.get_job(str(job_id))
         job_settings = job.settings if job else {}
 
         # 1. Parse Brief and lock compliance rules
