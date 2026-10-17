@@ -38,6 +38,7 @@ from ..jobs import orchestrator
 from ..jobs.dispatcher import (
     check_dispatch_capability,
     dispatch_job_to_github,
+    get_dispatch_mode,
     is_github_dispatch_enabled,
 )
 from ..jobs.events import Event, acquisition_event, broker
