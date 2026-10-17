@@ -126,7 +126,7 @@ class RemotionBridge:
                 cwd=str(self.project_dir),
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=360,
             )
 
             if res.returncode != 0:
