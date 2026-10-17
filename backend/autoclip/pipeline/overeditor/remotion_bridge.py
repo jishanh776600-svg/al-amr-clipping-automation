@@ -53,36 +53,41 @@ class RemotionBridge:
         public_videos.mkdir(parents=True, exist_ok=True)
         public_sfx.mkdir(parents=True, exist_ok=True)
 
+        import shutil
+
         clip_base_name = f"base_{base_video_path.stem}.mp4"
         public_base_video = public_videos / clip_base_name
+        if public_base_video.is_symlink():
+            public_base_video.unlink()
         if not public_base_video.exists():
             try:
-                public_base_video.symlink_to(base_video_path.resolve())
+                os.link(str(base_video_path.resolve()), str(public_base_video))
             except Exception:
-                import shutil
                 shutil.copy2(base_video_path, public_base_video)
 
         broll_rel = ""
         if broll_path and broll_path.is_file():
             broll_name = f"broll_{broll_path.stem}.mp4"
             public_broll = public_videos / broll_name
+            if public_broll.is_symlink():
+                public_broll.unlink()
             if not public_broll.exists():
                 try:
-                    public_broll.symlink_to(broll_path.resolve())
+                    os.link(str(broll_path.resolve()), str(public_broll))
                 except Exception:
-                    import shutil
                     shutil.copy2(broll_path, public_broll)
             broll_rel = f"videos/{broll_name}"
 
-        # Ensure sfx are copied/symlinked in public/sfx
+        # Ensure sfx are copied/hardlinked in public/sfx
         for sfx_name in ["whoosh_cinematic.wav", "pop_punch.wav"]:
             src_sfx = self.sfx_dir / sfx_name
             dst_sfx = public_sfx / sfx_name
+            if dst_sfx.is_symlink():
+                dst_sfx.unlink()
             if src_sfx.is_file() and not dst_sfx.exists():
                 try:
-                    dst_sfx.symlink_to(src_sfx.resolve())
+                    os.link(str(src_sfx.resolve()), str(dst_sfx))
                 except Exception:
-                    import shutil
                     shutil.copy2(src_sfx, dst_sfx)
 
         props: dict[str, Any] = {
