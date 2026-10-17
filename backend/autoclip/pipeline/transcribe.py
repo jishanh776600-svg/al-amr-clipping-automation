@@ -110,6 +110,24 @@ def transcribe(
 
     ensure_cuda_libraries()
 
+    # Defensively ensure PyAV open() tolerates metadata_errors across PyAV versions
+    try:
+        import av
+        if hasattr(av, "open") and not getattr(av.open, "_autoclip_patched", False):
+            _orig_av_open = av.open
+            def _safe_av_open(*args, **kwargs):
+                try:
+                    return _orig_av_open(*args, **kwargs)
+                except TypeError as err:
+                    if "metadata_errors" in str(err) and "metadata_errors" in kwargs:
+                        kwargs.pop("metadata_errors", None)
+                        return _orig_av_open(*args, **kwargs)
+                    raise
+            _safe_av_open._autoclip_patched = True
+            av.open = _safe_av_open
+    except Exception:
+        pass
+
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:  # pragma: no cover - faster-whisper is a core dep

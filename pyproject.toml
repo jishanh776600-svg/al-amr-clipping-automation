@@ -42,6 +42,7 @@ dependencies = [
   "bgutil-ytdlp-pot-provider>=2.0.0",
   # Transcription
   "faster-whisper>=1.1",
+  "av>=11.0.0,<14.0.0",
   # Reframe
   "mediapipe>=0.10.14",
   # No [opencv] extra: scenedetect 0.7 dropped it and now depends on
