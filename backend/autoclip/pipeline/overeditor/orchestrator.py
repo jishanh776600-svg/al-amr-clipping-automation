@@ -135,15 +135,34 @@ class MasterOvereditorOrchestrator:
                     if clip_duration > 12.0:
                         broll_clips.append((8.0, 10.5, broll_asset.video_path))
 
-                # 5. Composite Final Overedit Short via FFmpeg on VPS 1
+                # 5. Composite Final Overedit Short (Remotion 60FPS Spring Engine with FFmpeg Fallback)
                 master_out_path = work_dir / f"master_overedit_{clip.id}.mp4"
-                self.template_engine.composite_overedit_video(
-                    base_video_path=clean_base if clean_base.is_file() else base_video_path,
-                    headline_png=headline_png,
-                    attribution_png=badge_png,
-                    output_path=master_out_path,
-                    broll_clips=broll_clips,
-                )
+                rendered = None
+                try:
+                    from .remotion_bridge import RemotionBridge
+                    rem_bridge = RemotionBridge()
+                    if rem_bridge.is_available():
+                        broll_first = broll_clips[0][2] if broll_clips else None
+                        clip_dur = clip.end_s - clip.start_s
+                        rendered = rem_bridge.render_content_rewards_short(
+                            base_video_path=clean_base if clean_base.is_file() else base_video_path,
+                            headline_text=seo_pack.hook_headline,
+                            handle=compliance.handle,
+                            output_path=master_out_path,
+                            duration_s=clip_dur,
+                            broll_path=broll_first,
+                        )
+                except Exception as r_err:
+                    log.warning("Remotion render attempt error: %s, falling back to FFmpeg compositor", r_err)
+
+                if not rendered or not master_out_path.is_file() or master_out_path.stat().st_size < 10000:
+                    self.template_engine.composite_overedit_video(
+                        base_video_path=clean_base if clean_base.is_file() else base_video_path,
+                        headline_png=headline_png,
+                        attribution_png=badge_png,
+                        output_path=master_out_path,
+                        broll_clips=broll_clips,
+                    )
 
                 # 6. Replace primary export path & final_render so website and bot serve the master short!
                 if master_out_path.is_file() and master_out_path.stat().st_size > 10000:
@@ -268,15 +287,34 @@ class MasterOvereditorOrchestrator:
         self.template_engine.create_top_headline_png(new_headline, headline_png)
         self.template_engine.create_bottom_attribution_png(compliance.handle, badge_png)
 
-        # Composite revised master short
+        # Composite revised master short (Remotion Engine with FFmpeg Fallback)
         revised_out_path = work_dir / f"master_revised_{clip_id}.mp4"
-        self.template_engine.composite_overedit_video(
-            base_video_path=clean_base,
-            headline_png=headline_png,
-            attribution_png=badge_png,
-            output_path=revised_out_path,
-            broll_clips=broll_clips,
-        )
+        revised_rendered = None
+        try:
+            from .remotion_bridge import RemotionBridge
+            rem_bridge = RemotionBridge()
+            if rem_bridge.is_available():
+                broll_first = broll_clips[0][2] if broll_clips else None
+                clip_dur = clip.end_s - clip.start_s
+                revised_rendered = rem_bridge.render_content_rewards_short(
+                    base_video_path=clean_base,
+                    headline_text=new_headline,
+                    handle=compliance.handle,
+                    output_path=revised_out_path,
+                    duration_s=clip_dur,
+                    broll_path=broll_first,
+                )
+        except Exception as r_err:
+            log.warning("Remotion revise render error: %s, falling back to FFmpeg compositor", r_err)
+
+        if not revised_rendered or not revised_out_path.is_file() or revised_out_path.stat().st_size < 10000:
+            self.template_engine.composite_overedit_video(
+                base_video_path=clean_base,
+                headline_png=headline_png,
+                attribution_png=badge_png,
+                output_path=revised_out_path,
+                broll_clips=broll_clips,
+            )
 
         if revised_out_path.is_file() and revised_out_path.stat().st_size > 10000:
             store.update_export_path(base_export.id, str(revised_out_path), revised_out_path.stat().st_size)
