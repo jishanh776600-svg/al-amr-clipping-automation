@@ -156,8 +156,8 @@ class WhisperSettings(BaseModel):
 
 
 class ClipSettings(BaseModel):
-    min_duration_s: float = 20.0
-    max_duration_s: float = 30.0
+    min_duration_s: float = 10.0
+    max_duration_s: float = 60.0
     max_clips: int = 5
 
 
@@ -246,8 +246,15 @@ class Settings(BaseModel):
 
 
 def _apply_env_overrides(settings: Settings) -> Settings:
-    if "AUTOCLIP_ACTIVE_PROVIDER" in os.environ:
-        settings.active_provider = os.environ["AUTOCLIP_ACTIVE_PROVIDER"]
+    prov = os.environ.get("AUTOCLIP_ACTIVE_PROVIDER") or os.environ.get("AUTOCLIP_LLM_PROVIDER")
+    if prov:
+        settings.active_provider = prov
+    elif os.environ.get("GEMINI_API_KEY"):
+        settings.active_provider = "gemini"
+    elif os.environ.get("OPENROUTER_API_KEY"):
+        settings.active_provider = "openrouter"
+    elif os.environ.get("GROQ_API_KEY"):
+        settings.active_provider = "groq"
     if "AUTOCLIP_COOKIES_FILE" in os.environ:
         settings.ingest.cookies_file = os.environ["AUTOCLIP_COOKIES_FILE"]
     return settings

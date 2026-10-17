@@ -282,8 +282,10 @@ class PipelineRunner:
                 )
                 final_clips = reframe_approved
                 final_crop_paths = crop_paths
+                store.replace_clips(self.job.id, final_clips)
             elif not final_clips:
                 log.info("Job %s completed with 0 clips passing Final Quality Gate.", self.job.id)
+                store.replace_clips(self.job.id, [])
                 store.update_job(self.job.id, status="done", progress=1.0, finished_at=utcnow())
                 return []
 
@@ -963,8 +965,6 @@ class PipelineRunner:
         # Update clips in store to reflect tightened start/end timings and new ranks
         if final_clips:
             store.replace_clips(self.job.id, final_clips)
-        else:
-            store.replace_clips(self.job.id, [])
 
         self._finish_stage(stage)
         return final_clips, final_crop_paths

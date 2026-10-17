@@ -1319,6 +1319,11 @@ def replace_retention_optimizations(
     """Atomically swap in retention optimization records for a job."""
     with connection() as conn:
         conn.execute("DELETE FROM retention_optimizations WHERE job_id = ?", (job_id,))
+        valid_rows = conn.execute("SELECT id FROM clips WHERE job_id = ?", (job_id,)).fetchall()
+        valid_clip_ids = {row[0] for row in valid_rows}
+        records_to_insert = [r for r in records if r.clip_id in valid_clip_ids]
+        if not records_to_insert:
+            return []
         conn.executemany(
             """
             INSERT INTO retention_optimizations (
@@ -1354,10 +1359,10 @@ def replace_retention_optimizations(
                     r.created_at,
                     r.updated_at,
                 )
-                for r in records
+                for r in records_to_insert
             ],
         )
-    return records
+    return records_to_insert
 
 
 def list_retention_optimizations(
@@ -1415,6 +1420,11 @@ def replace_caption_optimizations(
             "DELETE FROM caption_optimizations WHERE job_id = ?",
             (job_id,),
         )
+        valid_rows = conn.execute("SELECT id FROM clips WHERE job_id = ?", (job_id,)).fetchall()
+        valid_clip_ids = {row[0] for row in valid_rows}
+        records_to_insert = [r for r in records if r.clip_id in valid_clip_ids]
+        if not records_to_insert:
+            return []
         conn.executemany(
             """
             INSERT INTO caption_optimizations (
@@ -1449,10 +1459,10 @@ def replace_caption_optimizations(
                     r.created_at,
                     r.updated_at,
                 )
-                for r in records
+                for r in records_to_insert
             ],
         )
-    return records
+    return records_to_insert
 
 
 def list_caption_optimizations(
