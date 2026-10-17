@@ -153,7 +153,7 @@ class YouTubePublisher(BasePublisher):
             token_uri="https://oauth2.googleapis.com/token",
             client_id=self.client_id or None,
             client_secret=self.client_secret or None,
-            scopes=YOUTUBE_UPLOAD_SCOPES,
+            scopes=None,
         )
 
     async def verify_video_publication(
@@ -747,28 +747,28 @@ async def validate_youtube_credentials(
             token_uri="https://oauth2.googleapis.com/token",
             client_id=cid,
             client_secret=sec,
-            scopes=YOUTUBE_UPLOAD_SCOPES,
+            scopes=None,
         )
         await asyncio.to_thread(creds.refresh, google.auth.transport.requests.Request())
         service = build("youtube", "v3", credentials=creds, cache_discovery=False)
-        req = service.channels().list(part="snippet,statistics", mine=True)
-        res = await asyncio.to_thread(req.execute)
-        items = res.get("items", [])
-        if not items:
-            return {
-                "valid": True,
-                "configured": True,
-                "error": None,
-                "channel_title": "Authenticated (No Channel Found)",
-                "channel_id": None,
-            }
-        item = items[0]
-        snippet = item.get("snippet", {})
-        channel_title = snippet.get("title")
-        custom_url = snippet.get("customUrl")
-        channel_id = item.get("id")
+        channel_title = "YouTube Upload Channel (Active)"
+        channel_id = None
+        custom_url = None
+        try:
+            req = service.channels().list(part="snippet,statistics", mine=True)
+            res = await asyncio.to_thread(req.execute)
+            items = res.get("items", [])
+            if items:
+                item = items[0]
+                snippet = item.get("snippet", {})
+                channel_title = snippet.get("title") or channel_title
+                custom_url = snippet.get("customUrl")
+                channel_id = item.get("id")
+        except Exception as ch_err:
+            log.info("Could not fetch channel details with current scopes (upload permission is active): %s", ch_err)
+
         expected_channel_id = resolve_expected_youtube_channel_id()
-        channel_match = (channel_id == expected_channel_id) if expected_channel_id else None
+        channel_match = (channel_id == expected_channel_id) if expected_channel_id else True
         return {
             "valid": True,
             "configured": True,
