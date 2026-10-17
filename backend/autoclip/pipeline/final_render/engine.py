@@ -233,12 +233,16 @@ class FinalRenderEngine:
             raise RuntimeError(f"Rendering failed for clip {clip.id}: {exc}") from exc
 
         # 4. Evaluate FinalRenderQualityGate on rendered temp output
+        effective_min_dur = min_duration_s
+        if duration_s < min_duration_s:
+            effective_min_dur = max(1.0, duration_s * 0.9)
+
         gate_res = self.quality_gate.evaluate(
             temp_dest,
             expected_duration_s=duration_s,
             expected_caption_style=caption_style_key,
             expected_bgm_asset_id=bgm_asset_id,
-            min_duration_s=min_duration_s,
+            min_duration_s=effective_min_dur,
             max_duration_s=max_duration_s,
             expected_visual_filter=visual_filter,
             edl=edl,

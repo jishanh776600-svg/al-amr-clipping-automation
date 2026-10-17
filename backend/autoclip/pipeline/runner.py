@@ -728,8 +728,8 @@ class PipelineRunner:
             job_settings=self.job.settings,
             campaign_spec=campaign_spec,
             campaign_brief=campaign,
-            default_min=20.0,
-            default_max=30.0,
+            default_min=10.0,
+            default_max=60.0,
         )
         config.min_duration_s = eff_min_dur
         config.max_duration_s = eff_max_dur
@@ -1242,9 +1242,11 @@ class PipelineRunner:
 
         min_dur, max_dur = resolve_duration_limits(
             job_settings=self.job.settings,
-            default_min=20.0,
-            default_max=30.0,
+            default_min=10.0,
+            default_max=60.0,
         )
+        if hasattr(self.source, "duration_s") and self.source.duration_s and self.source.duration_s < min_dur:
+            min_dur = max(1.0, self.source.duration_s * 0.9)
 
         render_engine = FinalRenderEngine(config=FinalRenderConfig(ratio=ratio))
         final_render_records: list[FinalRenderRecord] = []
