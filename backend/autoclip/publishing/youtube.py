@@ -20,32 +20,17 @@ YOUTUBE_UPLOAD_SCOPES = [
 
 
 def resolve_expected_youtube_channel_id(explicit: str | None = None) -> str | None:
-    """Resolve authoritative expected AL AMR YouTube Channel ID from explicit param, vault, or env."""
+    """Resolve authoritative expected AL AMR YouTube Channel ID from explicit param or env."""
     if explicit and explicit.strip():
         return explicit.strip()
 
-    # 1. Encrypted Vault (takes precedence over stale env)
-    try:
-        from ..security.vault import get_vault
-        vault = get_vault()
-        vault_id = (
-            vault.retrieve_secret("al_amr_youtube_channel_id")
-            or vault.retrieve_secret("youtube_channel_id")
-            or vault.retrieve_secret("AL_AMR_YOUTUBE_CHANNEL_ID")
-        )
-        if vault_id and vault_id.strip():
-            return vault_id.strip()
-    except Exception:
-        pass
-
-    # 2. Environment variables
     env_id = (
         os.getenv("AL_AMR_YOUTUBE_CHANNEL_ID")
-        or os.getenv("YOUTUBE_CHANNEL_ID")
         or os.getenv("EXPECTED_YOUTUBE_CHANNEL_ID")
-    )
-    if env_id and env_id.strip():
-        return env_id.strip()
+        or ""
+    ).strip()
+    if env_id:
+        return env_id
 
     return None
 
