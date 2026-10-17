@@ -32,6 +32,14 @@ class ClipSEOPack:
         self.insta_hashtags = insta_hashtags
         self.hook_headline = hook_headline
 
+    @property
+    def ig_caption(self) -> str:
+        return self.insta_caption
+
+    @property
+    def ig_tags(self) -> list[str]:
+        return self.insta_hashtags
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "yt_title": self.yt_title,
@@ -39,6 +47,8 @@ class ClipSEOPack:
             "yt_tags": self.yt_tags,
             "insta_caption": self.insta_caption,
             "insta_hashtags": self.insta_hashtags,
+            "ig_caption": self.insta_caption,
+            "ig_tags": self.insta_hashtags,
             "hook_headline": self.hook_headline,
         }
 

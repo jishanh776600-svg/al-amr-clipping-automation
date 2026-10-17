@@ -106,8 +106,8 @@ class MasterOvereditorOrchestrator:
                         "mentions": [compliance.handle],
                     }
                     clip_meta.telemetry["instagram"] = {
-                        "caption": seo_pack.ig_caption,
-                        "hashtags": seo_pack.ig_tags,
+                        "caption": getattr(seo_pack, "ig_caption", getattr(seo_pack, "insta_caption", "")),
+                        "hashtags": getattr(seo_pack, "ig_tags", getattr(seo_pack, "insta_hashtags", [])),
                         "mentions": [compliance.handle],
                     }
                     store.update_clip_metadata(clip_meta)
