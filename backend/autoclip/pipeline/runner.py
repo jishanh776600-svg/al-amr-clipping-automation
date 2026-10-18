@@ -231,12 +231,28 @@ class PipelineRunner:
             operator_style = "viral_streamer_kinetic"
             self.settings.export.caption_style = "viral_streamer_kinetic"
             self.settings.export.visual_filter = "viral_vibrant"
+            self.settings.export.frame_layout = "crop_fill"
+            self.settings.export.channel_header_text = ""
+            self.settings.export.cta_footer_text = ""
             self.job.settings["caption_style"] = "viral_streamer_kinetic"
             self.job.settings["visual_filter"] = "viral_vibrant"
+            self.job.settings["frame_layout"] = "crop_fill"
+            self.job.settings["channel_header_text"] = ""
+            self.job.settings["cta_footer_text"] = ""
             self.job.settings["sfx_enabled"] = True
             self.job.settings["bgm_enabled"] = True
             if not self.job.settings.get("bgm_asset_id") or self.job.settings.get("bgm_asset_id") in ("default", ""):
                 self.job.settings["bgm_asset_id"] = "death_of_blue_bird"
+
+        # Sanitize placeholder channel watermarks so they never burn onto user clips
+        header = self.job.settings.get("channel_header_text") or getattr(self.settings.export, "channel_header_text", "") or ""
+        if header.strip() in ("⚡ FUTURE FOUNDERS", "FUTURE FOUNDERS", "@ALPHA_FUTURES"):
+            self.job.settings["channel_header_text"] = ""
+            self.settings.export.channel_header_text = ""
+        footer = self.job.settings.get("cta_footer_text") or getattr(self.settings.export, "cta_footer_text", "") or ""
+        if footer.strip() in ("SUBSCRIBE FOR DAILY DROPS", "DAILY DROPS"):
+            self.job.settings["cta_footer_text"] = ""
+            self.settings.export.cta_footer_text = ""
 
         campaign_data = self.job.settings.get("campaign")
         if campaign_data:

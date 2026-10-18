@@ -798,40 +798,40 @@ export function Settings() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Select
               label="Vertical frame style"
-              value={settings.export.frame_layout || 'aesthetic_card'}
+              value={settings.export.frame_layout || 'crop_fill'}
               onChange={(value) => patch({ export: { ...settings.export, frame_layout: value as any } })}
-              options={['aesthetic_card', 'crop_fill', 'fit_pad']}
+              options={['crop_fill', 'aesthetic_card', 'fit_pad']}
               labels={{
+                crop_fill: 'Full Screen 9:16 (Recommended - Full-bleed Zero Bars)',
                 aesthetic_card: '✨ Aesthetic Card (Rounded Corners + Blurred Background)',
-                crop_fill: 'Full Screen Fill (Edge Crop)',
                 fit_pad: 'Center Fit (Letterbox Black Bars)',
               }}
             />
             <Select
               label="Card Corner Radius"
-              value={String(settings.export.card_corner_radius ?? 44)}
+              value={String(settings.export.card_corner_radius ?? 0)}
               onChange={(value) => patch({ export: { ...settings.export, card_corner_radius: Number(value) } })}
-              options={['44', '24', '16', '0']}
+              options={['0', '44', '24', '16']}
               labels={{
-                '44': 'Smooth Rounded (44px - Recommended)',
+                '0': 'Full-bleed (0px - Recommended)',
+                '44': 'Smooth Rounded (44px)',
                 '24': 'Subtle Rounded (24px)',
                 '16': 'Slight Curve (16px)',
-                '0': 'Sharp Square (0px)',
               }}
             />
             <Field
-              label="Channel Header Branding"
-              placeholder="e.g. ⚡ FUTURE FOUNDERS"
-              value={settings.export.channel_header_text ?? '⚡ FUTURE FOUNDERS'}
+              label="Channel Header Branding (Optional)"
+              placeholder="e.g. My Channel (leave blank for clean video)"
+              value={settings.export.channel_header_text ?? ''}
               onCommit={(value) => patch({ export: { ...settings.export, channel_header_text: value } })}
-              hint="Persistent channel title shown at the top of vertical clips."
+              hint="Leave blank for clean, watermark-free clips."
             />
             <Field
-              label="Bottom Footer Call-to-Action"
-              placeholder="e.g. SUBSCRIBE FOR DAILY DROPS"
-              value={settings.export.cta_footer_text ?? 'SUBSCRIBE FOR DAILY DROPS'}
+              label="Bottom Footer Call-to-Action (Optional)"
+              placeholder="e.g. Follow for more (leave blank for clean video)"
+              value={settings.export.cta_footer_text ?? ''}
               onCommit={(value) => patch({ export: { ...settings.export, cta_footer_text: value } })}
-              hint="Call to action shown near the bottom of vertical clips."
+              hint="Leave blank for clean, watermark-free clips."
             />
           </div>
         </div>

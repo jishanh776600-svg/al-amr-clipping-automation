@@ -204,14 +204,14 @@ KYLE_KIRSHNER_CORE = CaptionStyle(
 VIRAL_STREAMER_KINETIC = CaptionStyle(
     key="viral_streamer_kinetic",
     label="Viral Streamer Kinetic",
-    description="Viral YouTube Shorts & TikTok streamer style: Anton italic all-caps, 1-2 word kinetic pop, neon yellow active highlight, thick 4.5px stroke, and punchy scale animation.",
+    description="Viral YouTube Shorts & TikTok streamer style: Anton italic all-caps, 1-2 word kinetic pop, multi-color semantic pop, heavy 4.8px stroke, and punchy scale animation.",
     font="Anton",
     font_file="Anton-Regular.ttf",
     size_ratio=0.062,
     primary="#FFFFFF",
     accent="#FFE500",
     outline="#000000",
-    outline_width=4.5,
+    outline_width=4.8,
     shadow=2.5,
     bold=True,
     italic=True,
@@ -222,9 +222,9 @@ VIRAL_STREAMER_KINETIC = CaptionStyle(
     scale_percent=120,
     hook_accent="#FFE500",
     hook_scale=122,
-    climax_accent="#FFE500",
+    climax_accent="#00FF66",
     climax_scale=124,
-    cta_accent="#FFE500",
+    cta_accent="#00FF66",
     cta_scale=120,
 )
 
@@ -969,19 +969,23 @@ def _per_word_events(
 
 
 # --------------------------------------------------------------------------
-# Semantic Word Coloring & Phrase Pop (Reference Style)
+# Semantic Word Coloring & Multi-Color Kinetic Pop (Hormozi / Kyle Kirshner)
 # --------------------------------------------------------------------------
 
 SEMANTIC_GREEN_REGEX = re.compile(
-    r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|profits|dollars?|million|billion|thousand|sales|growth|income|scale|scaled|cash|rich|margin|roi)$",
+    r"^(\$?\d[\d,\.]*[%kKmMbB]?|\$\w+|money|revenue|profit|profits|dollars?|million|billion|thousand|hundred|sales|growth|income|scale|scaled|cash|rich|wealth|margin|roi|gain|gains|free|bonus|win|winning|winner|doubled|tripled|10x|100x)$",
     re.IGNORECASE,
 )
 SEMANTIC_RED_REGEX = re.compile(
-    r"^(shutdown|shut|closed|close|closing|fire|flame|flames|burning|burned|loss|losses|lost|killed|broke|danger|banned|worst|fail|failed|failure|lawsuit|died|destroy|bankrupt)$",
+    r"^(shutdown|shut|closed|close|closing|fire|flame|flames|burning|burned|loss|losses|lost|killed|kill|death|dead|die|broke|danger|dangerous|warning|banned|ban|worst|fail|failed|failure|lawsuit|destroy|destroyed|bankrupt|bankruptcy|mistake|wrong|scam|trap|toxic|quit|hate|never|stop)$",
+    re.IGNORECASE,
+)
+SEMANTIC_CYAN_REGEX = re.compile(
+    r"^(brain|dopamine|mind|mental|memory|neuroscience|smart|think|thinking|genius|secret|secrets|truth|hack|hacks|code|ai|robot|tech|system|systems|strategy|method|rule|rules|law|laws|data|algorithm|focus|science)$",
     re.IGNORECASE,
 )
 SEMANTIC_YELLOW_REGEX = re.compile(
-    r"^(grass|amazon|business|secret|secrets|truth|strategy|method|product|products|listing|client|clients|store|stores|company|work|job)$",
+    r"^(power|fast|quick|watch|look|listen|believe|start|create|build|change|work|job|client|clients|store|amazon|youtube|video|content|habit|daily|routine|key)$",
     re.IGNORECASE,
 )
 
@@ -992,11 +996,13 @@ def get_semantic_word_color(text: str) -> str | None:
     if not clean:
         return None
     if SEMANTIC_GREEN_REGEX.search(clean):
-        return "#00FF00"  # Neon Green
+        return "#00FF66"  # Vibrant Neon Green (Money, Metrics, Growth)
     if SEMANTIC_RED_REGEX.search(clean):
-        return "#FF2B2B"  # Bright Red
+        return "#FF2B2B"  # Fiery Red (Danger, Pain, Loss)
+    if SEMANTIC_CYAN_REGEX.search(clean):
+        return "#00E5FF"  # Electric Cyan (Mind, Science, Secret)
     if SEMANTIC_YELLOW_REGEX.search(clean):
-        return "#FFE500"  # Vibrant Yellow
+        return "#FFE500"  # Vibrant Neon Yellow (Power, Hook, Subject)
     return None
 
 
@@ -1061,26 +1067,36 @@ def _viral_pop_events(
     climax_window: tuple[float, float] | None = None,
     cta_window: tuple[float, float] | None = None,
 ) -> list[pysubs2.SSAEvent]:
-    """Emit punchy viral streamer dialog events (1-2 words kinetic pop).
+    """Emit punchy viral streamer dialog events (1-2 words kinetic multi-color pop).
 
-    Active spoken word pops with vibrant accent (Neon Yellow/Green) and 120%+ scale tag,
-    while surrounding words in the group stay crisp high-contrast white.
+    Active spoken word pops with vibrant multi-color semantic accent (Neon Yellow, Neon Green,
+    Coral Red, or Electric Cyan) and 122%+ scale punch tag, while inactive words in the phrase
+    stay crisp high-contrast pure white with heavy black stroke.
     """
     events: list[pysubs2.SSAEvent] = []
     italic_tag = r"\i1" if style.italic else ""
     for active, word in enumerate(group.words):
         w_time = word.start
-        accent = style.accent or "#FFE600"
-        scale = style.scale_percent if style.scale_percent else 120
+        active_clean = re.sub(r"[^\w\$%]", "", word.text.strip())
+        sem_color = get_semantic_word_color(active_clean)
 
-        if hook_window and (hook_window[0] <= w_time <= hook_window[1]) and style.hook_accent:
+        if sem_color:
+            accent = sem_color
+        elif hook_window and (hook_window[0] <= w_time <= hook_window[1]) and style.hook_accent:
             accent = style.hook_accent
-            scale = max(scale, style.hook_scale)
         elif climax_window and (climax_window[0] <= w_time <= climax_window[1]) and style.climax_accent:
             accent = style.climax_accent
-            scale = max(scale, style.climax_scale)
         elif cta_window and (cta_window[0] <= w_time <= cta_window[1]) and style.cta_accent:
             accent = style.cta_accent
+        else:
+            accent = style.accent or "#FFE500"
+
+        scale = style.scale_percent if style.scale_percent else 122
+        if hook_window and (hook_window[0] <= w_time <= hook_window[1]) and style.hook_scale:
+            scale = max(scale, style.hook_scale)
+        elif climax_window and (climax_window[0] <= w_time <= climax_window[1]) and style.climax_scale:
+            scale = max(scale, style.climax_scale)
+        elif cta_window and (cta_window[0] <= w_time <= cta_window[1]) and style.cta_scale:
             scale = max(scale, style.cta_scale)
 
         accent_tag = rf"\c{ass_colour_override(accent)}"

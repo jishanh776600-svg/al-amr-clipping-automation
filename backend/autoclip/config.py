@@ -183,8 +183,8 @@ class IngestSettings(BaseModel):
 
 class ExportSettings(BaseModel):
     ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
-    caption_style: str = "classic_professional"
-    visual_filter: str = "original"
+    caption_style: str = "viral_streamer_kinetic"
+    visual_filter: str = "viral_vibrant"
     bgm_asset_id: str = ""
     #: Integrated loudness target in LUFS. -14 is the de-facto platform standard.
     loudness_lufs: float = -14.0
@@ -193,14 +193,14 @@ class ExportSettings(BaseModel):
     crf: int = 18
     #: Also write a .srt sidecar next to each exported clip.
     write_srt: bool = False
-    #: Modern TikTok/Reels aesthetic floating card with rounded corners and blurred background.
-    frame_layout: Literal["aesthetic_card", "fit_pad", "crop_fill"] = "aesthetic_card"
-    #: Persistent channel branding text at the top header of aesthetic cards.
-    channel_header_text: str = "⚡ FUTURE FOUNDERS"
-    #: Persistent call-to-action text at the bottom footer of aesthetic cards.
-    cta_footer_text: str = "SUBSCRIBE FOR DAILY DROPS"
-    #: Corner radius (in pixels) for the floating center card.
-    card_corner_radius: int = 44
+    #: Clean full-bleed 9:16 vertical reframe with zero black bars.
+    frame_layout: Literal["aesthetic_card", "fit_pad", "crop_fill"] = "crop_fill"
+    #: Persistent channel branding text at the top header of aesthetic cards (optional).
+    channel_header_text: str = ""
+    #: Persistent call-to-action text at the bottom footer of aesthetic cards (optional).
+    cta_footer_text: str = ""
+    #: Corner radius (in pixels) for floating center cards when explicitly selected.
+    card_corner_radius: int = 0
 
 
 class Settings(BaseModel):

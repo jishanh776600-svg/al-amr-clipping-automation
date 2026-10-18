@@ -107,30 +107,33 @@ export function Ingest() {
   // Aesthetic Frame Layout & Channel Branding
   const [frameLayout, setFrameLayout] = useState<'aesthetic_card' | 'crop_fill' | 'fit_pad'>(() => {
     try {
-      return (localStorage.getItem('alamr_frame_layout') as any) || 'aesthetic_card'
+      const saved = localStorage.getItem('alamr_frame_layout')
+      return saved === 'aesthetic_card' || saved === 'fit_pad' ? saved : 'crop_fill'
     } catch {
-      return 'aesthetic_card'
+      return 'crop_fill'
     }
   })
   const [channelHeader, setChannelHeader] = useState<string>(() => {
     try {
-      return localStorage.getItem('alamr_channel_header') || '⚡ FUTURE FOUNDERS'
+      const saved = localStorage.getItem('alamr_channel_header')
+      return saved && saved !== '⚡ FUTURE FOUNDERS' ? saved : ''
     } catch {
-      return '⚡ FUTURE FOUNDERS'
+      return ''
     }
   })
   const [ctaFooter, setCtaFooter] = useState<string>(() => {
     try {
-      return localStorage.getItem('alamr_cta_footer') || 'SUBSCRIBE FOR DAILY DROPS'
+      const saved = localStorage.getItem('alamr_cta_footer')
+      return saved && saved !== 'SUBSCRIBE FOR DAILY DROPS' ? saved : ''
     } catch {
-      return 'SUBSCRIBE FOR DAILY DROPS'
+      return ''
     }
   })
   const [cornerRadius, setCornerRadius] = useState<number>(() => {
     try {
-      return Number(localStorage.getItem('alamr_corner_radius') || 44)
+      return Number(localStorage.getItem('alamr_corner_radius') || 0)
     } catch {
-      return 44
+      return 0
     }
   })
 
@@ -172,9 +175,13 @@ export function Ingest() {
       localStorage.setItem('alamr_editing_preset', preset)
     } catch {}
     if (preset === 'all_in_one_viral') {
-      updateCaptionStyle('all_in_one_viral')
+      updateCaptionStyle('viral_streamer_kinetic')
       updateSelectedBgmId('death_of_blue_bird')
       updateVisualFilter('viral_vibrant')
+      updateFrameLayout('crop_fill')
+      updateChannelHeader('')
+      updateCtaFooter('')
+      updateCornerRadius(0)
     }
   }
   const [bgmVaultOpen, setBgmVaultOpen] = useState(false)
