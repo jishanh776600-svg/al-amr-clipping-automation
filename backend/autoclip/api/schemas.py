@@ -82,6 +82,7 @@ class JobSettingsIn(BaseModel):
     channel_header_text: str | None = None
     cta_footer_text: str | None = None
     card_corner_radius: int | None = None
+    broll_enabled: bool | None = None
 
 
 class CampaignGuidelineOut(BaseModel):

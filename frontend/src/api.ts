@@ -131,6 +131,7 @@ export interface CampaignSpecification {
   tone: RequirementItem<string>
   pacing: RequirementItem<string>
   caption_preset: RequirementItem<string>
+  broll_enabled?: RequirementItem<boolean>
   caption_instructions: RequirementItem<string>[]
   visual_instructions: RequirementItem<string>[]
   branding_rules: RequirementItem<string>[]
@@ -703,6 +704,7 @@ export interface CampaignBrief {
   cta_types?: string[]
   output_count?: number
   aspect_ratio?: '9:16' | '1:1' | '16:9'
+  broll_enabled?: boolean
 }
 
 export interface CampaignPreset {
@@ -841,6 +843,7 @@ export interface Settings {
     channel_header_text?: string
     cta_footer_text?: string
     card_corner_radius?: number
+    broll_enabled?: boolean
   }
   insecure_secret_storage: boolean
   keys_present: Record<string, boolean>
@@ -899,6 +902,7 @@ export interface JobSettingsOverrides {
   visual_filter?: string
   bgm_asset_id?: string
   ratio?: string
+  broll_enabled?: boolean
   campaign?: CampaignBrief | null
 }
 

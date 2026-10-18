@@ -101,6 +101,8 @@ def _apply_overrides(settings, overrides: JobSettingsIn):
         merged.export.caption_style = overrides.caption_style
     if overrides.ratio:
         merged.export.ratio = overrides.ratio
+    if overrides.broll_enabled is not None:
+        merged.export.broll_enabled = overrides.broll_enabled
 
     return merged
 
@@ -225,6 +227,7 @@ async def create_autonomous_job(
     caption_style: str | None = None
     visual_filter: str | None = None
     bgm_asset_id: str | None = None
+    broll_enabled: bool | None = None
 
     if "application/json" in content_type:
         body = await request.json()
@@ -233,6 +236,8 @@ async def create_autonomous_job(
         caption_style = body.get("caption_style")
         visual_filter = body.get("visual_filter")
         bgm_asset_id = body.get("bgm_asset_id")
+        if "broll_enabled" in body:
+            broll_enabled = bool(body.get("broll_enabled"))
 
         if body.get("guideline_id"):
             guideline_ids.append(str(body.get("guideline_id")).strip())
@@ -258,6 +263,8 @@ async def create_autonomous_job(
             bgm_asset_id = overrides.get("bgm_asset_id")
         if not visual_filter and isinstance(overrides, dict):
             visual_filter = overrides.get("visual_filter")
+        if broll_enabled is None and isinstance(overrides, dict) and "broll_enabled" in overrides:
+            broll_enabled = bool(overrides.get("broll_enabled"))
 
         # Base64-encoded guideline documents uploaded in JSON payload
         raw_b64_docs = body.get("guideline_documents") or body.get("guideline_files_base64") or []
@@ -293,6 +300,9 @@ async def create_autonomous_job(
         raw_bgm_asset_id = form.get("bgm_asset_id")
         if isinstance(raw_bgm_asset_id, str):
             bgm_asset_id = raw_bgm_asset_id.strip() or None
+        raw_broll = form.get("broll_enabled")
+        if raw_broll is not None:
+            broll_enabled = str(raw_broll).strip().lower() in ("true", "1", "yes", "on")
         raw_overrides = form.get("overrides")
         if raw_overrides:
             try:
@@ -304,6 +314,8 @@ async def create_autonomous_job(
                         visual_filter = parsed_ov.get("visual_filter")
                     if not caption_style:
                         caption_style = parsed_ov.get("caption_style")
+                    if broll_enabled is None and "broll_enabled" in parsed_ov:
+                        broll_enabled = bool(parsed_ov.get("broll_enabled"))
             except Exception:
                 pass
 
@@ -656,6 +668,21 @@ async def create_autonomous_job(
     job_settings["export"]["bgm_asset_id"] = job_settings["bgm_asset_id"]
     job_settings["export"]["bgm_enabled"] = bgm_enabled
 
+    # Step 21: Resolve B-roll setting (explicit job setting, campaign brief, or default False)
+    if broll_enabled is not None:
+        eff_broll = bool(broll_enabled)
+    else:
+        camp_broll = (job_settings.get("campaign") or {}).get("broll_enabled")
+        if camp_broll is not None:
+            eff_broll = bool(camp_broll)
+        else:
+            eff_broll = bool(
+                job_settings.get("broll_enabled", False)
+                or (job_settings.get("export") or {}).get("broll_enabled", False)
+            )
+    job_settings["broll_enabled"] = eff_broll
+    job_settings["export"]["broll_enabled"] = eff_broll
+
     # 2e. Generate Normalized CampaignSpecification and bridge to CampaignBrief
     campaign_spec_rec: CampaignSpecificationRecord | None = None
     campaign_spec: CampaignSpecification | None = None
@@ -687,6 +714,13 @@ async def create_autonomous_job(
         brief = campaign_spec.to_campaign_brief()
         job_settings["campaign"] = brief.model_dump(mode="json")
         job_settings["campaign_spec"] = spec_dict
+        if broll_enabled is not None:
+            job_settings["campaign"]["broll_enabled"] = bool(broll_enabled)
+            job_settings["broll_enabled"] = bool(broll_enabled)
+            job_settings["export"]["broll_enabled"] = bool(broll_enabled)
+        elif "broll_enabled" in job_settings["campaign"]:
+            job_settings["broll_enabled"] = bool(job_settings["campaign"]["broll_enabled"])
+            job_settings["export"]["broll_enabled"] = bool(job_settings["campaign"]["broll_enabled"])
 
         spec_id = campaign_spec.campaign_id or new_id()
         campaign_spec_rec = CampaignSpecificationRecord(
@@ -702,6 +736,13 @@ async def create_autonomous_job(
 
     elif primary_guideline and primary_guideline.parsed_brief:
         job_settings["campaign"] = primary_guideline.parsed_brief
+        if broll_enabled is not None:
+            job_settings["campaign"]["broll_enabled"] = bool(broll_enabled)
+            job_settings["broll_enabled"] = bool(broll_enabled)
+            job_settings["export"]["broll_enabled"] = bool(broll_enabled)
+        elif "broll_enabled" in job_settings["campaign"]:
+            job_settings["broll_enabled"] = bool(job_settings["campaign"]["broll_enabled"])
+            job_settings["export"]["broll_enabled"] = bool(job_settings["campaign"]["broll_enabled"])
         job_settings["guideline"] = {
             "id": primary_guideline.id,
             "filename": primary_guideline.filename,
@@ -894,6 +935,22 @@ async def create_job(
                 "parsed_brief": guideline.parsed_brief,
                 "created_at": guideline.created_at,
             }
+
+    # Resolve explicit B-roll override or campaign B-roll setting
+    job_broll = False
+    if overrides.broll_enabled is not None:
+        job_broll = bool(overrides.broll_enabled)
+    elif payload and payload.campaign and getattr(payload.campaign, "broll_enabled", None) is not None:
+        job_broll = bool(payload.campaign.broll_enabled)
+    elif settings.export.broll_enabled:
+        job_broll = bool(settings.export.broll_enabled)
+    elif isinstance(job_settings.get("campaign"), dict) and "broll_enabled" in job_settings["campaign"]:
+        job_broll = bool(job_settings["campaign"]["broll_enabled"])
+
+    job_settings["broll_enabled"] = job_broll
+    job_settings["export"]["broll_enabled"] = job_broll
+    if isinstance(job_settings.get("campaign"), dict):
+        job_settings["campaign"]["broll_enabled"] = job_broll
 
     # Enforce Cloud YouTube Acquisition Safety
     is_yt = source.type == "youtube" or (source.url and ingest.is_youtube_url(source.url))

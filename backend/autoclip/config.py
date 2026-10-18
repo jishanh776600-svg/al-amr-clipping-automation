@@ -201,6 +201,8 @@ class ExportSettings(BaseModel):
     cta_footer_text: str = ""
     #: Corner radius (in pixels) for floating center cards when explicitly selected.
     card_corner_radius: int = 0
+    #: Contextual B-roll overlays / cutaways. Defaults to False (pure clean A-roll speaker footage).
+    broll_enabled: bool = False
 
 
 class Settings(BaseModel):

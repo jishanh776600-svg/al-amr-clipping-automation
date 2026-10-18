@@ -47,6 +47,7 @@ class FinalRenderEngine:
         visual_filter: str = "original",
         words: list[Any] | None = None,
         edl: Any | None = None,
+        broll_enabled: bool | None = None,
     ) -> tuple[Path, FinalRenderRecord]:
         """Renders, evaluates, and packages one final clip.
 
@@ -145,19 +146,23 @@ class FinalRenderEngine:
 
         style = captions_module.resolve_style(caption_style_key)
 
-        # Generate B-roll Edit Decision List (EDL) ONLY if explicitly enabled in job settings or campaign
-        broll_requested = False
-        if hasattr(clip, "job_id"):
-            try:
-                from autoclip.db import store
-                jb = store.get_job(str(clip.job_id))
-                if jb and jb.settings:
-                    broll_requested = bool(
-                        jb.settings.get("broll_enabled", False)
-                        or (jb.settings.get("campaign") or {}).get("broll_enabled", False)
-                    )
-            except Exception:
-                broll_requested = False
+        # Generate B-roll Edit Decision List (EDL) ONLY if explicitly enabled in job settings, campaign, or parameter
+        if broll_enabled is not None:
+            broll_requested = bool(broll_enabled)
+        else:
+            broll_requested = False
+            if hasattr(clip, "job_id"):
+                try:
+                    from autoclip.db import store
+                    jb = store.get_job(str(clip.job_id))
+                    if jb and jb.settings:
+                        broll_requested = bool(
+                            jb.settings.get("broll_enabled", False)
+                            or (jb.settings.get("export") or {}).get("broll_enabled", False)
+                            or (jb.settings.get("campaign") or {}).get("broll_enabled", False)
+                        )
+                except Exception:
+                    broll_requested = False
 
         if broll_requested and edl is None and words:
             try:

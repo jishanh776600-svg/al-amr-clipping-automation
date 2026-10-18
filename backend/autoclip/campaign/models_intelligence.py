@@ -232,6 +232,9 @@ class CampaignSpecification:
     caption_preset: RequirementItem[str] = field(
         default_factory=lambda: RequirementItem(value="bold_pop", confidence="inferred")
     )
+    broll_enabled: RequirementItem[bool] = field(
+        default_factory=lambda: RequirementItem(value=False, confidence="inferred")
+    )
     caption_instructions: list[RequirementItem[str]] = field(default_factory=list)
     visual_instructions: list[RequirementItem[str]] = field(default_factory=list)
     branding_rules: list[RequirementItem[str]] = field(default_factory=list)
@@ -299,6 +302,7 @@ class CampaignSpecification:
             "tone": self.tone.to_dict(),
             "pacing": self.pacing.to_dict(),
             "caption_preset": self.caption_preset.to_dict(),
+            "broll_enabled": self.broll_enabled.to_dict(),
             "caption_instructions": [item.to_dict() for item in self.caption_instructions],
             "visual_instructions": [item.to_dict() for item in self.visual_instructions],
             "branding_rules": [item.to_dict() for item in self.branding_rules],
@@ -374,6 +378,8 @@ class CampaignSpecification:
             spec.pacing = RequirementItem.from_dict(d["pacing"])
         if "caption_preset" in d:
             spec.caption_preset = RequirementItem.from_dict(d["caption_preset"])
+        if "broll_enabled" in d:
+            spec.broll_enabled = RequirementItem.from_dict(d["broll_enabled"])
         if "caption_instructions" in d:
             spec.caption_instructions = [RequirementItem.from_dict(x) for x in d["caption_instructions"]]
         if "visual_instructions" in d:
@@ -433,6 +439,7 @@ class CampaignSpecification:
             aspect_ratio=ratio_val,  # type: ignore
             caption_preset=str(self.caption_preset.value),
             output_count=int(self.output_count.value),
+            broll_enabled=bool(self.broll_enabled.value),
             maximum_silence_seconds=float(self.max_silence_s.value),
             minimum_content_density=float(self.min_speech_density.value),
             hashtags=[item.value for item in self.hashtags],
@@ -522,6 +529,8 @@ class CampaignSpecification:
             spec.aspect_ratio = RequirementItem(value=str(b_data["aspect_ratio"]), confidence="inferred", source_filename=filename)
         if "caption_preset" in b_data:
             spec.caption_preset = RequirementItem(value=str(b_data["caption_preset"]), confidence="inferred", source_filename=filename)
+        if "broll_enabled" in b_data:
+            spec.broll_enabled = RequirementItem(value=bool(b_data["broll_enabled"]), confidence="explicit", source_filename=filename)
         if "output_count" in b_data:
             spec.output_count = RequirementItem(value=int(b_data["output_count"]), confidence="inferred", source_filename=filename)
 

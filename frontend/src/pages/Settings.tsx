@@ -836,6 +836,42 @@ export function Settings() {
           </div>
         </div>
 
+        {/* Contextual B-Roll Default Setting */}
+        <div className="mt-6 rounded-lg border border-ink-800 bg-ink-950/60 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                  B-Roll Overlays & Evidence Cutaways (Default)
+                </span>
+                <span
+                  className={`text-[10px] rounded px-2 py-0.5 border font-medium ${
+                    settings.export.broll_enabled
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      : 'bg-ink-800 text-ink-400 border-ink-700'
+                  }`}
+                >
+                  {settings.export.broll_enabled ? '✓ Enabled' : '○ Disabled (Pure Clean A-Roll)'}
+                </span>
+              </div>
+              <p className="text-xs text-ink-400 mt-1">
+                Controls default B-roll generation for all jobs. When enabled, the engine pulls contextual 9:16 vertical cutaways matching spoken topics. When disabled, outputs crisp, uninterrupted speaker A-roll with kinetic subtitles.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => patch({ export: { ...settings.export, broll_enabled: !settings.export.broll_enabled } })}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-all shrink-0 ${
+                settings.export.broll_enabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-ink-800 text-ink-300 border-ink-700 hover:bg-ink-750'
+              }`}
+            >
+              {settings.export.broll_enabled ? '✓ Enabled' : '○ Disabled'}
+            </button>
+          </div>
+        </div>
+
         <label className="mt-5 flex items-start gap-3 text-sm text-ink-200">
           <input
             type="checkbox"

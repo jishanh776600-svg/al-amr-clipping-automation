@@ -502,6 +502,42 @@ export function CampaignBuilder() {
               </div>
             </div>
 
+            {/* Contextual B-Roll Overlay Option for this Campaign */}
+            <div className="rounded-lg border border-ink-800 bg-ink-950/60 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                      B-Roll Video Overlays & Evidence Cutaways
+                    </span>
+                    <span
+                      className={`text-[10px] rounded px-2 py-0.5 border font-medium ${
+                        brief.broll_enabled
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : 'bg-ink-800 text-ink-400 border-ink-700'
+                      }`}
+                    >
+                      {brief.broll_enabled ? '✓ Enabled for Campaign' : '○ Clean A-Roll Only (Default)'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-400 mt-1">
+                    Check in if you want added B-rolls for this campaign. When enabled, the engine overlays contextual 9:16 vertical cutaways matching spoken keywords. When disabled, outputs pure speaker A-roll only.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBrief({ ...brief, broll_enabled: !brief.broll_enabled })}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold border transition-all shrink-0 ${
+                    brief.broll_enabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                      : 'bg-ink-800 text-ink-300 border-ink-700 hover:bg-ink-750'
+                  }`}
+                >
+                  {brief.broll_enabled ? '✓ B-Roll Active' : '○ No B-Roll'}
+                </button>
+              </div>
+            </div>
+
             <div className="flex items-center justify-end gap-4 border-t border-ink-800 pt-5">
               <button
                 type="button"

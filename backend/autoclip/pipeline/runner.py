@@ -1267,6 +1267,14 @@ class PipelineRunner:
         render_engine = FinalRenderEngine(config=FinalRenderConfig(ratio=ratio))
         final_render_records: list[FinalRenderRecord] = []
 
+        # Resolve B-roll setting: explicit job setting, campaign brief, or default False (Clean A-roll)
+        campaign_dict = (self.job.settings or {}).get("campaign") or {}
+        broll_enabled = bool(
+            (self.job.settings or {}).get("broll_enabled", False)
+            or (self.job.settings or {}).get("export", {}).get("broll_enabled", False)
+            or campaign_dict.get("broll_enabled", False)
+        )
+
         for index, clip in enumerate(clips):
             self._check_cancelled()
 
@@ -1295,6 +1303,7 @@ class PipelineRunner:
                 max_duration_s=max_dur,
                 visual_filter=selected_filter,
                 words=clip_words,
+                broll_enabled=broll_enabled,
             )
             final_render_records.append(render_rec)
 

@@ -169,6 +169,23 @@ export function Ingest() {
     api.putSettings({ export: { card_corner_radius: newRadius } as any }).catch(() => undefined)
   }
 
+  // B-Roll Overlays Option (Explicit Operator & Campaign Choice)
+  const [brollEnabled, setBrollEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('alamr_broll_enabled') === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const updateBrollEnabled = (enabled: boolean) => {
+    setBrollEnabled(enabled)
+    try {
+      localStorage.setItem('alamr_broll_enabled', enabled ? 'true' : 'false')
+    } catch {}
+    api.putSettings({ export: { broll_enabled: enabled } as any }).catch(() => undefined)
+  }
+
   const handleSelectEditingPreset = (preset: 'all_in_one_viral' | 'custom') => {
     setEditingPreset(preset)
     try {
@@ -240,6 +257,10 @@ export function Ingest() {
           const cached = localStorage.getItem('alamr_corner_radius')
           if (!cached) setCornerRadius(s.export.card_corner_radius)
         }
+        if (s.export.broll_enabled !== undefined) {
+          const cached = localStorage.getItem('alamr_broll_enabled')
+          if (cached === null) setBrollEnabled(Boolean(s.export.broll_enabled))
+        }
       }
     }).catch(() => undefined)
     api.listCaptionStyles().then((list) => {
@@ -270,14 +291,19 @@ export function Ingest() {
       setOverrides((prev) => {
         const next = { ...prev }
         delete next.campaign
+        delete next.broll_enabled
         return next
       })
       return
     }
     setSelectedCampaignId(c.id)
+    if (c.brief?.broll_enabled !== undefined) {
+      setBrollEnabled(Boolean(c.brief.broll_enabled))
+    }
     setOverrides((prev) => ({
       ...prev,
       campaign: c.brief as any,
+      broll_enabled: c.brief?.broll_enabled ?? prev.broll_enabled,
       min_duration_s: c.brief?.minimum_duration ?? prev.min_duration_s,
       max_duration_s: c.brief?.maximum_duration ?? prev.max_duration_s,
       max_clips: c.brief?.output_count ?? prev.max_clips,
@@ -513,6 +539,7 @@ export function Ingest() {
           channel_header_text: channelHeader,
           cta_footer_text: ctaFooter,
           card_corner_radius: cornerRadius,
+          broll_enabled: brollEnabled,
           overrides: {
             ...jobOverrides,
             editing_preset: editingPreset,
@@ -523,6 +550,7 @@ export function Ingest() {
             channel_header_text: channelHeader,
             cta_footer_text: ctaFooter,
             card_corner_radius: cornerRadius,
+            broll_enabled: brollEnabled,
           },
         }
         const job = await api.createAutonomousJobJson(payload)
@@ -558,10 +586,12 @@ export function Ingest() {
       form.append('channel_header_text', channelHeader)
       form.append('cta_footer_text', ctaFooter)
       form.append('card_corner_radius', String(cornerRadius))
+      form.append('broll_enabled', String(brollEnabled))
       jobOverrides.frame_layout = frameLayout
       jobOverrides.channel_header_text = channelHeader
       jobOverrides.cta_footer_text = ctaFooter
       jobOverrides.card_corner_radius = cornerRadius
+      jobOverrides.broll_enabled = brollEnabled
 
       form.append('overrides', JSON.stringify(jobOverrides))
 
@@ -1761,6 +1791,52 @@ export function Ingest() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* B-ROLL VIDEO OVERLAYS & CUTAWAYS (OPERATOR CHOICE) */}
+      <div className="mt-6 rounded-lg border border-ink-800 bg-ink-900/60 p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-sodium-400">
+                B-ROLL VIDEO OVERLAYS & EVIDENCE CUTAWAYS
+              </span>
+              <span
+                className={`text-[10px] rounded px-2 py-0.5 border font-medium ${
+                  brollEnabled
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-ink-800 text-ink-400 border-ink-700'
+                }`}
+              >
+                {brollEnabled ? '✓ Enabled' : '○ Disabled (Pure Clean A-Roll)'}
+              </span>
+            </div>
+            <p className="text-xs text-ink-300 mt-1.5 leading-relaxed max-w-2xl">
+              Choose whether you want added B-roll cutaways for this job or campaign.
+            </p>
+            <p className="text-[11px] text-ink-400 mt-1 leading-normal">
+              • <strong className="text-ink-200">Disabled (Clean A-Roll):</strong> Crisp, full-bleed 9:16 speaker footage with kinetic subtitles & SFX — no cutaway videos.<br />
+              • <strong className="text-ink-200">Enabled:</strong> Semantic engine automatically finds and splices contextual 9:16 vertical B-roll matching spoken keywords.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => updateBrollEnabled(!brollEnabled)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold border transition-all ${
+                brollEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/20 hover:bg-emerald-500/30'
+                  : 'bg-ink-800 text-ink-300 border-ink-700 hover:bg-ink-750'
+              }`}
+            >
+              <span className={`size-3 rounded-full border flex items-center justify-center ${brollEnabled ? 'bg-emerald-400 border-emerald-300' : 'border-ink-500'}`}>
+                {brollEnabled && <span className="size-1.5 rounded-full bg-ink-950"></span>}
+              </span>
+              <span>{brollEnabled ? 'Include B-Roll (Active)' : 'No B-Roll (Pure A-Roll)'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Autonomous Launch Action Button */}

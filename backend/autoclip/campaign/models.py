@@ -70,6 +70,7 @@ class CampaignBrief(BaseModel):
     aspect_ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
     caption_preset: str = "bold_pop"
     output_count: int = Field(default=5, ge=1, le=50)
+    broll_enabled: bool = False
 
     # SEO & Campaign Metadata Constraints
     hashtags: list[str] = Field(default_factory=list)
