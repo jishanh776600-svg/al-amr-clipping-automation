@@ -73,7 +73,7 @@ def parse_brief_compliance(
             handle = clean if clean.startswith("@") else f"@{clean.upper()}"
 
     if not handle:
-        handle = "@ALPHA_FUTURES"  # Signature default matching winning campaign
+        handle = ""
 
     # 2. Extract Mandatory Hashtags
     hashtags = []

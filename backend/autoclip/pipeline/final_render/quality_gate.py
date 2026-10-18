@@ -419,7 +419,7 @@ class FinalRenderQualityGate:
             clip_start_s=clip_start_s,
         )
 
-        if visual_metrics.get("visual_qa_status") == "VISUAL_DEFICIENT" and video_duration >= 10.0:
+        if edl_to_eval and visual_metrics.get("visual_qa_status") == "VISUAL_DEFICIENT" and video_duration >= 10.0:
             warnings.append(
                 f"Visual B-roll coverage is low: {visual_metrics.get('broll_coverage_pct', 0)}% "
                 f"({visual_metrics.get('broll_event_count', 0)} events, max gap {visual_metrics.get('longest_a_roll_gap_s', 0)}s)"

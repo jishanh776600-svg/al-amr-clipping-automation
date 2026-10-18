@@ -1400,19 +1400,71 @@ class PipelineRunner:
             len(clips),
             len(all_exports),
         )
-        # Trigger Master Overeditor Engine (Content Rewards Layout + 100% AI B-Roll + Watermark Badge)
-        try:
-            from .overeditor.orchestrator import MasterOvereditorOrchestrator
-            brief_text = self.job.settings.get("brief_text") or (self.job.settings.get("campaign") or {}).get("brief")
-            overeditor = MasterOvereditorOrchestrator()
-            overeditor.process_job_clips(
-                job_id=self.job.id,
-                clips=clips,
-                transcript_text=transcript.text if transcript else None,
-                brief_text=str(brief_text) if brief_text else None,
-            )
-        except Exception as o_err:
-            log.warning("Overeditor stage failed or skipped: %s", o_err, exc_info=True)
+        # Overeditor is used for campaign briefs or explicit overedit presets
+        brief_text = self.job.settings.get("brief_text") or (self.job.settings.get("campaign") or {}).get("brief")
+        overedit_enabled = bool(
+            self.job.settings.get("overedit_enabled", False)
+            or brief_text
+            or (self.job.settings.get("campaign") or {}).get("overedit_enabled", False)
+        )
+        if overedit_enabled:
+            try:
+                from .overeditor.orchestrator import MasterOvereditorOrchestrator
+                overeditor = MasterOvereditorOrchestrator()
+                overeditor.process_job_clips(
+                    job_id=self.job.id,
+                    clips=clips,
+                    transcript_text=transcript.text if transcript else None,
+                    brief_text=str(brief_text) if brief_text else None,
+                )
+            except Exception as o_err:
+                log.warning("Overeditor stage failed or skipped: %s", o_err, exc_info=True)
+        else:
+            log.info("Job %s: Standard clean clipping mode active; dispatching Telegram review.", self.job.id)
+            try:
+                from .overeditor.seo_generator import SEOGenerator
+                from .overeditor.brief_inspector import parse_brief_compliance
+                from ..telegram.review_bot import send_clip_review
+
+                seo_gen = SEOGenerator()
+                comp = parse_brief_compliance(brief_text, self.job.settings)
+                for idx, clip in enumerate(clips):
+                    slice_text = transcript.text if transcript else clip.title or "Viral Highlight"
+                    seo_pack = seo_gen.generate_seo_pack(slice_text, comp, idx + 1)
+                    clip_meta = store.get_clip_metadata(clip.id)
+                    if clip_meta:
+                        clip_meta.telemetry = dict(clip_meta.telemetry or {})
+                        clip_meta.telemetry["youtube"] = {
+                            "title": seo_pack.yt_title,
+                            "description": seo_pack.yt_description,
+                            "hashtags": seo_pack.yt_tags,
+                            "mentions": [comp.handle] if comp.handle else [],
+                        }
+                        clip_meta.telemetry["instagram"] = {
+                            "caption": getattr(seo_pack, "ig_caption", getattr(seo_pack, "insta_caption", "")),
+                            "hashtags": getattr(seo_pack, "ig_tags", getattr(seo_pack, "insta_hashtags", [])),
+                            "mentions": [comp.handle] if comp.handle else [],
+                        }
+                        store.update_clip_metadata(clip.id, telemetry=clip_meta.telemetry)
+
+                    coro = send_clip_review(
+                        job_id=self.job.id,
+                        clip_id=clip.id,
+                        force=True,
+                        job_settings=self.job.settings,
+                    )
+                    from ..jobs.events import broker
+                    loop = getattr(broker, "_loop", None)
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(coro, loop)
+                    else:
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                            running_loop.create_task(coro)
+                        except RuntimeError:
+                            asyncio.run(coro)
+            except Exception as tg_err:
+                log.warning("Could not dispatch Telegram review for clean clips: %s", tg_err)
 
         self._finish_stage(stage)
 

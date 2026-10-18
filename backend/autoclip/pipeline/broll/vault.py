@@ -101,7 +101,7 @@ class VisualAssetVault:
                 cue.concept, exc,
             )
 
-        # 4. Multi-variant bundled starter assets
+        # Multi-variant bundled starter assets (video only, never solid placeholder images)
         for variant_num in range(1, 5):
             var_file_mp4 = self.vault_dir / f"starter_{cue.concept}_v{variant_num}.mp4"
             if var_file_mp4.is_file():
@@ -121,25 +121,7 @@ class VisualAssetVault:
                     )
                 )
 
-            var_file_jpg = self.vault_dir / f"starter_{cue.concept}_v{variant_num}.jpg"
-            if var_file_jpg.is_file():
-                candidates.append(
-                    VisualAsset(
-                        asset_id=f"starter_{cue.concept}_v{variant_num}",
-                        file_path=var_file_jpg,
-                        visual_type=VisualType.STOCK_PHOTO,
-                        concept=cue.concept,
-                        presentation_mode=cue.preferred_mode,
-                        width=1080,
-                        height=1920,
-                        duration_s=cue.duration_s,
-                        tags=[cue.concept, f"variant_{variant_num}"],
-                        source_provider="local_vault",
-                        is_video=False,
-                    )
-                )
-
-        # Legacy fallback bundled starter asset
+        # Legacy fallback bundled starter asset (video only)
         legacy_mp4 = self.vault_dir / f"starter_{cue.concept}.mp4"
         if legacy_mp4.is_file():
             candidates.append(
@@ -158,51 +140,9 @@ class VisualAssetVault:
                 )
             )
 
-        legacy_jpg = self.vault_dir / f"starter_{cue.concept}.jpg"
-        if legacy_jpg.is_file():
-            candidates.append(
-                VisualAsset(
-                    asset_id=f"starter_img_{cue.concept}",
-                    file_path=legacy_jpg,
-                    visual_type=VisualType.STOCK_PHOTO,
-                    concept=cue.concept,
-                    presentation_mode=cue.preferred_mode,
-                    width=1080,
-                    height=1920,
-                    duration_s=cue.duration_s,
-                    tags=[cue.concept, "starter_image"],
-                    source_provider="local_vault",
-                    is_video=False,
-                )
-            )
-
-        # 5. Anti-Repetition Guarantee: Sort unused assets first, or generate dynamic procedural card
+        # Anti-Repetition Guarantee: Sort unused assets first
         unused_candidates = [c for c in candidates if c.asset_id not in recent_ids]
-        if unused_candidates:
-            return unused_candidates
-
-        # If every candidate has already been used, dynamically generate a fresh procedural card!
-        fresh_card_path = self.card_generator.generate_card(
-            concept=cue.concept,
-            metadata=cue.metadata,
-            variant_idx=variant_idx + 1,
-        )
-        fresh_asset_id = f"proc_card_{cue.concept}_{cue.cue_id}_v{variant_idx+1}"
-        fresh_asset = VisualAsset(
-            asset_id=fresh_asset_id,
-            file_path=fresh_card_path,
-            visual_type=cue.visual_type,
-            concept=cue.concept,
-            presentation_mode=PresentationMode.PARTIAL_OVERLAY,
-            width=1080,
-            height=1920,
-            duration_s=cue.duration_s,
-            tags=[cue.concept, "procedural_evidence_card"],
-            source_provider="generated_ui",
-            is_video=False,
-            metadata=cue.metadata,
-        )
-        return [fresh_asset] + candidates
+        return unused_candidates or candidates
 
     def _discover_pexels_candidates(self, cue: SemanticVisualCue) -> list[VisualAsset]:
         """Attempts to acquire portrait stock video clips from Pexels matching the cue.

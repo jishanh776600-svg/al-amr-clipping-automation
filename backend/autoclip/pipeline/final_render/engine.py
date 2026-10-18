@@ -145,8 +145,21 @@ class FinalRenderEngine:
 
         style = captions_module.resolve_style(caption_style_key)
 
-        # Generate B-roll Edit Decision List (EDL) if words provided and EDL not precomputed
-        if edl is None and words:
+        # Generate B-roll Edit Decision List (EDL) ONLY if explicitly enabled in job settings or campaign
+        broll_requested = False
+        if hasattr(clip, "job_id"):
+            try:
+                from autoclip.db import store
+                jb = store.get_job(str(clip.job_id))
+                if jb and jb.settings:
+                    broll_requested = bool(
+                        jb.settings.get("broll_enabled", False)
+                        or (jb.settings.get("campaign") or {}).get("broll_enabled", False)
+                    )
+            except Exception:
+                broll_requested = False
+
+        if broll_requested and edl is None and words:
             try:
                 from autoclip.pipeline.broll import SemanticBrollEngine, VisualAssetVault
                 broll_engine = SemanticBrollEngine(vault=VisualAssetVault())
