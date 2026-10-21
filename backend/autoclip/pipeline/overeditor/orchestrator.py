@@ -155,6 +155,8 @@ class MasterOvereditorOrchestrator:
                             output_path=master_out_path,
                             duration_s=clip_dur,
                             broll_path=broll_first,
+                            brief_text=str(brief_text or ""),
+                            transcript_text=str(transcript_text or ""),
                         )
                 except Exception as r_err:
                     log.warning("Remotion render attempt error: %s, falling back to FFmpeg compositor", r_err)
